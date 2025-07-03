@@ -1,0 +1,47 @@
+{
+	"manifest_version": 3,
+	"name": "New Case Alert - Sig Sales/Service/Industry Cloud -- Test",
+	"version": "2.5",
+	"description": "This extension will help Triage Team to get notified for Sev1/Sev2 Cases for Sig - Sales/Service/Industry Cloud.",
+	"content_scripts": [
+		{
+			"matches": [
+				"https://orgcs.my.salesforce.com/*"
+			],
+			"js": [
+				"jsforce.js",
+				"jquery.min.js",
+				"bootstrap.min.js",
+				"background.js"
+			]
+		}
+	],
+	"action": {},
+	"background": {
+		"service_worker": "background.js"
+	},
+	"icons": {
+		"16": "icon.png",
+		"48": "icon.png",
+		"128": "icon.png"
+	},
+	"permissions": [
+		"storage",
+		"activeTab",
+		"scripting",
+		"tabs",
+		"alarms",
+		"cookies"
+	],
+	"host_permissions": [
+		"https://orgcs.lightning.force.com/",
+		"https://orgcs.my.salesforce.com/services/data/v59.0",
+		"https://orgcs.my.salesforce.com/services/data/*",
+		"https://orgcs.my.salesforce.com/*",
+		"https://login.Salesforce.com/*",
+		"https://test.Salesforce.com/*",
+		"https://test.salesforce.com/",
+		"https://login.salesforce.com/",
+		"https://maxcdn.bootstrapcdn.com/*"
+	]
+}

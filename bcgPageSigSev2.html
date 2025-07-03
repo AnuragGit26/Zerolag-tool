@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<link rel="stylesheet" type="text/css" href="bootstrap.min.css">
+	<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" />
+	<link rel="stylesheet" type="text/css" href="salesforce-lightning-design-system.min.css">
+	<script src="jsforce.js"></script>
+	<script src="jquery.min.js"></script>
+	<script src="bootstrap.min.js"></script>
+
+	<style>
+		body {
+			margin-top: 20px;
+			color: #41464d;
+		}
+
+		.btn:not(:disabled):not(.disabled) {
+			cursor: pointer;
+		}
+
+		.btn-a-brc-tp:not(.disabled):not(:disabled).active,
+		.btn-brc-tp,
+		.btn-brc-tp:focus:not(:hover):not(:active):not(.active):not(.dropdown-toggle),
+		.btn-h-brc-tp:hover,
+		.btn.btn-f-brc-tp:focus,
+		.btn.btn-h-brc-tp:hover {
+			border-color: transparent;
+		}
+
+		.btn-outline-blue {
+			color: #0d6ce1;
+			border-color: #5a9beb;
+			background-color: transparent;
+		}
+
+		.btn {
+			cursor: pointer;
+			position: relative;
+			z-index: auto;
+			border-radius: .175rem;
+			white-space: break-spaces !important;
+			transition: color .15s, background-color .15s, border-color .15s, box-shadow .15s, opacity .15s;
+		}
+
+		.border-2 {
+			border-width: 2px !important;
+			border-style: solid !important;
+			border-color: transparent;
+		}
+
+		.bgc-white {
+			background-color: #fff !important;
+		}
+
+
+		.text-green-d1 {
+			color: #277b5d !important;
+		}
+
+		.letter-spacing {
+			letter-spacing: .5px !important;
+		}
+
+		.font-bolder,
+		.text-600 {
+			font-weight: 500 !important;
+		}
+
+		.text-170 {
+			font-size: 1.2em !important;
+			font-family: system-ui !important;
+		}
+
+		.text-purple-d1 {
+			color: #6d62b5 !important;
+		}
+
+		.text-primary-d1 {
+			color: #276ab4 !important;
+		}
+
+		.text-secondary-d1 {
+			color: #5f718b !important;
+		}
+
+		.text-180 {
+			font-size: 1.8em !important;
+		}
+
+		.text-150 {
+			font-size: 1.5em !important;
+		}
+
+		.text-danger-m3 {
+			color: #e05858 !important;
+		}
+	</style>
+</head>
+
+<body>
+	<div class="container">
+		<div>
+			<nav class="navbar navbar-light bg-light" style="background-color: #7952B3;">
+				<a class="navbar-brand" style="color: white;">
+					Signature SEV1/2 - New Case Notification Test
+				</a>
+			</nav>
+		</div>
+		<div class="row mb-3">
+			<div class="col-md-6">
+				<input type="text" class="form-control" id="search-input" placeholder="Search by Case Number...">
+			</div>
+			<div class="col-md-3">
+				<select class="form-control" id="action-filter">
+					<option value="all">Show All</option>
+					<option value="action-taken">Action Taken</option>
+					<option value="not-action-taken">Not Action Taken</option>
+				</select>
+			</div>
+			<div>
+				<div class="col-md-1">
+					<button class="btn btn-primary" id="search-button">Search</button>
+				</div>
+				<div class="col-md-2">
+					<button class="btn btn-primary" id="clear-button">Clear All</button>
+				</div>
+			</div>
+
+		</div>
+		<div id="parentSigSev2">
+		</div>
+	</div>
+	<script src="bcgScriptSigSev2.js"></script>
+</body>
+
+</html>

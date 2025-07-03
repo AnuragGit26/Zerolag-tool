@@ -1,0 +1,158 @@
+let SESSION_ID;
+function getSessionIds() {
+  getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
+    SESSION_ID = cookie.value;
+    getCaseDetails();
+  });
+}
+function getCookies(domain, name, callback) {
+  chrome.cookies.get({
+    url: domain,
+    name: name
+  }, function (cookie) {
+    if (cookie) {
+      if (callback) {
+        callback(cookie);
+      }
+    }
+  });
+}
+
+function getCaseDetails(callback) {
+  console.log('SESSION_ID>>>', SESSION_ID);
+  let conn = new jsforce.Connection({
+    serverUrl: 'https://orgcs.my.salesforce.com',
+    sessionId: SESSION_ID,
+  });
+  conn.identity(function (err, res) {
+    if (err) {
+      var data = 'closeTab';
+      chrome.runtime.sendMessage(data, function (response) {
+        console.log('response-----' + response);
+      });
+      return console.error('erororo---' + err);
+    } else {
+      return conn.query("SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name FROM Case WHERE CreatedDate = LAST_N_DAYS:7 AND Status='New' AND (Owner.Name='Working in Org62' OR Owner.Name='Sales Cloud Skills Queue' OR Owner.Name='Service Cloud Skills Queue' OR Owner.Name='Industry Skills Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP' AND Account_Support_SBR_Category__c!='JP MCS' AND Account_Support_SBR_Category__c!='GOVT' AND Account_Support_SBR_Category__c!='MCS - GOVT' AND (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' OR (Contact.Is_MVP__c=true AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)')) OR ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND  CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)' AND (Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success' OR Case_Support_level__c='Premier Priority') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') ) ) ORDER BY CreatedDate DESC", function (err, result) {
+        if (err) {
+          alert('Your query has failed');
+          return console.error(err);
+        }
+        var myHtml;
+        var isData = false;
+        var today = new Date();
+        if (result.records.length > 0) {
+          isData = true;
+          for (x in result.records) {
+            if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(5, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(20, new Date(result.records[x].CreatedDate)))) {
+              const caseId = result.records[x].Id;
+              const isActionTaken = localStorage.getItem(caseId) === 'true';
+              const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 bgc-white btn-outline-blue btn-h-outline-blue btn-a-outline-blue w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative;"> <div style="position: absolute; top: 5px; right: 10px; color: red;">' + new Date(result.records[x].CreatedDate).toLocaleString() + '</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 text-primary-d1 letter-spacing">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-dark-l1 text-90 text-left my-4 my-md-0"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-info btn-raised px-4 py-25 w-75 text-600 preview-record-btn">Preview Record</a></div> </div> <div style="position: absolute; bottom: 5px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + '> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: green;">Action taken</span></div> </div> <div style="margin-top:10px;"></div>';
+              if (myHtml) {
+                myHtml = myHtml + newHtml;
+              } else {
+                myHtml = newHtml;
+              }
+            }
+          }
+
+        }
+        if (isData && myHtml != undefined) {
+          document.getElementById("parentSigSev2").innerHTML += myHtml;
+          var audio = new Audio('ding.mp3');
+          audio.play();
+          var data = 'openTab';
+          chrome.runtime.sendMessage(data, function (response) {
+            console.log('response-----' + response);
+          });
+          //}, 1000);
+        } else {
+          var data = 'closeTab';
+          chrome.runtime.sendMessage(data, function (response) {
+            console.log('response-----' + response);
+          });
+        }
+      });
+    }
+  });
+}
+
+function addMinutes(numOfMinutes, date = new Date()) {
+  date.setMinutes(date.getMinutes() + numOfMinutes);
+  return date;
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  getSessionIds();
+
+  document.getElementById("parentSigSev2").addEventListener("change", function (e) {
+    if (e.target.classList.contains("action-checkbox")) {
+      const checkbox = e.target;
+      const actionText = checkbox.nextElementSibling;
+      const caseId = checkbox.dataset.caseId;
+      if (checkbox.checked) {
+        actionText.style.display = "inline";
+        localStorage.setItem(caseId, 'true');
+      } else {
+        actionText.style.display = "none";
+        localStorage.removeItem(caseId);
+      }
+    }
+  });
+
+  document.getElementById("parentSigSev2").addEventListener("click", function (e) {
+    if (e.target.classList.contains("preview-record-btn")) {
+      const button = e.target;
+      const caseDiv = button.closest('.d-style');
+      const checkbox = caseDiv.querySelector('.action-checkbox');
+      const actionText = caseDiv.querySelector('.action-taken-text');
+      const caseId = checkbox.dataset.caseId;
+
+      if (checkbox) {
+        checkbox.checked = true;
+        localStorage.setItem(caseId, 'true');
+      }
+      if (actionText) {
+        actionText.style.display = "inline";
+      }
+    }
+  });
+
+  document.getElementById("search-button").addEventListener("click", function () {
+    let searchValue = document.getElementById("search-input").value.toLowerCase();
+    let allCases = document.querySelectorAll("#parentSigSev2 > div");
+    allCases.forEach(function (caseDiv) {
+      let caseNumberElement = caseDiv.querySelector("li:nth-child(3) span");
+      if (caseNumberElement) {
+        let caseNumber = caseNumberElement.textContent.toLowerCase();
+        if (caseNumber.includes(searchValue)) {
+          caseDiv.style.display = "block";
+        } else {
+          caseDiv.style.display = "none";
+        }
+      }
+    });
+  });
+
+  document.getElementById("action-filter").addEventListener("change", function () {
+    let filterValue = this.value;
+    let allCases = document.querySelectorAll("#parentSigSev2 > .d-style");
+    allCases.forEach(function (caseDiv) {
+      let checkbox = caseDiv.querySelector(".action-checkbox");
+      let isActionTaken = checkbox.checked;
+      if (filterValue === "all") {
+        caseDiv.style.display = "block";
+      } else if (filterValue === "action-taken" && isActionTaken) {
+        caseDiv.style.display = "block";
+      } else if (filterValue === "not-action-taken" && !isActionTaken) {
+        caseDiv.style.display = "block";
+      } else {
+        caseDiv.style.display = "none";
+      }
+    });
+  });
+});
+
+document.getElementById("clear-button").addEventListener("click", function () {
+  document.getElementById("search-input").value = "";
+  window.location.reload();
+});
