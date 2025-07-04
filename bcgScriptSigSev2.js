@@ -40,13 +40,19 @@ function getCaseDetails(callback) {
         var myHtml;
         var isData = false;
         var today = new Date();
+        let displayedCaseCount = 0;
+        let actionTakenCount = 0;
         if (result.records.length > 0) {
           isData = true;
           for (x in result.records) {
             if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(5, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(20, new Date(result.records[x].CreatedDate)))) {
               const caseId = result.records[x].Id;
               const isActionTaken = localStorage.getItem(caseId) === 'true';
-              const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 bgc-white btn-outline-blue btn-h-outline-blue btn-a-outline-blue w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative;"> <div style="position: absolute; top: 5px; right: 10px; color: red;">' + new Date(result.records[x].CreatedDate).toLocaleString() + '</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 text-primary-d1 letter-spacing">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-dark-l1 text-90 text-left my-4 my-md-0"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-info btn-raised px-4 py-25 w-75 text-600 preview-record-btn">Preview Record</a></div> </div> <div style="position: absolute; bottom: 5px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + '> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: green;">Action taken</span></div> </div> <div style="margin-top:10px;"></div>';
+              displayedCaseCount++;
+              if (isActionTaken) {
+                actionTakenCount++;
+              }
+              const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;">Preview Record</a></div> </div> <div style="position: absolute; bottom: 5px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + '> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div> </div> <div style="margin-top:10px;"></div>';
               if (myHtml) {
                 myHtml = myHtml + newHtml;
               } else {
@@ -58,8 +64,10 @@ function getCaseDetails(callback) {
         }
         if (isData && myHtml != undefined) {
           document.getElementById("parentSigSev2").innerHTML += myHtml;
-          var audio = new Audio('ding.mp3');
-          audio.play();
+          if (actionTakenCount < displayedCaseCount) {
+            var audio = new Audio('ding.mp3');
+            audio.play();
+          }
           var data = 'openTab';
           chrome.runtime.sendMessage(data, function (response) {
             console.log('response-----' + response);
@@ -74,6 +82,26 @@ function getCaseDetails(callback) {
       });
     }
   });
+}
+
+function timeElapsed(createdDate) {
+  const now = new Date();
+  const diff = now - createdDate;
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) {
+    return `${days}d ago`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m ago`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ago`;
+  }
+  return `${seconds}s ago`;
 }
 
 function addMinutes(numOfMinutes, date = new Date()) {

@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
-	"name": "New Case Alert - Sig Sales/Service/Industry Cloud -- Test",
-	"version": "2.5",
+	"name": "New Case Alert - Sig Sev1/2 New Case Notification",
+	"version": "2.3.1",
 	"description": "This extension will help Triage Team to get notified for Sev1/Sev2 Cases for Sig - Sales/Service/Industry Cloud.",
 	"content_scripts": [
 		{
