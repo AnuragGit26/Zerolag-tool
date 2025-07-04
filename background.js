@@ -1,6 +1,6 @@
 chrome.runtime.onInstalled.addListener(details => {
 	if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
-		chrome.alarms.create('SigSEV2Triaging', { periodInMinutes: 3 });
+		chrome.alarms.create('SigSEV2Triaging', { periodInMinutes: 1 });
 	}
 });
 

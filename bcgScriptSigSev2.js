@@ -45,7 +45,7 @@ function getCaseDetails(callback) {
         if (result.records.length > 0) {
           isData = true;
           for (x in result.records) {
-            if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(5, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(20, new Date(result.records[x].CreatedDate)))) {
+            if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(4, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(19, new Date(result.records[x].CreatedDate)))) {
               const caseId = result.records[x].Id;
               const isActionTaken = localStorage.getItem(caseId) === 'true';
               displayedCaseCount++;
@@ -65,7 +65,7 @@ function getCaseDetails(callback) {
         if (isData && myHtml != undefined) {
           document.getElementById("parentSigSev2").innerHTML += myHtml;
           if (actionTakenCount < displayedCaseCount) {
-            var audio = new Audio('ding.mp3');
+            var audio = new Audio('noti.wav');
             audio.play();
           }
           var data = 'openTab';
