@@ -74,7 +74,10 @@ function getCaseDetails(callback) {
           });
           //}, 1000);
         } else {
-          var data = 'closeTab';
+          // Show "no cases to action" message when there are no records
+          const noCasesHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #F0F8FF; border-color: #28A745;"> <div class="row align-items-center justify-content-center" style="width: 100%"> <div class="col-12 text-center"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #28A745;">No Cases to Action</h4> <p class="text-110" style="color: #0D0106; margin-top: 10px;">All cases are up to date. Great work!</p> </div> </div> </div> <div style="margin-top:10px;"></div>';
+          document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
+          var data = 'openTab';
           chrome.runtime.sendMessage(data, function (response) {
             console.log('response-----' + response);
           });
