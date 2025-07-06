@@ -42,10 +42,17 @@ function getCaseDetails(callback) {
         var today = new Date();
         let displayedCaseCount = 0;
         let actionTakenCount = 0;
+
+        // Function to check if current time is weekend (Saturday 5:30 AM IST to Monday 5:30 AM IST)
+        function isWeekend() {
+          return isCurrentlyWeekend();
+        }
+        var minSev1 = isWeekend() ? 1 : 5;
+        var minSev2 = isWeekend() ? 1 : 20;
         if (result.records.length > 0) {
           isData = true;
           for (x in result.records) {
-            if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(4, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(19, new Date(result.records[x].CreatedDate)))) {
+            if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(minSev1, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(minSev2, new Date(result.records[x].CreatedDate)))) {
               const caseId = result.records[x].Id;
               const isActionTaken = localStorage.getItem(caseId) === 'true';
               displayedCaseCount++;
@@ -120,7 +127,46 @@ function addMinutes(numOfMinutes, date = new Date()) {
   return date;
 }
 
+
+function isCurrentlyWeekend() {
+  const now = new Date();
+  const currentOffset = now.getTimezoneOffset();
+  const istOffset = -330;
+
+  let istTime;
+  if (currentOffset === istOffset) {
+    istTime = now;
+  } else {
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    istTime = new Date(now.getTime() + istOffsetMs + (currentOffset * 60 * 1000));
+  }
+
+  const day = istTime.getDay();
+  const hour = istTime.getHours();
+  const minute = istTime.getMinutes();
+  const timeInMinutes = hour * 60 + minute;
+  const cutoffTime = 5 * 60 + 30;
+
+  // Weekend: Saturday 5:30 AM IST to Monday 5:30 AM IST
+  if (day === 6 && timeInMinutes >= cutoffTime) return true;
+  if (day === 0) return true;
+  if (day === 1 && timeInMinutes < cutoffTime) return true;
+
+  return false;
+}
+
+function updateWeekendModeIndicator() {
+  const weekendIndicator = document.getElementById("weekend-mode-indicator");
+  if (isCurrentlyWeekend()) {
+    weekendIndicator.style.display = "block";
+  } else {
+    weekendIndicator.style.display = "none";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", function () {
+  updateWeekendModeIndicator();
+  setInterval(updateWeekendModeIndicator, 60000);
   getSessionIds();
 
   document.getElementById("parentSigSev2").addEventListener("change", function (e) {
