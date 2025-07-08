@@ -14,7 +14,9 @@ chrome.alarms.onAlarm.addListener(alarm => {
 chrome.runtime.onMessage.addListener(
 	function (request, sender, sendResponse) {
 		if (request == 'closeTab') {
-			chrome.tabs.remove(tabId, function () { });
+			if (tabId) {
+				chrome.tabs.remove(tabId, function () { });
+			}
 			sendResponse("tab closed");
 		}
 		if (request == 'openTab') {
