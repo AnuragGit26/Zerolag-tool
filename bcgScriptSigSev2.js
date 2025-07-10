@@ -63,9 +63,8 @@ function getCaseDetails(callback) {
                 const caseId = result.records[x].Id;
                 const snoozeUntil = localStorage.getItem('snooze_' + caseId);
                 if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
-                  continue; // Skip displaying this case if it's snoozed
+                  continue;
                 } else if (snoozeUntil) {
-                  // Snooze expired, remove from local storage
                   localStorage.removeItem('snooze_' + caseId);
                 }
                 const isActionTaken = localStorage.getItem(caseId) === 'true';
@@ -79,47 +78,7 @@ function getCaseDetails(callback) {
                 } else if (result.records[x].SE_Initial_Response_Status__c === 'In Warning' || result.records[x].SE_Initial_Response_Status__c === 'Warning') {
                   statusColor = 'red';
                 }
-                const newHtml = `
-                <div class="case-card card mb-3 shadow-sm" data-case-id="${caseId}">
-                    <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0 text-primary">
-                            ${result.records[x].Subject}
-                        </h5>
-                        <small class="text-muted">${new Date(result.records[x].CreatedDate).toLocaleString()} (${timeElapsed(new Date(result.records[x].CreatedDate))})</small>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-8">
-                                <ul class="list-unstyled">
-                                    <li><strong>Account:</strong> ${result.records[x].Account.Name}</li>
-                                    <li><strong>Taxonomy:</strong> ${result.records[x].CaseRoutingTaxonomy__r.Name}</li>
-                                    <li><strong>Case Number:</strong> ${result.records[x].CaseNumber}</li>
-                                    <li><strong>Severity:</strong> ${result.records[x].Severity_Level__c}</li>
-                                    <li><strong>Status:</strong> <span style="color:${statusColor}">${result.records[x].SE_Initial_Response_Status__c}</span></li>
-                                </ul>
-                            </div>
-                            <div class="col-md-4 d-flex flex-column justify-content-between align-items-end">
-                                <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" class="btn btn-primary btn-sm preview-record-btn mb-2">Preview Record</a>
-                                <div class="snooze-controls d-flex align-items-center">
-                                    <select class="form-control form-control-sm snooze-time" data-case-id="${caseId}">
-                                        <option value="5">5 mins</option>
-                                        <option value="10">10 mins</option>
-                                        <option value="15">15 mins</option>
-                                        <option value="20">20 mins</option>
-                                    </select>
-                                    <button class="btn btn-secondary btn-sm snooze-btn ml-2" data-case-id="${caseId}">Snooze</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card-footer bg-light d-flex justify-content-end align-items-center">
-                        <div class="form-check">
-                            <input type="checkbox" class="form-check-input action-checkbox" id="action-${caseId}" data-case-id="${caseId}" ${isActionTaken ? 'checked' : ''}>
-                            <label class="form-check-label action-taken-text" for="action-${caseId}" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</label>
-                        </div>
-                    </div>
-                </div>`;
-
+                const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110" style="color:' + statusColor + '">' + result.records[x].SE_Initial_Response_Status__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;">Preview Record</a></div> </div> <div style="position: absolute; top:30px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + '> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div> <div class="snooze-controls" style="position: absolute; bottom: 30px; right: 10px; display: flex; align-items: center;"><select class="snooze-time" data-case-id="' + caseId + '" style="margin-right: 5px; border-radius: 4px; border: 1px solid #657ED4; background-color: #FBFBFF; color: #3626A7;"><option value="5">5 mins</option><option value="10">10 mins</option><option value="15">15 mins</option><option value="20">20 mins</option></select><button class="snooze-btn" data-case-id="' + caseId + '" style="background-color: #3626A7; color: #FBFBFF; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">Snooze</button></div> </div> <div style="margin-top:10px;"></div>';
                 if (myHtml) {
                   myHtml = myHtml + newHtml;
                 } else {

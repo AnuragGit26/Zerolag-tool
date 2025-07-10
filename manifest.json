@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
-	"name": "New Case Alert - Sig Sev1/2 New Case Notification",
-	"version": "3.0.6",
+	"name": "Signature Case Alerts",
+	"version": "3.0.7",
 	"description": "Triage Team New Sev1/Sev2 Cases Notifier for Sig - Sales/Service/Industry Cloud.",
 	"content_scripts": [
 		{
