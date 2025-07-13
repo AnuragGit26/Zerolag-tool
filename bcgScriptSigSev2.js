@@ -1,4 +1,6 @@
 let SESSION_ID;
+let currentMode = localStorage.getItem('caseTriageMode') || 'signature'; // 'signature' or 'premier'
+
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
     SESSION_ID = cookie.value;
@@ -34,7 +36,14 @@ function getCaseDetails(callback) {
     } else {
       let displayedCaseCount = 0;
       let actionTakenCount = 0;
-      return conn.query("SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c FROM Case WHERE CreatedDate = LAST_N_DAYS:7 AND Status='New' AND (Owner.Name='Working in Org62' OR Owner.Name='Sales Cloud Skills Queue' OR Owner.Name='Service Cloud Skills Queue' OR Owner.Name='Industry Skills Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP' AND Account_Support_SBR_Category__c!='JP MCS' AND Account_Support_SBR_Category__c!='GOVT' AND Account_Support_SBR_Category__c!='MCS - GOVT' AND (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' OR (Contact.Is_MVP__c=true AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)')) OR ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND  CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)' AND (Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success' OR Case_Support_level__c='Premier Priority') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') ) ) ORDER BY CreatedDate DESC",
+
+      let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c FROM Case WHERE CreatedDate = LAST_N_DAYS:7 AND Status='New' AND (Owner.Name='Working in Org62' OR Owner.Name='Sales Cloud Skills Queue' OR Owner.Name='Service Cloud Skills Queue' OR Owner.Name='Industry Skills Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP' AND Account_Support_SBR_Category__c!='JP MCS' AND Account_Support_SBR_Category__c!='GOVT' AND Account_Support_SBR_Category__c!='MCS - GOVT' AND (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' OR (Contact.Is_MVP__c=true AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)')) OR ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND  CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)' AND (Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success' OR Case_Support_level__c='Premier Priority') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') ) ) ORDER BY CreatedDate DESC";
+
+      let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%' OR CaseRoutingTaxonomy__r.Name IN ('Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
+
+      let query = currentMode === 'premier' ? premierQuery : signatureQuery;
+
+      return conn.query(query,
         function (err, result) {
           if (err) {
             alert('Your query has failed');
@@ -285,6 +294,29 @@ document.addEventListener("DOMContentLoaded", function () {
     localStorage.setItem('caseFilter', filterValue);
     applyFilter(filterValue);
   });
+
+  document.getElementById("mode-switch").addEventListener("change", function () {
+    const pageTitle = document.getElementById("page-title");
+    if (this.checked) {
+      currentMode = 'premier';
+      pageTitle.textContent = 'Premier Triage Case Alerts Center';
+    } else {
+      currentMode = 'signature';
+      pageTitle.textContent = 'Signature Triage Case Alerts Center';
+    }
+    localStorage.setItem('caseTriageMode', currentMode);
+    document.getElementById("parentSigSev2").innerHTML = '';
+    getSessionIds();
+  });
+
+  const modeSwitch = document.getElementById("mode-switch");
+  const pageTitle = document.getElementById("page-title");
+  if (currentMode === 'premier') {
+    modeSwitch.checked = true;
+    pageTitle.textContent = 'Premier Triage Case Alerts Center';
+  } else {
+    pageTitle.textContent = 'Signature Triage Case Alerts Center';
+  }
 });
 
 document.getElementById("clear-button").addEventListener("click", function () {

@@ -97,42 +97,138 @@
 		.text-danger-m3 {
 			color: #e05858 !important;
 		}
+
+		/* Add your custom styles here */
+		.action-taken-text {
+			display: none;
+		}
+
+		#toast {
+			position: fixed;
+			bottom: 20px;
+			left: 50%;
+			transform: translateX(-50%);
+			background-color: #333;
+			color: #fff;
+			padding: 10px 20px;
+			border-radius: 5px;
+			display: none;
+		}
+
+		#weekend-mode-indicator {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: #ffc107;
+			color: #000;
+			padding: 5px 10px;
+			border-radius: 5px;
+			font-weight: bold;
+			display: none;
+		}
+
+		.toggle-switch {
+			position: relative;
+			display: inline-block;
+			width: 40px;
+			height: 24px;
+			margin: 10px;
+		}
+
+		/* Input style */
+		.toggle-switch .toggle-input {
+			display: none;
+		}
+
+		/* Label style around the switch */
+		.toggle-switch .toggle-label {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 40px;
+			height: 24px;
+			background-color: #2196F3;
+			border-radius: 34px;
+			cursor: pointer;
+			transition: background-color 0.3s;
+		}
+
+		/* Style of the round part of the switch */
+		.toggle-switch .toggle-label::before {
+			content: "";
+			position: absolute;
+			width: 20px;
+			height: 20px;
+			border-radius: 50%;
+			top: 2px;
+			left: 2px;
+			background-color: #fff;
+			box-shadow: 0px 2px 5px 0px rgba(0, 0, 0, 0.3);
+			transition: transform 0.3s;
+		}
+
+		/* Style changes when the switch is active */
+		.toggle-switch .toggle-input:checked+.toggle-label {
+			background-color: #4CAF50;
+		}
+
+		.toggle-switch .toggle-input:checked+.toggle-label::before {
+			transform: translateX(16px);
+		}
+
+		.switch-container {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.switch-container span {
+			margin: 0 10px;
+			font-weight: bold;
+			color: white;
+		}
 	</style>
 </head>
 
 <body>
 	<div class="container">
 		<div>
-			<nav class="navbar navbar-light bg-light" style="background-color: #F76C5E; position: relative;">
-				<a class="navbar-brand" style="color: white;">
-					Signature Triage Case Alerts Center
-				</a>
+			<nav class="navbar navbar-light bg-light"
+				style="background-color: #F76C5E; position: relative; display: flex; justify-content: space-between; align-items: center;">
+				<div style="flex: 1;">
+					<a class="navbar-brand" id="page-title" style="color: white;">
+						Signature Triage Case Alerts Center
+					</a>
+				</div>
+				<div class="switch-container" style="flex: 1; text-align: center;">
+					<span>Signature</span>
+					<div class="toggle-switch">
+						<input class="toggle-input" id="mode-switch" type="checkbox">
+						<label class="toggle-label" for="mode-switch"></label>
+					</div>
+					<span>Premier</span>
+				</div>
 				<div id="weekend-mode-indicator"
-					style="position: absolute; top: 10px; right: 15px; background-color: #FFD700; color: #333; padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 12px; display: none;">
+					style="flex: 1; text-align: right; background-color: #FFD700; color: #333; padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 12px; display: none;">
 					Weekend Mode
 				</div>
 			</nav>
 		</div>
-		<div class="row mb-3">
-			<div class="col-md-6">
+		<div class="row mb-3 mt-3">
+			<div class="col-md-8">
 				<input type="text" class="form-control" id="search-input" placeholder="Search by Case Number...">
 			</div>
-			<div class="col-md-3">
+			<div class="col-md-2">
 				<select class="form-control" id="action-filter">
 					<option value="all">Show All</option>
 					<option value="action-taken">Action Taken</option>
 					<option value="not-action-taken">Not Action Taken</option>
 				</select>
 			</div>
-			<div>
-				<div class="col-md-1">
-					<button class="btn btn-primary" id="search-button">Search</button>
-				</div>
-				<div class="col-md-2">
-					<button class="btn btn-primary" id="clear-button">Clear All</button>
-				</div>
+			<div class="col-md-2 d-flex">
+				<button class="btn btn-primary mr-2" id="search-button" style="flex-grow: 1;">Search</button>
+				<button class="btn btn-secondary" id="clear-button" style="flex-grow: 1;">Clear All</button>
 			</div>
-
 		</div>
 		<div id="parentSigSev2">
 		</div>
