@@ -1,5 +1,7 @@
 let SESSION_ID;
-let currentMode = localStorage.getItem('caseTriageMode') || 'signature'; // 'signature' or 'premier'
+let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
+let currentUserName;
+const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
@@ -34,6 +36,7 @@ function getCaseDetails(callback) {
       });
       return console.error('error---' + err);
     } else {
+      currentUserName = res.display_name;
       let displayedCaseCount = 0;
       let actionTakenCount = 0;
 
@@ -77,6 +80,11 @@ function getCaseDetails(callback) {
                   localStorage.removeItem('snooze_' + caseId);
                 }
                 const isActionTaken = localStorage.getItem(caseId) === 'true';
+                const caseData = {
+                  number: result.records[x].CaseNumber,
+                  severity: result.records[x].Severity_Level__c,
+                  cloud: result.records[x].CaseRoutingTaxonomy__r.Name.split('-')[0]
+                };
                 displayedCaseCount++;
                 if (isActionTaken) {
                   actionTakenCount++;
@@ -87,7 +95,7 @@ function getCaseDetails(callback) {
                 } else if (result.records[x].SE_Initial_Response_Status__c === 'In Warning' || result.records[x].SE_Initial_Response_Status__c === 'Warning') {
                   statusColor = 'red';
                 }
-                const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110" style="color:' + statusColor + '">' + result.records[x].SE_Initial_Response_Status__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;">Preview Record</a></div> </div> <div style="position: absolute; top:30px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + '> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div> <div class="snooze-controls" style="position: absolute; bottom: 30px; right: 10px; display: flex; align-items: center;"><select class="snooze-time" data-case-id="' + caseId + '" style="margin-right: 5px; border-radius: 4px; border: 1px solid #657ED4; background-color: #FBFBFF; color: #3626A7;"><option value="5">5 mins</option><option value="10">10 mins</option><option value="15">15 mins</option><option value="20">20 mins</option></select><button class="snooze-btn" data-case-id="' + caseId + '" style="background-color: #3626A7; color: #FBFBFF; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">Snooze</button></div> </div> <div style="margin-top:10px;"></div>';
+                const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110" style="color:' + statusColor + '">' + result.records[x].SE_Initial_Response_Status__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;" data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '">Preview Record</a></div> </div> <div style="position: absolute; top:30px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + ' data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '"> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div> <div class="snooze-controls" style="position: absolute; bottom: 30px; right: 10px; display: flex; align-items: center;"><select class="snooze-time" data-case-id="' + caseId + '" style="margin-right: 5px; border-radius: 4px; border: 1px solid #657ED4; background-color: #FBFBFF; color: #3626A7;"><option value="5">5 mins</option><option value="10">10 mins</option><option value="15">15 mins</option><option value="20">20 mins</option></select><button class="snooze-btn" data-case-id="' + caseId + '" style="background-color: #3626A7; color: #FBFBFF; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">Snooze</button></div> </div> <div style="margin-top:10px;"></div>';
                 if (myHtml) {
                   myHtml = myHtml + newHtml;
                 } else {
@@ -159,6 +167,56 @@ function timeElapsed(createdDate) {
 function addMinutes(numOfMinutes, date = new Date()) {
   date.setMinutes(date.getMinutes() + numOfMinutes);
   return date;
+}
+
+function getAuthToken(callback) {
+  chrome.identity.getAuthToken({ interactive: true }, function (token) {
+    if (chrome.runtime.lastError) {
+      console.error(chrome.runtime.lastError);
+      return;
+    }
+    callback(token);
+  });
+}
+
+function trackAction(caseNumber, severity, cloud) {
+  getAuthToken(function (token) {
+    const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
+    const now = new Date();
+    const pstDate = now.toLocaleString('en-US', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    });
+
+    const values = [
+      [pstDate, caseNumber, currentUserName, severity, cloud]
+    ];
+
+    const body = {
+      values: values
+    };
+
+    fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}:append?valueInputOption=USER_ENTERED`, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(response => response.json())
+      .then(data => {
+        console.log('Sheet updated:', data);
+      })
+      .catch(error => {
+        console.error('Error updating sheet:', error);
+      });
+  });
 }
 
 
@@ -235,6 +293,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (checkbox.checked) {
         actionText.style.display = "inline";
         localStorage.setItem(caseId, 'true');
+        trackAction(checkbox.dataset.caseNumber, checkbox.dataset.severity, checkbox.dataset.cloud);
       } else {
         actionText.style.display = "none";
         localStorage.removeItem(caseId);
@@ -263,12 +322,18 @@ document.addEventListener("DOMContentLoaded", function () {
       const actionText = caseDiv.querySelector('.action-taken-text');
       const caseId = checkbox.dataset.caseId;
 
-      if (checkbox) {
+      if (checkbox && !checkbox.checked) {
         checkbox.checked = true;
         localStorage.setItem(caseId, 'true');
-      }
-      if (actionText) {
-        actionText.style.display = "inline";
+        trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud);
+        if (actionText) {
+          actionText.style.display = "inline";
+        }
+      } else if (checkbox.checked) {
+        // Already actioned, but we can ensure the text is visible
+        if (actionText) {
+          actionText.style.display = "inline";
+        }
       }
     }
   });
@@ -326,9 +391,30 @@ document.getElementById("clear-button").addEventListener("click", function () {
 
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
   if (e.target && e.target.classList.contains("preview-record-btn")) {
+    const button = e.target;
+    const caseDiv = button.closest('.d-style');
+    const checkbox = caseDiv.querySelector('.action-checkbox');
+    const actionText = caseDiv.querySelector('.action-taken-text');
+    const caseId = checkbox.dataset.caseId;
+
+    if (checkbox && !checkbox.checked) {
+      checkbox.checked = true;
+      localStorage.setItem(caseId, 'true');
+      trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud);
+      if (actionText) {
+        actionText.style.display = "inline";
+      }
+    }
+
     const severityText = e.target.closest('.d-style').querySelector('li:nth-child(4)').textContent;
     const severity = severityText.includes('Level 1') ? '1' : '2';
-    const textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} case, as it has not been assigned through OMNI. \nThank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
+    let textToCopy = '';
+
+    if (currentMode === 'premier') {
+      textToCopy = `Hi\nNew SEV${severity} assigned to you & App is updated...!`;
+    } else {
+      textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} case, as it has not been assigned through OMNI. \nThank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
+    }
 
     navigator.clipboard.writeText(textToCopy).then(function () {
       const toast = document.getElementById('toast');

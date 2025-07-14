@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Sig/Prem Case Alerts",
-	"version": "3.0.8",
+	"version": "3.0.9",
 	"description": "Triage Team New Sev1/Sev2 Cases Notifier for Sig - Sales/Service/Industry Cloud and Premier Weekend New Cases",
 	"content_scripts": [
 		{
@@ -33,7 +33,8 @@
 		"scripting",
 		"tabs",
 		"alarms",
-		"cookies"
+		"cookies",
+		"identity"
 	],
 	"host_permissions": [
 		"https://orgcs.lightning.force.com/",
@@ -44,6 +45,13 @@
 		"https://test.Salesforce.com/*",
 		"https://test.salesforce.com/",
 		"https://login.salesforce.com/",
-		"https://maxcdn.bootstrapcdn.com/*"
-	]
+		"https://maxcdn.bootstrapcdn.com/*",
+		"https://sheets.googleapis.com/"
+	],
+	"oauth2": {
+		"client_id": "378152633002-eq512vmu0m5dhnbugm8604vu5iuve97e.apps.googleusercontent.com",
+		"scopes": [
+			"https://www.googleapis.com/auth/spreadsheets"
+		]
+	}
 }
