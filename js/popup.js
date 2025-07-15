@@ -43,107 +43,158 @@ function getCaseDetails(callback) {
       currentUserName = res.display_name;
       let displayedCaseCount = 0;
       let actionTakenCount = 0;
+      let currentUserId;
 
-      let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c FROM Case WHERE CreatedDate = LAST_N_DAYS:7 AND Status='New' AND (Owner.Name='Working in Org62' OR Owner.Name='Sales Cloud Skills Queue' OR Owner.Name='Service Cloud Skills Queue' OR Owner.Name='Industry Skills Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP' AND Account_Support_SBR_Category__c!='JP MCS' AND Account_Support_SBR_Category__c!='GOVT' AND Account_Support_SBR_Category__c!='MCS - GOVT' AND (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' OR (Contact.Is_MVP__c=true AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)')) OR ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND  CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)' AND (Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success' OR Case_Support_level__c='Premier Priority') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') ) ) ORDER BY CreatedDate DESC";
+      conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (err, userResult) {
+        if (err) {
+          return console.error('Error fetching user ID:', err);
+        }
+        if (userResult.records.length > 0) {
+          currentUserId = userResult.records[0].Id;
+        }
 
-      let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%' OR CaseRoutingTaxonomy__r.Name IN ('Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
+        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c FROM Case WHERE CreatedDate = LAST_N_DAYS:7 AND Status='New' AND (Owner.Name='Working in Org62' OR Owner.Name='Sales Cloud Skills Queue' OR Owner.Name='Service Cloud Skills Queue' OR Owner.Name='Industry Skills Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP' AND Account_Support_SBR_Category__c!='JP MCS' AND Account_Support_SBR_Category__c!='GOVT' AND Account_Support_SBR_Category__c!='MCS - GOVT' AND (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' OR (Contact.Is_MVP__c=true AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)')) OR ( CaseRoutingTaxonomy__r.Name!='Sales-Quip' AND CaseRoutingTaxonomy__r.Name!='Sales-Sales Cloud for Slack' AND CaseRoutingTaxonomy__r.Name!='Sales-Disability and Product Accessibility' AND  CaseRoutingTaxonomy__r.Name!='Service-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Disability and Product Accessibility' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Cloud' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Data Architecture (EDA)' AND CaseRoutingTaxonomy__r.Name!='Industry-Education Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Packages (Other SFDO)' AND CaseRoutingTaxonomy__r.Name!='Industry-Nonprofit Success Pack (NPSP)' AND (Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success' OR Case_Support_level__c='Premier Priority') AND (Severity_Level__c='Level 2 - Urgent' OR Severity_Level__c='Level 1 - Critical') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') ) ) ORDER BY CreatedDate DESC";
 
-      let query = currentMode === 'premier' ? premierQuery : signatureQuery;
+        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%' OR CaseRoutingTaxonomy__r.Name IN ('Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
 
-      return conn.query(query,
-        function (err, result) {
-          if (err) {
-            alert('Your query has failed');
-            return console.error(err);
-          }
-          var myHtml;
-          var isData = false;
-          var today = new Date();
+        let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
-
-          // Function to check if current time is weekend (Saturday 5:30 AM IST to Monday 5:30 AM IST)
-          function isWeekend() {
-            return isCurrentlyWeekend();
-          }
-          var minSev1 = isWeekend() ? 1 : 5;
-          var minSev2 = isWeekend() ? 1 : 20;
-          if (result.records.length > 0) {
-            isData = true;
-            for (x in result.records) {
-              conn.query("SELECT Name,Id, LastModifiedById, Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c = '" + result.records[x].Id + "'", function (err, logResult) {
-                if (err) { return console.error(err); }
-                console.log("Case_Routing_Log__c result for case " + result.records[x].Id + ": ", logResult);
-              });
-              console.log('result.records[x]>>>', result.records[x]);
-              if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(minSev1, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(minSev2, new Date(result.records[x].CreatedDate)))) {
-                const caseId = result.records[x].Id;
-                const snoozeUntil = localStorage.getItem('snooze_' + caseId);
-                if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
-                  continue;
-                } else if (snoozeUntil) {
-                  localStorage.removeItem('snooze_' + caseId);
-                }
-                const isActionTaken = localStorage.getItem(caseId) === 'true';
-                const caseData = {
-                  number: result.records[x].CaseNumber,
-                  severity: result.records[x].Severity_Level__c,
-                  cloud: result.records[x].CaseRoutingTaxonomy__r.Name.split('-')[0]
-                };
-                displayedCaseCount++;
-                if (isActionTaken) {
-                  actionTakenCount++;
-                }
-                let statusColor = '';
-                if (result.records[x].SE_Initial_Response_Status__c === 'Met') {
-                  statusColor = 'green';
-                } else if (result.records[x].SE_Initial_Response_Status__c === 'In Warning' || result.records[x].SE_Initial_Response_Status__c === 'Warning') {
-                  statusColor = 'red';
-                }
-                const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110" style="color:' + statusColor + '">' + result.records[x].SE_Initial_Response_Status__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;" data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '">Preview Record</a></div> </div> <div style="position: absolute; top:30px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + ' data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '"> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div> <div class="snooze-controls" style="position: absolute; bottom: 30px; right: 10px; display: flex; align-items: center;"><select class="snooze-time" data-case-id="' + caseId + '" style="margin-right: 5px; border-radius: 4px; border: 1px solid #657ED4; background-color: #FBFBFF; color: #3626A7;"><option value="5">5 mins</option><option value="10">10 mins</option><option value="15">15 mins</option><option value="20">20 mins</option></select><button class="snooze-btn" data-case-id="' + caseId + '" style="background-color: #3626A7; color: #FBFBFF; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">Snooze</button></div> </div> <div style="margin-top:10px;"></div>';
-                if (myHtml) {
-                  myHtml = myHtml + newHtml;
-                } else {
-                  myHtml = newHtml;
-                }
-              }
+        return conn.query(query,
+          function (err, result) {
+            if (err) {
+              alert('Your query has failed');
+              return console.error(err);
             }
 
-          }
-          if (isData && myHtml != undefined) {
-            document.getElementById("parentSigSev2").innerHTML += myHtml;
-
-            const savedFilter = localStorage.getItem('caseFilter');
-            if (savedFilter) {
-              applyFilter(savedFilter);
-            }
-
-            // Only focus tab and play audio if there are cases without action taken
-            if (actionTakenCount < displayedCaseCount) {
-              var audio = new Audio('../assets/audio/notification.wav');
-              audio.play();
-              var data = 'openTab';
-              chrome.runtime.sendMessage(data, function (response) {
-                console.log('response-----' + response);
-              });
-            } else {
-              // All cases have action taken, don't focus the tab
+            if (result.records.length === 0) {
+              const noCasesHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #F0F8FF; border-color: #28A745;"> <div class="row align-items-center justify-content-center" style="width: 100%"> <div class="col-12 text-center"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #28A745;">No Cases to Action</h4> <p class="text-110" style="color: #0D0106; margin-top: 10px;">All cases are up to date. Great work!</p> </div> </div> </div> <div style="margin-top:10px;"></div>';
+              document.getElementById("parentSigSev2").innerHTML = noCasesHtml;
               var data = 'closeTab';
               chrome.runtime.sendMessage(data, function (response) {
                 console.log('response-----' + response);
               });
+              return;
             }
-            //}, 1000);
-          } else {
-            // Show "no cases to action" message when there are no records
-            const noCasesHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #F0F8FF; border-color: #28A745;"> <div class="row align-items-center justify-content-center" style="width: 100%"> <div class="col-12 text-center"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #28A745;">No Cases to Action</h4> <p class="text-110" style="color: #0D0106; margin-top: 10px;">All cases are up to date. Great work!</p> </div> </div> </div> <div style="margin-top:10px;"></div>';
-            document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
-            // All cases have action taken, don't focus the tab
-            var data = 'closeTab';
-            chrome.runtime.sendMessage(data, function (response) {
-              console.log('response-----' + response);
+
+            const caseIds = result.records.map(record => record.Id);
+            const commentQuery = `SELECT ParentId, Body, CreatedById FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+
+            conn.query(commentQuery, function (commentErr, commentResult) {
+              if (commentErr) {
+                return console.error(commentErr);
+              }
+
+              const actionedCaseIds = new Set();
+              if (commentResult.records) {
+                commentResult.records.forEach(record => {
+                  if (record.Body && record.Body.includes('#SigQBmention')) {
+                    console.log('Actioned case found:', record.ParentId);
+                    actionedCaseIds.add(record.ParentId);
+                    // If the action was by the current user, track it immediately.
+                    if (record.CreatedById === currentUserId) {
+                      const caseRecord = result.records.find(c => c.Id === record.ParentId);
+                      if (caseRecord) {
+                        trackAction(caseRecord.CaseNumber, caseRecord.Severity_Level__c, caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                      }
+                    }
+                  }
+                });
+              }
+
+              var myHtml;
+              var isData = false;
+              var today = new Date();
+
+
+              // Function to check if current time is weekend (Saturday 5:30 AM IST to Monday 5:30 AM IST)
+              function isWeekend() {
+                return isCurrentlyWeekend();
+              }
+              var minSev1 = isWeekend() ? 1 : 5;
+              var minSev2 = isWeekend() ? 1 : 20;
+              if (result.records.length > 0) {
+                isData = true;
+                for (var x in result.records) {
+                  const caseId = result.records[x].Id;
+
+                  if (actionedCaseIds.has(caseId)) {
+                    localStorage.setItem(caseId, 'true');
+                  }
+
+                  conn.query("SELECT Name,Id, LastModifiedById, Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c = '" + result.records[x].Id + "'", function (err, logResult) {
+                    if (err) { return console.error(err); }
+                    console.log("Case_Routing_Log__c result for case " + result.records[x].Id + ": ", logResult);
+                  });
+                  console.log('result.records[x]>>>', result.records[x]);
+                  if ((result.records[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') || (today >= addMinutes(minSev1, new Date(result.records[x].CreatedDate)) && result.records[x].Severity_Level__c == 'Level 1 - Critical') || (today >= addMinutes(minSev2, new Date(result.records[x].CreatedDate)))) {
+                    const snoozeUntil = localStorage.getItem('snooze_' + caseId);
+                    if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
+                      continue;
+                    } else if (snoozeUntil) {
+                      localStorage.removeItem('snooze_' + caseId);
+                    }
+                    const isActionTaken = localStorage.getItem(caseId) === 'true';
+                    const caseData = {
+                      number: result.records[x].CaseNumber,
+                      severity: result.records[x].Severity_Level__c,
+                      cloud: result.records[x].CaseRoutingTaxonomy__r.Name.split('-')[0]
+                    };
+                    displayedCaseCount++;
+                    if (isActionTaken) {
+                      actionTakenCount++;
+                    }
+                    let statusColor = '';
+                    if (result.records[x].SE_Initial_Response_Status__c === 'Met') {
+                      statusColor = 'green';
+                    } else if (result.records[x].SE_Initial_Response_Status__c === 'In Warning' || result.records[x].SE_Initial_Response_Status__c === 'Warning') {
+                      statusColor = 'red';
+                    }
+                    const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> <li class="mt-25"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110" style="color:' + statusColor + '">' + result.records[x].SE_Initial_Response_Status__c + '</span></li> </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;" data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '">Preview Record</a></div> </div> <div style="position: absolute; top:30px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + ' data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '"> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div><div class="snooze-controls" style="position: absolute; bottom: 30px; right: 10px; display: flex; align-items: center;"><select class="snooze-time" data-case-id="' + caseId + '" style="margin-right: 5px; border-radius: 4px; border: 1px solid #657ED4; background-color: #FBFBFF; color: #3626A7;"><option value="5">5 mins</option><option value="10">10 mins</option><option value="15">15 mins</option><option value="20">20 mins</option></select><button class="snooze-btn" data-case-id="' + caseId + '" style="background-color: #3626A7; color: #FBFBFF; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">Snooze</button></div></div> <div style="margin-top:10px;"></div>';
+                    if (myHtml) {
+                      myHtml = myHtml + newHtml;
+                    } else {
+                      myHtml = newHtml;
+                    }
+                  }
+                }
+
+              }
+              if (isData && myHtml != undefined) {
+                document.getElementById("parentSigSev2").innerHTML += myHtml;
+
+                const savedFilter = localStorage.getItem('caseFilter');
+                if (savedFilter) {
+                  applyFilter(savedFilter);
+                }
+                // Only focus tab and play audio if there are cases without action taken
+                if (actionTakenCount < displayedCaseCount) {
+                  var audio = new Audio('../assets/audio/notification.wav');
+                  audio.play();
+                  var data = 'openTab';
+                  chrome.runtime.sendMessage(data, function (response) {
+                    console.log('response-----' + response);
+                  });
+                } else {
+                  // All cases have action taken, don't focus the tab
+                  var data = 'closeTab';
+                  chrome.runtime.sendMessage(data, function (response) {
+                    console.log('response-----' + response);
+                  });
+                }
+                //}, 1000);
+              } else {
+                // Show "no cases to action" message when there are no records
+                const noCasesHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #F0F8FF; border-color: #28A745;"> <div class="row align-items-center justify-content-center" style="width: 100%"> <div class="col-12 text-center"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #28A745;">No Cases to Action</h4> <p class="text-110" style="color: #0D0106; margin-top: 10px;">All cases are up to date. Great work!</p> </div> </div> </div> <div style="margin-top:10px;"></div>';
+                document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
+                // All cases have action taken, don't focus the tab
+                var data = 'closeTab';
+                chrome.runtime.sendMessage(data, function (response) {
+                  console.log('response-----' + response);
+                });
+              }
             });
-          }
-        });
+          });
+      });
     }
   });
 }
@@ -166,24 +217,10 @@ document.addEventListener("DOMContentLoaded", function () {
       if (checkbox.checked) {
         actionText.style.display = "inline";
         localStorage.setItem(caseId, 'true');
-        trackAction(checkbox.dataset.caseNumber, checkbox.dataset.severity, checkbox.dataset.cloud, currentMode, currentUserName);
       } else {
         actionText.style.display = "none";
         localStorage.removeItem(caseId);
       }
-    }
-  });
-
-  document.getElementById("parentSigSev2").addEventListener("click", function (e) {
-    if (e.target.classList.contains("snooze-btn")) {
-      const button = e.target;
-      const caseId = button.dataset.caseId;
-      const caseDiv = button.closest('.d-style');
-      const snoozeTimeSelect = caseDiv.querySelector('.snooze-time');
-      const snoozeMinutes = parseInt(snoozeTimeSelect.value);
-      const snoozeUntil = new Date().getTime() + snoozeMinutes * 60 * 1000;
-      localStorage.setItem('snooze_' + caseId, snoozeUntil);
-      caseDiv.style.display = 'none';
     }
   });
 
@@ -194,20 +231,6 @@ document.addEventListener("DOMContentLoaded", function () {
       const checkbox = caseDiv.querySelector('.action-checkbox');
       const actionText = caseDiv.querySelector('.action-taken-text');
       const caseId = checkbox.dataset.caseId;
-
-      if (checkbox && !checkbox.checked) {
-        checkbox.checked = true;
-        localStorage.setItem(caseId, 'true');
-        trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud, currentMode, currentUserName);
-        if (actionText) {
-          actionText.style.display = "inline";
-        }
-      } else if (checkbox.checked) {
-        // Already actioned, but we can ensure the text is visible
-        if (actionText) {
-          actionText.style.display = "inline";
-        }
-      }
     }
   });
 
@@ -270,14 +293,15 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     const actionText = caseDiv.querySelector('.action-taken-text');
     const caseId = checkbox.dataset.caseId;
 
-    if (checkbox && !checkbox.checked) {
-      checkbox.checked = true;
-      localStorage.setItem(caseId, 'true');
-      trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud, currentMode, currentUserName);
-      if (actionText) {
-        actionText.style.display = "inline";
-      }
-    }
+    // This part is removed as previewing should not mark action taken.
+    // if (checkbox && !checkbox.checked) {
+    //   checkbox.checked = true;
+    //   localStorage.setItem(caseId, 'true');
+    //   // trackAction is now handled when comments are fetched
+    //   if (actionText) {
+    //     actionText.style.display = "inline";
+    //   }
+    // }
 
     const severityText = e.target.closest('.d-style').querySelector('li:nth-child(4)').textContent;
     const severity = severityText.includes('Level 1') ? '1' : '2';
@@ -296,5 +320,18 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
         toast.style.display = 'none';
       }, 2000);
     });
+  }
+});
+
+document.getElementById("parentSigSev2").addEventListener("click", function (e) {
+  if (e.target.classList.contains("snooze-btn")) {
+    const button = e.target;
+    const caseId = button.dataset.caseId;
+    const caseDiv = button.closest('.d-style');
+    const snoozeTimeSelect = caseDiv.querySelector('.snooze-time');
+    const snoozeMinutes = parseInt(snoozeTimeSelect.value);
+    const snoozeUntil = new Date().getTime() + snoozeMinutes * 60 * 1000;
+    localStorage.setItem('snooze_' + caseId, snoozeUntil);
+    caseDiv.style.display = 'none';
   }
 });
