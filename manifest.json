@@ -9,23 +9,23 @@
 				"https://orgcs.my.salesforce.com/*"
 			],
 			"js": [
-				"jsforce.js",
-				"jquery.min.js",
-				"bootstrap.min.js",
-				"background.js"
+				"js/vendor/jsforce.js",
+				"js/vendor/jquery.min.js",
+				"js/vendor/bootstrap.min.js",
+				"js/background.js"
 			]
 		}
 	],
 	"action": {
-		"default_icon": "case.png"
+		"default_icon": "assets/images/case.png"
 	},
 	"background": {
-		"service_worker": "background.js"
+		"service_worker": "js/background.js"
 	},
 	"icons": {
-		"16": "case.png",
-		"48": "case.png",
-		"128": "case.png"
+		"16": "assets/images/case.png",
+		"48": "assets/images/case.png",
+		"128": "assets/images/case.png"
 	},
 	"permissions": [
 		"storage",

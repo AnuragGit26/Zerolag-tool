@@ -1,7 +1,11 @@
+import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js';
+import { applyFilter, updateWeekendModeIndicator } from './utils/dom.js';
+import { trackAction } from './utils/api.js';
+
 let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
 let currentUserName;
-const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
+export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
@@ -115,7 +119,7 @@ function getCaseDetails(callback) {
 
             // Only focus tab and play audio if there are cases without action taken
             if (actionTakenCount < displayedCaseCount) {
-              var audio = new Audio('noti.wav');
+              var audio = new Audio('../assets/audio/notification.wav');
               audio.play();
               var data = 'openTab';
               chrome.runtime.sendMessage(data, function (response) {
@@ -144,137 +148,6 @@ function getCaseDetails(callback) {
   });
 }
 
-function timeElapsed(createdDate) {
-  const now = new Date();
-  const diff = now - createdDate;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) {
-    return `${days}d ago`;
-  }
-  if (hours > 0) {
-    return `${hours}h ${minutes % 60}m ago`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ago`;
-  }
-  return `${seconds}s ago`;
-}
-
-function addMinutes(numOfMinutes, date = new Date()) {
-  date.setMinutes(date.getMinutes() + numOfMinutes);
-  return date;
-}
-
-function getAuthToken(callback) {
-  chrome.identity.getAuthToken({ interactive: true }, function (token) {
-    if (chrome.runtime.lastError) {
-      console.error(chrome.runtime.lastError);
-      return;
-    }
-    callback(token);
-  });
-}
-
-function trackAction(caseNumber, severity, cloud) {
-  getAuthToken(function (token) {
-    const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
-    const now = new Date();
-    const pstDate = now.toLocaleString('en-US', {
-      timeZone: 'America/Los_Angeles',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    });
-
-    const values = [
-      [pstDate, caseNumber, currentUserName, severity, cloud]
-    ];
-
-    const body = {
-      values: values
-    };
-
-    fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}:append?valueInputOption=USER_ENTERED`, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    }).then(response => response.json())
-      .then(data => {
-        console.log('Sheet updated:', data);
-      })
-      .catch(error => {
-        console.error('Error updating sheet:', error);
-      });
-  });
-}
-
-
-function isCurrentlyWeekend() {
-  const now = new Date();
-  const currentOffset = now.getTimezoneOffset();
-  const istOffset = -330;
-
-  let istTime;
-  if (currentOffset === istOffset) {
-    istTime = now;
-  } else {
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    istTime = new Date(now.getTime() + istOffsetMs + (currentOffset * 60 * 1000));
-  }
-
-  const day = istTime.getDay();
-  const hour = istTime.getHours();
-  const minute = istTime.getMinutes();
-  const timeInMinutes = hour * 60 + minute;
-  const cutoffTime = 5 * 60 + 30;
-
-  // Weekend: Saturday 5:30 AM IST to Monday 5:30 AM IST
-  if (day === 6 && timeInMinutes >= cutoffTime) return true;
-  if (day === 0) return true;
-  if (day === 1 && timeInMinutes < cutoffTime) return true;
-
-  return false;
-}
-
-function applyFilter(filterValue) {
-  let allCases = document.querySelectorAll("#parentSigSev2 > .d-style");
-  allCases.forEach(function (caseDiv) {
-    let checkbox = caseDiv.querySelector(".action-checkbox");
-    if (checkbox) {
-      let isActionTaken = checkbox.checked;
-      if (filterValue === "all") {
-        caseDiv.style.display = "block";
-      } else if (filterValue === "action-taken" && isActionTaken) {
-        caseDiv.style.display = "block";
-      } else if (filterValue === "not-action-taken" && !isActionTaken) {
-        caseDiv.style.display = "block";
-      } else {
-        caseDiv.style.display = "none";
-      }
-    }
-  });
-}
-
-function updateWeekendModeIndicator() {
-  const weekendIndicator = document.getElementById("weekend-mode-indicator");
-  if (isCurrentlyWeekend()) {
-    weekendIndicator.style.display = "block";
-  } else {
-    weekendIndicator.style.display = "none";
-  }
-}
-
 document.addEventListener("DOMContentLoaded", function () {
   updateWeekendModeIndicator();
   setInterval(updateWeekendModeIndicator, 60000);
@@ -293,7 +166,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (checkbox.checked) {
         actionText.style.display = "inline";
         localStorage.setItem(caseId, 'true');
-        trackAction(checkbox.dataset.caseNumber, checkbox.dataset.severity, checkbox.dataset.cloud);
+        trackAction(checkbox.dataset.caseNumber, checkbox.dataset.severity, checkbox.dataset.cloud, currentMode, currentUserName);
       } else {
         actionText.style.display = "none";
         localStorage.removeItem(caseId);
@@ -325,7 +198,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (checkbox && !checkbox.checked) {
         checkbox.checked = true;
         localStorage.setItem(caseId, 'true');
-        trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud);
+        trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud, currentMode, currentUserName);
         if (actionText) {
           actionText.style.display = "inline";
         }
@@ -400,7 +273,7 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     if (checkbox && !checkbox.checked) {
       checkbox.checked = true;
       localStorage.setItem(caseId, 'true');
-      trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud);
+      trackAction(button.dataset.caseNumber, button.dataset.severity, button.dataset.cloud, currentMode, currentUserName);
       if (actionText) {
         actionText.style.display = "inline";
       }

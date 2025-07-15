@@ -6,7 +6,7 @@ chrome.runtime.onInstalled.addListener(details => {
 
 let tabId;
 chrome.alarms.onAlarm.addListener(alarm => {
-	chrome.tabs.create({ 'active': false, 'url': chrome.runtime.getURL('bcgPageSigSev2.html') }, function (tab) {
+	chrome.tabs.create({ 'active': false, 'url': chrome.runtime.getURL('popup/popup.html') }, function (tab) {
 		tabId = tab.id;
 	});
 });
