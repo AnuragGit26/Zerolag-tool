@@ -97,11 +97,14 @@ function getCaseDetails(callback) {
                   if (record.Body && record.Body.includes('#SigQBmention')) {
                     console.log('Actioned case found:', record.ParentId);
                     actionedCaseIds.add(record.ParentId);
-                    // If the action was by the current user, track it immediately.
                     if (record.CreatedById === currentUserId) {
                       const caseRecord = result.records.find(c => c.Id === record.ParentId);
                       if (caseRecord) {
-                        trackAction(caseRecord.CaseNumber, caseRecord.Severity_Level__c, caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                        const trackingKey = `tracked_${caseRecord.Id}`;
+                        if (!localStorage.getItem(trackingKey)) {
+                          trackAction(caseRecord.CaseNumber, caseRecord.Severity_Level__c, caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                          localStorage.setItem(trackingKey, 'true');
+                        }
                       }
                     }
                   }

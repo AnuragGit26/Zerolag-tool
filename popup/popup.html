@@ -2,6 +2,7 @@
 <html lang="en">
 
 <head>
+	<title>Triage Sig/Premier Alerts Tool</title>
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 	<link rel="stylesheet" type="text/css" href="../css/bootstrap.min.css">
@@ -24,6 +25,7 @@
 			color: #333;
 			min-width: 800px;
 			overflow-x: auto;
+			height: 100vh;
 		}
 
 		.container {
@@ -114,53 +116,80 @@
 		}
 
 		/* Toggle Switch Styles */
-		.toggle-switch {
+		.switch {
+			--circle-dim: 1.4em;
+			font-size: 17px;
 			position: relative;
 			display: inline-block;
-			width: 60px;
-			height: 32px;
+			width: 3.5em;
+			height: 2em;
 			flex-shrink: 0;
-			/* Prevent toggle from shrinking */
 		}
 
-		.toggle-switch .toggle-input {
+		/* Hide default HTML checkbox */
+		.switch input {
 			opacity: 0;
 			width: 0;
 			height: 0;
 		}
 
-		.toggle-switch .toggle-label {
+		/* The slider */
+		.slider {
 			position: absolute;
 			cursor: pointer;
 			top: 0;
 			left: 0;
 			right: 0;
 			bottom: 0;
-			background-color: rgba(255, 255, 255, 0.3);
-			border-radius: 34px;
-			transition: 0.3s;
-			border: 2px solid rgba(255, 255, 255, 0.5);
+			background-color: rgba(245, 174, 174, 0.8);
+			transition: .4s;
+			border-radius: 30px;
 		}
 
-		.toggle-switch .toggle-label:before {
+		.slider-card {
 			position: absolute;
 			content: "";
-			height: 24px;
-			width: 24px;
-			left: 2px;
-			bottom: 2px;
-			background-color: white;
+			height: var(--circle-dim);
+			width: var(--circle-dim);
+			border-radius: 20px;
+			left: 0.3em;
+			bottom: 0.3em;
+			transition: .4s;
+			pointer-events: none;
+		}
+
+		.slider-card-face {
+			position: absolute;
+			inset: 0;
+			backface-visibility: hidden;
+			perspective: 1000px;
 			border-radius: 50%;
-			transition: 0.3s;
-			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+			transition: .4s transform;
 		}
 
-		.toggle-switch .toggle-input:checked+.toggle-label {
-			background-color: rgba(255, 255, 255, 0.4);
+		.slider-card-front {
+			background-color: #DC3535;
 		}
 
-		.toggle-switch .toggle-input:checked+.toggle-label:before {
-			transform: translateX(28px);
+		.slider-card-back {
+			background-color: #379237;
+			transform: rotateY(180deg);
+		}
+
+		input:checked~.slider-card .slider-card-back {
+			transform: rotateY(0);
+		}
+
+		input:checked~.slider-card .slider-card-front {
+			transform: rotateY(-180deg);
+		}
+
+		input:checked~.slider-card {
+			transform: translateX(1.5em);
+		}
+
+		input:checked~.slider {
+			background-color: rgba(158, 217, 156, 0.8);
 		}
 
 		/* Search Section Styles */
@@ -237,6 +266,11 @@
 		/* Content Area */
 		.content-area {
 			padding: 24px;
+			background-color: #f5f7fa;
+			width: 100%;
+		}
+
+		.content-wrapper {
 			max-width: 1200px;
 			margin: 0 auto;
 		}
@@ -454,7 +488,6 @@
 			color: #059669;
 			font-weight: 600;
 			font-size: 14px;
-			/* display controlled by JavaScript - no default display override */
 		}
 
 		.hidden {
@@ -508,10 +541,14 @@
 				</div>
 				<div class="header-toggle">
 					<span class="toggle-label-text">Signature</span>
-					<div class="toggle-switch">
-						<input class="toggle-input" id="mode-switch" type="checkbox">
-						<label class="toggle-label" for="mode-switch"></label>
-					</div>
+					<label class="switch">
+						<input type="checkbox" id="mode-switch">
+						<div class="slider"></div>
+						<div class="slider-card">
+							<div class="slider-card-face slider-card-front"></div>
+							<div class="slider-card-face slider-card-back"></div>
+						</div>
+					</label>
 					<span class="toggle-label-text">Premier</span>
 				</div>
 				<div id="weekend-mode-indicator" style="display: none;">
@@ -534,15 +571,14 @@
 			</div>
 		</div>
 
-		<!-- Content Area -->
 		<div class="content-area">
-			<div id="parentSigSev2">
-				<!-- Case cards will be dynamically inserted here -->
+			<div class="content-wrapper">
+				<div id="parentSigSev2">
+				</div>
 			</div>
 		</div>
 	</div>
 
-	<!-- Toast Message -->
 	<div id="toast" style="display: none;">
 		Copied to clipboard!
 	</div>
