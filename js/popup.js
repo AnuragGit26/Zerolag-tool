@@ -67,7 +67,12 @@ function getCaseDetails(callback) {
             }
 
             if (result.records.length === 0) {
-              const noCasesHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #F0F8FF; border-color: #28A745;"> <div class="row align-items-center justify-content-center" style="width: 100%"> <div class="col-12 text-center"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #28A745;">No Cases to Action</h4> <p class="text-110" style="color: #0D0106; margin-top: 10px;">All cases are up to date. Great work!</p> </div> </div> </div> <div style="margin-top:10px;"></div>';
+              const noCasesHtml = `
+                <div class="no-cases-message">
+                  <h4 class="no-cases-title">No Cases to Action</h4>
+                  <p class="no-cases-text">All cases are up to date. Great work!</p>
+                </div>
+              `;
               document.getElementById("parentSigSev2").innerHTML = noCasesHtml;
               var data = 'closeTab';
               chrome.runtime.sendMessage(data, function (response) {
@@ -150,10 +155,79 @@ function getCaseDetails(callback) {
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
-                        routingLogHtml = `<li class="mt-25" style="margin-top: 0.5rem !important;"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110" style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span></span></li>`;
+                        routingLogHtml = `
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                          </div>
+                        `;
                       }
                     }
-                    const newHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #FBFBFF; border-color: #657ED4;"> <div style="position: absolute; top: 5px; right: 10px; color: #FB5012;font-weight:bold;">' + new Date(result.records[x].CreatedDate).toLocaleString() + ' (' + timeElapsed(new Date(result.records[x].CreatedDate)) + ')</div> <div class="row align-items-center" style="width: 100%"> <div class="col-12 col-md-4"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #3626A7;">' + result.records[x].Subject + '</h4> </div> <ul class="list-unstyled mb-0 col-12 col-md-4 text-90 text-left my-4 my-md-0" style="color: #0D0106;"> <li style="margin-top: 0.5rem !important;"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span><span class="text-110">' + result.records[x].Account.Name + '</span></span></li> <li class="mt-25" style="margin-top: 0.5rem !important;"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseRoutingTaxonomy__r.Name + '</span></li> <li class="mt-25" style="margin-top: 0.5rem !important;"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].CaseNumber + '</span></li> <li class="mt-25" style="margin-top: 0.5rem !important;"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110">' + result.records[x].Severity_Level__c + '</span></li> <li class="mt-25" style="margin-top: 0.5rem !important;"><i class="fa fa-check text-success-m2 text-110 mr-2 mt-1"></i><span class="text-110" style="color:' + statusColor + '">' + result.records[x].SE_Initial_Response_Status__c + '</span></li>' + routingLogHtml + ' </ul> <div class="col-12 col-md-4 text-center"><a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/' + caseId + '/view" class="f-n-hover btn btn-raised px-4 py-25 w-75 text-600 preview-record-btn" style="background-color: #3626A7; color: #FBFBFF;" data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '">Preview Record</a></div> </div> <div style="position: absolute; top:30px; right: 10px;"><input type="checkbox" class="action-checkbox" data-case-id="' + caseId + '" ' + (isActionTaken ? 'checked' : '') + ' data-case-number="' + caseData.number + '" data-severity="' + caseData.severity + '" data-cloud="' + caseData.cloud + '"> <span class="action-taken-text" style="display: ' + (isActionTaken ? 'inline' : 'none') + '; color: #214E34;font-weight: bold;">Action taken</span></div><div class="snooze-controls" style="position: absolute; bottom: 30px; right: 10px; display: flex; align-items: center;"><select class="snooze-time" data-case-id="' + caseId + '" style="margin-right: 5px; border-radius: 4px; border: 1px solid #657ED4; background-color: #FBFBFF; color: #3626A7;"><option value="5">5 mins</option><option value="10">10 mins</option><option value="15">15 mins</option><option value="20">20 mins</option></select><button class="snooze-btn" data-case-id="' + caseId + '" style="background-color: #3626A7; color: #FBFBFF; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">Snooze</button></div></div> <div style="margin-top:10px;"></div>';
+
+                    const newHtml = `
+                      <div class="case-card">
+                        <div class="case-header">
+                          <h3 class="case-title">${result.records[x].Subject}</h3>
+                          <div class="case-timestamp">${new Date(result.records[x].CreatedDate).toLocaleString()} (${timeElapsed(new Date(result.records[x].CreatedDate))})</div>
+                        </div>
+                        
+                        <div class="case-details">
+                          <div class="case-info">
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span>${result.records[x].Account.Name}</span>
+                            </div>
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span>${result.records[x].CaseRoutingTaxonomy__r.Name}</span>
+                            </div>
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span>${result.records[x].CaseNumber}</span>
+                            </div>
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span>${result.records[x].Severity_Level__c}</span>
+                            </div>
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span style="color: ${statusColor}">${result.records[x].SE_Initial_Response_Status__c}</span>
+                            </div>
+                            ${routingLogHtml}
+                          </div>
+                          
+                          <div class="case-actions">
+                            <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
+                               class="preview-btn preview-record-btn" 
+                               data-case-number="${caseData.number}" 
+                               data-severity="${caseData.severity}" 
+                               data-cloud="${caseData.cloud}">
+                              Preview Record
+                            </a>
+                            
+                            <div class="action-controls">
+                              <input type="checkbox" class="action-checkbox" 
+                                     data-case-id="${caseId}" 
+                                     ${isActionTaken ? 'checked' : ''} 
+                                     data-case-number="${caseData.number}" 
+                                     data-severity="${caseData.severity}" 
+                                     data-cloud="${caseData.cloud}">
+                              <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
+                            </div>
+                            
+                            <div class="snooze-controls">
+                              <select class="snooze-time" data-case-id="${caseId}">
+                                <option value="5">5 mins</option>
+                                <option value="10">10 mins</option>
+                                <option value="15">15 mins</option>
+                                <option value="20">20 mins</option>
+                              </select>
+                              <button class="snooze-btn" data-case-id="${caseId}">Snooze</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    `;
                     if (myHtml) {
                       myHtml = myHtml + newHtml;
                     } else {
@@ -188,7 +262,12 @@ function getCaseDetails(callback) {
                 //}, 1000);
               } else {
                 // Show "no cases to action" message when there are no records
-                const noCasesHtml = '<div style="margin-top:20px;"></div> <div class="d-style btn btn-brc-tp border-2 w-100 my-2 py-3 shadow-sm" style="width: 100%; position: relative; background-color: #F0F8FF; border-color: #28A745;"> <div class="row align-items-center justify-content-center" style="width: 100%"> <div class="col-12 text-center"> <h4 class="pt-3 text-170 text-600 letter-spacing" style="color: #28A745;">No Cases to Action</h4> <p class="text-110" style="color: #0D0106; margin-top: 10px;">All cases are up to date. Great work!</p> </div> </div> </div> <div style="margin-top:10px;"></div>';
+                const noCasesHtml = `
+                  <div class="no-cases-message">
+                    <h4 class="no-cases-title">No Cases to Action</h4>
+                    <p class="no-cases-text">All cases are up to date. Great work!</p>
+                  </div>
+                `;
                 document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
                 // All cases have action taken, don't focus the tab
                 var data = 'closeTab';
@@ -231,7 +310,7 @@ document.addEventListener("DOMContentLoaded", function () {
   document.getElementById("parentSigSev2").addEventListener("click", function (e) {
     if (e.target.classList.contains("preview-record-btn")) {
       const button = e.target;
-      const caseDiv = button.closest('.d-style');
+      const caseDiv = button.closest('.case-card');
       const checkbox = caseDiv.querySelector('.action-checkbox');
       const actionText = caseDiv.querySelector('.action-taken-text');
       const caseId = checkbox.dataset.caseId;
@@ -240,9 +319,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("search-button").addEventListener("click", function () {
     let searchValue = document.getElementById("search-input").value.toLowerCase();
-    let allCases = document.querySelectorAll("#parentSigSev2 > div");
+    let allCases = document.querySelectorAll("#parentSigSev2 .case-card");
     allCases.forEach(function (caseDiv) {
-      let caseNumberElement = caseDiv.querySelector("li:nth-child(3) span");
+      let caseNumberElement = caseDiv.querySelector(".case-info-item:nth-child(3) span:nth-child(2)");
       if (caseNumberElement) {
         let caseNumber = caseNumberElement.textContent.toLowerCase();
         if (caseNumber.includes(searchValue)) {
@@ -261,13 +340,13 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   document.getElementById("mode-switch").addEventListener("change", function () {
-    const pageTitle = document.getElementById("page-title");
+    const headerTitle = document.querySelector(".header-title");
     if (this.checked) {
       currentMode = 'premier';
-      pageTitle.textContent = 'Premier Triage Case Alerts Center';
+      headerTitle.textContent = 'Premier Triage Case Alerts Center';
     } else {
       currentMode = 'signature';
-      pageTitle.textContent = 'Signature Triage Case Alerts Center';
+      headerTitle.textContent = 'Signature Triage Case Alerts Center';
     }
     localStorage.setItem('caseTriageMode', currentMode);
     document.getElementById("parentSigSev2").innerHTML = '';
@@ -275,12 +354,12 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   const modeSwitch = document.getElementById("mode-switch");
-  const pageTitle = document.getElementById("page-title");
+  const headerTitle = document.querySelector(".header-title");
   if (currentMode === 'premier') {
     modeSwitch.checked = true;
-    pageTitle.textContent = 'Premier Triage Case Alerts Center';
+    headerTitle.textContent = 'Premier Triage Case Alerts Center';
   } else {
-    pageTitle.textContent = 'Signature Triage Case Alerts Center';
+    headerTitle.textContent = 'Signature Triage Case Alerts Center';
   }
 });
 
@@ -292,7 +371,7 @@ document.getElementById("clear-button").addEventListener("click", function () {
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
-    const caseDiv = button.closest('.d-style');
+    const caseDiv = button.closest('.case-card');
     const checkbox = caseDiv.querySelector('.action-checkbox');
     const actionText = caseDiv.querySelector('.action-taken-text');
     const caseId = checkbox.dataset.caseId;
@@ -307,7 +386,13 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     //   }
     // }
 
-    const severityText = e.target.closest('.d-style').querySelector('li:nth-child(4)').textContent;
+    const severityInfoItems = caseDiv.querySelectorAll('.case-info-item');
+    let severityText = '';
+    severityInfoItems.forEach(item => {
+      if (item.textContent.includes('Level')) {
+        severityText = item.textContent;
+      }
+    });
     const severity = severityText.includes('Level 1') ? '1' : '2';
     let textToCopy = '';
 
@@ -331,7 +416,7 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
   if (e.target.classList.contains("snooze-btn")) {
     const button = e.target;
     const caseId = button.dataset.caseId;
-    const caseDiv = button.closest('.d-style');
+    const caseDiv = button.closest('.case-card');
     const snoozeTimeSelect = caseDiv.querySelector('.snooze-time');
     const snoozeMinutes = parseInt(snoozeTimeSelect.value);
     const snoozeUntil = new Date().getTime() + snoozeMinutes * 60 * 1000;

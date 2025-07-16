@@ -1,7 +1,7 @@
 import { isCurrentlyWeekend } from './datetime.js';
 
 export function applyFilter(filterValue) {
-    let allCases = document.querySelectorAll("#parentSigSev2 > .d-style");
+    let allCases = document.querySelectorAll("#parentSigSev2 .case-card");
     allCases.forEach(function (caseDiv) {
         let checkbox = caseDiv.querySelector(".action-checkbox");
         if (checkbox) {

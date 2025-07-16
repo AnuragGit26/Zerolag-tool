@@ -12,90 +12,388 @@
 	<script src="../js/vendor/bootstrap.min.js"></script>
 
 	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
 		body {
-			margin-top: 20px;
-			color: #41464d;
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+			background-color: #f5f7fa;
+			color: #333;
+			min-width: 800px;
+			overflow-x: auto;
 		}
 
-		.btn:not(:disabled):not(.disabled) {
-			cursor: pointer;
+		.container {
+			max-width: none;
+			width: 100%;
+			padding: 0;
 		}
 
-		.btn-a-brc-tp:not(.disabled):not(:disabled).active,
-		.btn-brc-tp,
-		.btn-brc-tp:focus:not(:hover):not(:active):not(.active):not(.dropdown-toggle),
-		.btn-h-brc-tp:hover,
-		.btn.btn-f-brc-tp:focus,
-		.btn.btn-h-brc-tp:hover {
-			border-color: transparent;
+		/* Header Styles */
+		.header-container {
+			background: linear-gradient(135deg, #F76C5E 0%, #E85A4F 100%);
+			padding: 16px 24px;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 		}
 
-		.btn-outline-blue {
-			color: #0d6ce1;
-			border-color: #5a9beb;
-			background-color: transparent;
+		.header-content {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			max-width: 1200px;
+			margin: 0 auto;
 		}
 
-		.btn {
-			cursor: pointer;
+		.header-title {
+			color: white;
+			font-size: 24px;
+			font-weight: 600;
+			margin: 0;
+			letter-spacing: 0.5px;
+		}
+
+		.header-toggle {
+			display: flex;
+			align-items: center;
+			gap: 16px;
+		}
+
+		.toggle-label-text {
+			color: white;
+			font-weight: 600;
+			font-size: 16px;
+		}
+
+		/* Toggle Switch Styles */
+		.toggle-switch {
 			position: relative;
-			z-index: auto;
-			border-radius: .175rem;
-			white-space: break-spaces !important;
-			transition: color .15s, background-color .15s, border-color .15s, box-shadow .15s, opacity .15s;
+			display: inline-block;
+			width: 60px;
+			height: 32px;
 		}
 
-		.border-2 {
-			border-width: 2px !important;
-			border-style: solid !important;
-			border-color: transparent;
+		.toggle-switch .toggle-input {
+			opacity: 0;
+			width: 0;
+			height: 0;
 		}
 
-		.bgc-white {
-			background-color: #fff !important;
+		.toggle-switch .toggle-label {
+			position: absolute;
+			cursor: pointer;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background-color: rgba(255, 255, 255, 0.3);
+			border-radius: 34px;
+			transition: 0.3s;
+			border: 2px solid rgba(255, 255, 255, 0.5);
 		}
 
-
-		.text-green-d1 {
-			color: #277b5d !important;
+		.toggle-switch .toggle-label:before {
+			position: absolute;
+			content: "";
+			height: 24px;
+			width: 24px;
+			left: 2px;
+			bottom: 2px;
+			background-color: white;
+			border-radius: 50%;
+			transition: 0.3s;
+			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 		}
 
-		.letter-spacing {
-			letter-spacing: .5px !important;
+		.toggle-switch .toggle-input:checked+.toggle-label {
+			background-color: rgba(255, 255, 255, 0.4);
 		}
 
-		.font-bolder,
-		.text-600 {
-			font-weight: 500 !important;
+		.toggle-switch .toggle-input:checked+.toggle-label:before {
+			transform: translateX(28px);
 		}
 
-		.text-170 {
-			font-size: 1.2em !important;
-			font-family: system-ui !important;
+		/* Search Section Styles */
+		.search-section {
+			background: white;
+			padding: 20px 24px;
+			border-bottom: 1px solid #e1e5e9;
 		}
 
-		.text-purple-d1 {
-			color: #6d62b5 !important;
+		.search-container {
+			display: flex;
+			gap: 16px;
+			align-items: center;
+			max-width: 1200px;
+			margin: 0 auto;
 		}
 
-		.text-primary-d1 {
-			color: #276ab4 !important;
+		.search-input {
+			flex: 1;
+			max-width: 400px;
+			padding: 12px 16px;
+			border: 2px solid #e1e5e9;
+			border-radius: 8px;
+			font-size: 16px;
+			transition: border-color 0.3s ease;
 		}
 
-		.text-secondary-d1 {
-			color: #5f718b !important;
+		.search-input:focus {
+			outline: none;
+			border-color: #6366f1;
+			box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 		}
 
-		.text-180 {
-			font-size: 1.8em !important;
+		.filter-select {
+			padding: 12px 16px;
+			border: 2px solid #e1e5e9;
+			border-radius: 8px;
+			background: white;
+			font-size: 16px;
+			min-width: 140px;
+			cursor: pointer;
 		}
 
-		.text-150 {
-			font-size: 1.5em !important;
+		.btn-primary {
+			background: #4f46e5;
+			border: none;
+			color: white;
+			padding: 12px 24px;
+			border-radius: 8px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: background-color 0.3s ease;
 		}
 
-		.text-danger-m3 {
-			color: #e05858 !important;
+		.btn-primary:hover {
+			background: #4338ca;
+		}
+
+		.btn-secondary {
+			background: #6b7280;
+			border: none;
+			color: white;
+			padding: 12px 24px;
+			border-radius: 8px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: background-color 0.3s ease;
+		}
+
+		.btn-secondary:hover {
+			background: #4b5563;
+		}
+
+		/* Content Area */
+		.content-area {
+			padding: 24px;
+			max-width: 1200px;
+			margin: 0 auto;
+		}
+
+		/* Case Card Styles */
+		.case-card {
+			background: white;
+			border-radius: 12px;
+			padding: 24px;
+			margin-bottom: 16px;
+			box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+			border: 1px solid #e1e5e9;
+			position: relative;
+			transition: box-shadow 0.3s ease;
+		}
+
+		.case-card:hover {
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		}
+
+		.case-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: flex-start;
+			margin-bottom: 20px;
+		}
+
+		.case-title {
+			font-size: 20px;
+			font-weight: 600;
+			color: #374151;
+			margin: 0;
+			flex: 1;
+			margin-right: 16px;
+		}
+
+		.case-timestamp {
+			color: #F76C5E;
+			font-weight: 600;
+			font-size: 14px;
+			white-space: nowrap;
+		}
+
+		.case-details {
+			display: grid;
+			grid-template-columns: 1fr auto;
+			gap: 24px;
+			align-items: center;
+		}
+
+		.case-info {
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+		}
+
+		.case-info-item {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			font-size: 14px;
+			color: #6b7280;
+		}
+
+		.case-info-item .checkmark {
+			color: #10b981;
+			font-weight: bold;
+		}
+
+		.case-actions {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-end;
+			gap: 12px;
+		}
+
+		.preview-btn {
+			background: #6366f1;
+			color: white;
+			border: none;
+			padding: 12px 24px;
+			border-radius: 8px;
+			font-weight: 600;
+			text-decoration: none;
+			display: inline-block;
+			cursor: pointer;
+			transition: background-color 0.3s ease;
+		}
+
+		.preview-btn:hover {
+			background: #4f46e5;
+			color: white;
+			text-decoration: none;
+		}
+
+		.action-controls {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		.action-checkbox {
+			width: 18px;
+			height: 18px;
+			cursor: pointer;
+		}
+
+		.action-taken-text {
+			color: #059669;
+			font-weight: 600;
+			font-size: 14px;
+		}
+
+		.snooze-controls {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		.snooze-time {
+			padding: 6px 12px;
+			border: 1px solid #d1d5db;
+			border-radius: 6px;
+			font-size: 14px;
+		}
+
+		.snooze-btn {
+			background: #6366f1;
+			color: white;
+			border: none;
+			padding: 6px 12px;
+			border-radius: 6px;
+			font-size: 14px;
+			cursor: pointer;
+		}
+
+		.snooze-btn:hover {
+			background: #4f46e5;
+		}
+
+		/* No Cases Message */
+		.no-cases-message {
+			background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+			border: 2px solid #22c55e;
+			border-radius: 12px;
+			padding: 40px;
+			text-align: center;
+			margin: 24px 0;
+		}
+
+		.no-cases-title {
+			color: #22c55e;
+			font-size: 24px;
+			font-weight: 600;
+			margin-bottom: 12px;
+		}
+
+		.no-cases-text {
+			color: #374151;
+			font-size: 16px;
+		}
+
+		/* Weekend Mode Indicator */
+		#weekend-mode-indicator {
+			background: #fbbf24;
+			color: #92400e;
+			padding: 8px 16px;
+			border-radius: 20px;
+			font-weight: 600;
+			font-size: 14px;
+		}
+
+		/* Toast Message */
+		#toast {
+			position: fixed;
+			top: 20px;
+			right: 20px;
+			background: #10b981;
+			color: white;
+			padding: 16px 24px;
+			border-radius: 8px;
+			font-weight: 600;
+			z-index: 1000;
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		}
+
+		/* Responsive Design */
+		@media (max-width: 768px) {
+			.header-content {
+				flex-direction: column;
+				gap: 16px;
+			}
+
+			.search-container {
+				flex-direction: column;
+			}
+
+			.case-details {
+				grid-template-columns: 1fr;
+				gap: 16px;
+			}
+
+			.case-actions {
+				align-items: stretch;
+			}
 		}
 
 		/* Add your custom styles here */
@@ -103,140 +401,63 @@
 			display: none;
 		}
 
-		#toast {
-			position: fixed;
-			bottom: 20px;
-			left: 50%;
-			transform: translateX(-50%);
-			background-color: #333;
-			color: #fff;
-			padding: 10px 20px;
-			border-radius: 5px;
-			display: none;
+		.hidden {
+			display: none !important;
 		}
 
-		#weekend-mode-indicator {
-			position: absolute;
-			top: 10px;
-			right: 10px;
-			background-color: #ffc107;
-			color: #000;
-			padding: 5px 10px;
-			border-radius: 5px;
-			font-weight: bold;
-			display: none;
-		}
-
-		.toggle-switch {
-			position: relative;
-			display: inline-block;
-			width: 40px;
-			height: 24px;
-			margin: 10px;
-		}
-
-		/* Input style */
-		.toggle-switch .toggle-input {
-			display: none;
-		}
-
-		/* Label style around the switch */
-		.toggle-switch .toggle-label {
-			position: absolute;
-			top: 0;
-			left: 0;
-			width: 40px;
-			height: 24px;
-			background-color: #2196F3;
-			border-radius: 34px;
-			cursor: pointer;
-			transition: background-color 0.3s;
-		}
-
-		/* Style of the round part of the switch */
-		.toggle-switch .toggle-label::before {
-			content: "";
-			position: absolute;
-			width: 20px;
-			height: 20px;
-			border-radius: 50%;
-			top: 2px;
-			left: 2px;
-			background-color: #fff;
-			box-shadow: 0px 2px 5px 0px rgba(0, 0, 0, 0.3);
-			transition: transform 0.3s;
-		}
-
-		/* Style changes when the switch is active */
-		.toggle-switch .toggle-input:checked+.toggle-label {
-			background-color: #4CAF50;
-		}
-
-		.toggle-switch .toggle-input:checked+.toggle-label::before {
-			transform: translateX(16px);
-		}
-
-		.switch-container {
-			display: flex;
-			align-items: center;
-			justify-content: center;
-		}
-
-		.switch-container span {
-			margin: 0 10px;
-			font-weight: bold;
-			color: white;
+		.visible {
+			display: block !important;
 		}
 	</style>
 </head>
 
 <body>
 	<div class="container">
-		<div>
-			<nav class="navbar navbar-light bg-light"
-				style="background-color: #F76C5E; position: relative; display: flex; justify-content: space-between; align-items: center;">
-				<div style="flex: 1;">
-					<a class="navbar-brand" id="page-title" style="color: white;">
-						Signature Triage Case Alerts Center
-					</a>
-				</div>
-				<div class="switch-container" style="flex: 1; text-align: center;">
-					<span>Signature</span>
+		<!-- Header Section -->
+		<div class="header-container">
+			<div class="header-content">
+				<h1 class="header-title">Signature Triage Case Alerts Center</h1>
+				<div class="header-toggle">
+					<span class="toggle-label-text">Signature</span>
 					<div class="toggle-switch">
 						<input class="toggle-input" id="mode-switch" type="checkbox">
 						<label class="toggle-label" for="mode-switch"></label>
 					</div>
-					<span>Premier</span>
+					<span class="toggle-label-text">Premier</span>
 				</div>
-				<div id="weekend-mode-indicator"
-					style="flex: 1; text-align: right; background-color: #FFD700; color: #333; padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 12px; display: none;">
+				<div id="weekend-mode-indicator" style="display: none;">
 					Weekend Mode
 				</div>
-			</nav>
-		</div>
-		<div class="row mb-3 mt-3">
-			<div class="col-md-8">
-				<input type="text" class="form-control" id="search-input" placeholder="Search by Case Number...">
 			</div>
-			<div class="col-md-2">
-				<select class="form-control" id="action-filter">
+		</div>
+
+		<!-- Search Section -->
+		<div class="search-section">
+			<div class="search-container">
+				<input type="text" class="search-input" id="search-input" placeholder="Search by Case Number...">
+				<select class="filter-select" id="action-filter">
 					<option value="all">Show All</option>
 					<option value="action-taken">Action Taken</option>
 					<option value="not-action-taken">Not Action Taken</option>
 				</select>
-			</div>
-			<div class="col-md-2 d-flex">
-				<button class="btn btn-primary mr-2" id="search-button" style="flex-grow: 1;">Search</button>
-				<button class="btn btn-secondary" id="clear-button" style="flex-grow: 1;">Clear All</button>
+				<button class="btn-primary" id="search-button">Search</button>
+				<button class="btn-secondary" id="clear-button">Clear All</button>
 			</div>
 		</div>
-		<div id="parentSigSev2">
+
+		<!-- Content Area -->
+		<div class="content-area">
+			<div id="parentSigSev2">
+				<!-- Case cards will be dynamically inserted here -->
+			</div>
 		</div>
 	</div>
-	<div id="toast"
-		style="position: fixed; top: 20px; right: 20px; background-color: #4CAF50; color: white; padding: 15px; border-radius: 5px; z-index: 1000; display: none;">
+
+	<!-- Toast Message -->
+	<div id="toast" style="display: none;">
 		Copied to clipboard!
 	</div>
+
 	<script type="module" src="../js/popup.js"></script>
 </body>
 
