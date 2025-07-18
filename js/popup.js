@@ -133,30 +133,24 @@ function getCaseDetails() {
                 console.log('Total records:', result.records.length);
                 console.log(result.records.filter(x => x.Contact));
 
+                // Set total cases count based on raw result before filtering for display
+                totalCasesCount = result.records.length;
+
                 const filteredRecords = result.records.filter(x => {
+                  // This filter logic removes MVP cases with 'Met' status from being displayed as actionable alerts
                   if (x.Contact && x.Contact.Is_MVP__c === true && x.SE_Initial_Response_Status__c === 'Met') {
-                    console.log('Filtering out MVP case with Met status:', x.CaseNumber, x.SE_Initial_Response_Status__c);
-                    return false;
+                    console.log(`Filtering out MVP case with Met status: ${x.CaseNumber} ${x.SE_Initial_Response_Status__c}`);
+                    return false; // Exclude this record from the display list
                   }
-                  return true;
+                  return true; // Include all other records
                 });
 
                 console.log('Filtered records (after removing MVP Met cases):', filteredRecords.length, 'out of', result.records.length);
 
-                totalCasesCount = filteredRecords.length; // Set total cases count
+                // totalCasesCount = filteredRecords.length; // This was the bug, moved it up.
 
                 for (var x in filteredRecords) {
-                  const caseRecord = filteredRecords[x];
-                  const caseId = caseRecord.Id;
-
-                  if (caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true) {
-                    console.log('First pass - Found MVP case:', {
-                      caseNumber: caseRecord.CaseNumber,
-                      isMVP: caseRecord.Contact.Is_MVP__c,
-                      status: caseRecord.SE_Initial_Response_Status__c
-                    });
-                  }
-
+                  const caseRecord = filteredRecords[x]; // Added for clarity
                   if (caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true &&
                     (caseRecord.SE_Initial_Response_Status__c === 'In Warning' || caseRecord.SE_Initial_Response_Status__c === 'Warning')) {
 
@@ -443,7 +437,8 @@ function getCaseDetails() {
                 }
 
               }
-              if (isData && (mvpWarningHtml != undefined || myHtml != undefined)) {
+              // The condition now checks if there is actual HTML content to display, not just if variables are defined.
+              if (isData && (mvpWarningHtml || myHtml)) {
                 // Display MVP warning cases first, then regular cases
                 let finalHtml = '';
                 if (mvpWarningHtml) {
@@ -483,7 +478,7 @@ function getCaseDetails() {
                   });
 
                   const pendingCasesBanner = `
-                    <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6; margin-bottom: 20px;">
+                    <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6; margin-top: 20px;">
                       <h4 class="no-cases-title" style="color: #1d4ed8;">Cases Monitoring - No Action Required Yet</h4>
                       <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
                       <div style="margin-top: 16px;">
@@ -494,7 +489,7 @@ function getCaseDetails() {
                     </div>
                   `;
 
-                  finalHtml = pendingCasesBanner + finalHtml;
+                  finalHtml = finalHtml + pendingCasesBanner;
                 }
 
                 document.getElementById("parentSigSev2").innerHTML += finalHtml;
@@ -569,11 +564,11 @@ function getCaseDetails() {
                     </div>
                   `;
                 } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
-                  // Cases exist but none require action (all are assigned/handled)
+                  // Cases exist but none require action (all are assigned/handled or filtered out)
                   noCasesHtml = `
                     <div class="no-cases-message">
                       <h4 class="no-cases-title">No Cases for Now</h4>
-                      <p class="no-cases-text">All ${totalCasesCount} case${totalCasesCount === 1 ? ' is' : 's are'} assigned and being handled. Check back later!</p>
+                      <p class="no-cases-text">All ${totalCasesCount} case${totalCasesCount === 1 ? ' is' : 's are'} assigned or handled. Check back later!</p>
                       <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
                     </div>
                   `;
