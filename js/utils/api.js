@@ -10,18 +10,17 @@ function getAuthToken(callback) {
     });
 }
 
-export function trackAction(caseNumber, severity, cloud, currentMode, currentUserName) {
+export function trackAction(dateofAction, caseNumber, severity, cloud, currentMode, currentUserName) {
     getAuthToken(function (token) {
         const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
-        const now = new Date();
-        const pstDate = now.toLocaleDateString('en-US', {
+        const pstDate = dateofAction.toLocaleDateString('en-US', {
             timeZone: 'America/Los_Angeles',
             year: 'numeric',
             month: '2-digit',
             day: '2-digit'
         });
 
-        const istTime = now.toLocaleTimeString('en-US', {
+        const istTime = dateofAction.toLocaleTimeString('en-US', {
             timeZone: 'Asia/Kolkata',
             hour: '2-digit',
             minute: '2-digit',

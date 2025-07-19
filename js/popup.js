@@ -85,7 +85,7 @@ function getCaseDetails() {
             }
 
             const caseIds = result.records.map(record => record.Id);
-            const commentQuery = `SELECT ParentId, Body, CreatedById FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+            const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
             conn.query(commentQuery, function (commentErr, commentResult) {
               if (commentErr) {
@@ -103,7 +103,7 @@ function getCaseDetails() {
                       if (caseRecord) {
                         const trackingKey = `tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(trackingKey)) {
-                          trackAction(caseRecord.CaseNumber, caseRecord.Severity_Level__c, caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
                           localStorage.setItem(trackingKey, 'true');
                         }
                       }
@@ -518,7 +518,6 @@ function getCaseDetails() {
                     console.log('response-----' + response);
                   });
                 }
-                //}, 1000);
               } else {
                 // No cases meet alert criteria - determine what to show
                 let noCasesHtml;
