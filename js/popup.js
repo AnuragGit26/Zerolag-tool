@@ -597,6 +597,12 @@ function getCaseDetails() {
   });
 }
 
+function getWeekendSignatureTemplate(userName = '') {
+  return `Hi @,
+GHO (WOC) case assigned to you & App is updated.
+Thank You`;
+}
+
 // Function to ensure only one extension tab exists
 async function ensureSingleTab() {
   try {
@@ -620,19 +626,6 @@ document.addEventListener("DOMContentLoaded", function () {
   if (savedFilter) {
     document.getElementById('action-filter').value = savedFilter;
   }
-
-  document.getElementById("parentSigSev2").addEventListener("change", function () {
-    // Removed manual checkbox interaction - checkboxes are now disabled
-    // Auto-checking happens through case comment logic in getCaseDetails function
-  });
-
-  document.getElementById("parentSigSev2").addEventListener("click", function (e) {
-    if (e.target.classList.contains("preview-record-btn")) {
-      const button = e.target;
-      const caseDiv = button.closest('.case-card');
-      const checkbox = caseDiv.querySelector('.action-checkbox');
-    }
-  });
 
   document.getElementById("search-button").addEventListener("click", function () {
     let searchValue = document.getElementById("search-input").value.toLowerCase();
@@ -716,6 +709,8 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
 
     if (currentMode === 'premier') {
       textToCopy = `Hi\nNew SEV${severity} assigned to you & App is updated...!`;
+    } else if (currentMode === 'signature' && isCurrentlyWeekend()) {
+      textToCopy = getWeekendSignatureTemplate();
     } else if (isMVPCase) {
       // Use MVP template for MVP cases
       textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI and SLA is in warning status. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
@@ -725,15 +720,14 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
 
     navigator.clipboard.writeText(textToCopy).then(function () {
       const toast = document.getElementById('toast');
+      toast.textContent = 'Template copied to clipboard!';
       toast.style.display = 'block';
       setTimeout(function () {
         toast.style.display = 'none';
       }, 2000);
     });
   }
-});
 
-document.getElementById("parentSigSev2").addEventListener("click", function (e) {
   if (e.target.classList.contains("snooze-btn")) {
     const button = e.target;
     const caseId = button.dataset.caseId;
