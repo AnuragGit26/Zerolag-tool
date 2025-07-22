@@ -13,14 +13,18 @@ function getAuthToken(callback) {
 export function trackAction(dateofAction, caseNumber, severity, cloud, currentMode, currentUserName) {
     getAuthToken(function (token) {
         const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
-        const pstDate = dateofAction.toLocaleDateString('en-US', {
+
+        // Handle undefined dateofAction by using current date as fallback
+        const actionDate = dateofAction || new Date();
+
+        const pstDate = actionDate.toLocaleDateString('en-US', {
             timeZone: 'America/Los_Angeles',
             year: 'numeric',
             month: '2-digit',
             day: '2-digit'
         });
 
-        const istTime = dateofAction.toLocaleTimeString('en-US', {
+        const istTime = actionDate.toLocaleTimeString('en-US', {
             timeZone: 'Asia/Kolkata',
             hour: '2-digit',
             minute: '2-digit',
