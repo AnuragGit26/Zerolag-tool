@@ -140,20 +140,19 @@ function getCaseDetails() {
                   // This filter logic removes MVP cases with 'Met' status from being displayed as actionable alerts
                   if (x.Contact && x.Contact.Is_MVP__c === true && x.SE_Initial_Response_Status__c === 'Met') {
                     console.log(`Filtering out MVP case with Met status: ${x.CaseNumber} ${x.SE_Initial_Response_Status__c}`);
-                    return false; // Exclude this record from the display list
+                    return false;
                   }
-                  return true; // Include all other records
+                  return true;
                 });
 
                 console.log('Filtered records (after removing MVP Met cases):', filteredRecords.length, 'out of', result.records.length);
 
-                // totalCasesCount = filteredRecords.length; // This was the bug, moved it up.
-
                 for (var x in filteredRecords) {
-                  const caseRecord = filteredRecords[x]; // Added for clarity
+                  const caseRecord = filteredRecords[x];
                   if (caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true &&
                     (caseRecord.SE_Initial_Response_Status__c === 'In Warning' || caseRecord.SE_Initial_Response_Status__c === 'Warning')) {
 
+                    const caseId = caseRecord.Id; // Fix: Define caseId
                     const snoozeUntil = localStorage.getItem('snooze_' + caseId);
                     if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
                       continue;
@@ -163,6 +162,16 @@ function getCaseDetails() {
 
                     if (actionedCaseIds.has(caseId)) {
                       localStorage.setItem(caseId, 'true');
+                    }
+
+                    // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
+                    const routingLogs = caseRecord.Case_Routing_Logs__r;
+                    if (routingLogs && routingLogs.totalSize > 0) {
+                      const lastLog = routingLogs.records[0];
+                      if (lastLog.Transfer_Reason__c === 'GEO Locate' && caseRecord.SE_Initial_Response_Status__c === 'Met') {
+                        localStorage.setItem(caseId, 'true');
+                        console.log(`Auto-actioned case ${caseRecord.CaseNumber} due to GEO Locate routing with Met SLA`);
+                      }
                     }
 
                     const isActionTaken = localStorage.getItem(caseId) === 'true';
@@ -179,7 +188,7 @@ function getCaseDetails() {
 
                     let statusColor = 'red'; // Warning status always red
                     let routingLogHtml = '';
-                    const routingLogs = caseRecord.Case_Routing_Logs__r;
+                    // routingLogs already declared above, reuse it
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
@@ -288,6 +297,16 @@ function getCaseDetails() {
                     localStorage.setItem(caseId, 'true');
                   }
 
+                  // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
+                  const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
+                  if (routingLogs && routingLogs.totalSize > 0) {
+                    const lastLog = routingLogs.records[0];
+                    if (lastLog.Transfer_Reason__c === 'GEO Locate' || lastLog.Transfer_Reason__c === 'Dispatched' && filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
+                      localStorage.setItem(caseId, 'true');
+                      console.log(`Auto-actioned case ${filteredRecords[x].CaseNumber} due to GEO Locate routing with Met SLA`);
+                    }
+                  }
+
                   console.log('Processing case:', filteredRecords[x]);
 
                   // Check if case meets alert criteria (timing + severity)
@@ -320,7 +339,6 @@ function getCaseDetails() {
                       statusColor = 'red';
                     }
                     let routingLogHtml = '';
-                    const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
