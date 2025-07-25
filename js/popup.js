@@ -722,6 +722,14 @@ document.getElementById("clear-button").addEventListener("click", function () {
   window.location.reload();
 });
 
+document.getElementById("refresh-button").addEventListener("click", function () {
+  const refreshIcon = this.querySelector('.fa-refresh');
+  refreshIcon.classList.add('fa-spin');
+  setTimeout(() => {
+    window.location.reload();
+  }, 500);
+});
+
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
