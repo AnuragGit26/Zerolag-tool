@@ -34,6 +34,11 @@ function getCaseDetails() {
   });
   conn.identity(function (err, res) {
     if (err) {
+      const errorMessage = (err.message || err.toString()).toLowerCase();
+      if (errorMessage.includes('session') || errorMessage.includes('connection')) {
+        showToast('Connection or Session ID error. Please refresh or try toggling modes.');
+      }
+
       // Auto-open tab even on error for user to try toggle or troubleshoot
       var data = 'openTabSilent';
       chrome.runtime.sendMessage(data, function (response) {
@@ -85,6 +90,56 @@ function getCaseDetails() {
             }
 
             const caseIds = result.records.map(record => record.Id);
+
+            if (currentMode === 'premier') {
+              const caseMap = new Map(result.records.map(record => [record.Id, record]));
+              const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND Field = 'Routing_Status__c' ORDER BY CreatedDate ASC`;
+
+              conn.query(historyQuery, function (historyErr, historyResult) {
+                if (historyErr) {
+                  return console.error('Error fetching case history:', historyErr);
+                }
+
+                if (!historyResult.records || historyResult.records.length === 0) {
+                  return;
+                }
+
+                const manuallyAssignedHistories = historyResult.records.filter(
+                  history => history.NewValue && typeof history.NewValue === 'string' && history.NewValue.startsWith('Manually Assigned')
+                );
+
+                const firstAssignments = new Map();
+                for (const history of manuallyAssignedHistories) {
+                  if (!firstAssignments.has(history.CaseId)) {
+                    firstAssignments.set(history.CaseId, history);
+                  }
+                }
+
+                if (firstAssignments.size > 0) {
+                  for (const [caseId, history] of firstAssignments.entries()) {
+                    // Only track if the action was taken by the current user
+                    if (history.CreatedById === currentUserId) {
+                      const trackingKey = `tracked_premier_assignment_${caseId}`;
+                      if (!localStorage.getItem(trackingKey)) {
+                        const caseRecord = caseMap.get(caseId);
+                        if (caseRecord) {
+                          trackAction(
+                            history.CreatedDate,
+                            caseRecord.CaseNumber,
+                            caseRecord.Severity_Level__c,
+                            caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
+                            'premier_manual_assignment',
+                            currentUserName // Use current user's name
+                          );
+                          localStorage.setItem(trackingKey, 'true');
+                        }
+                      }
+                    }
+                  }
+                }
+              });
+            }
+
             const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
             conn.query(commentQuery, function (commentErr, commentResult) {
@@ -632,9 +687,9 @@ function getCaseDetails() {
   });
 }
 
-function getWeekendSignatureTemplate(userName = '') {
+function getWeekendSignatureTemplate(caseSeverity = '') {
   return `Hi @,
-GHO (WOC) case assigned to you & App is updated.
+New Sev${caseSeverity} case assigned to you & App is updated.
 Thank You`;
 }
 
@@ -688,10 +743,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const headerTitle = document.querySelector(".header-title");
     if (this.checked) {
       currentMode = 'premier';
-      headerTitle.textContent = 'Premier Triage Case Alerts Center';
+      headerTitle.textContent = 'Zerolag Tool - Premier Mode';
     } else {
       currentMode = 'signature';
-      headerTitle.textContent = 'Signature Triage Case Alerts Center';
+      headerTitle.textContent = 'Zerolag Tool - Signature Mode';
     }
     localStorage.setItem('caseTriageMode', currentMode);
 
@@ -711,9 +766,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const headerTitle = document.querySelector(".header-title");
   if (currentMode === 'premier') {
     modeSwitch.checked = true;
-    headerTitle.textContent = 'Premier Triage Case Alerts Center';
+    headerTitle.textContent = 'Zerolag Tool - Premier Mode';
   } else {
-    headerTitle.textContent = 'Signature Triage Case Alerts Center';
+    headerTitle.textContent = 'Zerolag Tool - Signature Mode';
   }
 });
 
@@ -753,7 +808,7 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     if (currentMode === 'premier') {
       textToCopy = `Hi\nNew SEV${severity} assigned to you & App is updated...!`;
     } else if (currentMode === 'signature' && isCurrentlyWeekend()) {
-      textToCopy = getWeekendSignatureTemplate();
+      textToCopy = getWeekendSignatureTemplate(severity);
     } else if (isMVPCase) {
       // Use MVP template for MVP cases
       textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI and SLA is in warning status. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;

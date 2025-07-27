@@ -42,9 +42,6 @@
 		"https://orgcs.my.salesforce.com/services/data/*",
 		"https://orgcs.my.salesforce.com/*",
 		"https://login.Salesforce.com/*",
-		"https://test.Salesforce.com/*",
-		"https://test.salesforce.com/",
-		"https://login.salesforce.com/",
 		"https://maxcdn.bootstrapcdn.com/*",
 		"https://sheets.googleapis.com/"
 	],
