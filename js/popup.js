@@ -66,7 +66,10 @@ function getCaseDetails() {
 
         // Get current shift dynamically
         const currentShift = getCurrentShift();
-        let ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND Preferred_Shift__c='${currentShift}' AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+        const preferredShiftValues = getPreferredShiftValues(currentShift);
+        const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
+
+        let ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
         let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
         return conn.query(query,
@@ -722,21 +725,36 @@ function getCurrentShift() {
   const minutes = now.getMinutes();
   const totalMinutes = hours * 60 + minutes;
 
-  // Convert time ranges to minutes from midnight
-  // 5:30 AM = 330 minutes, 12:30 PM = 750 minutes, 8:00 PM = 1200 minutes
-  const apacStart = 5 * 60 + 30;  // 5:30 AM (330 minutes)
-  const emeaStart = 12 * 60 + 30; // 12:30 PM (750 minutes)
-  const amerStart = 20 * 60;      // 8:00 PM (1200 minutes)
-  const apacEnd = 12 * 60 + 30;   // 12:30 PM (750 minutes)
-  const emeaEnd = 20 * 60;        // 8:00 PM (1200 minutes)
-  const amerEnd = 5 * 60 + 30;    // 5:30 AM next day (330 minutes)
+  const apacStart = 5 * 60 + 30;
+  const emeaStart = 12 * 60 + 30;
+  const amerStart = 20 * 60;
+  const apacEnd = 12 * 60 + 30;
+  const emeaEnd = 20 * 60;
+  const amerEnd = 5 * 60 + 30;
 
   if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
-    return 'APAC'; // 5:30 AM - 12:30 PM
+    return 'APAC'; // 5:30 AM - 12:30 PM IST
   } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
-    return 'EMEA'; // 12:30 PM - 8:00 PM
+    return 'EMEA'; // 12:30 PM - 8:00 PM IST
   } else {
-    return 'AMER'; // 8:00 PM - 5:30 AM (next day)
+    return 'AMER'; // 8:00 PM - 5:30 AM IST (next day)
+  }
+}
+function getPreferredShiftValues(currentShift) {
+  if (currentShift === 'APAC') {
+    return ['APAC', 'IST'];
+  } else if (currentShift === 'EMEA') {
+    return ['EMEA', 'IST'];
+  } else {
+    return [currentShift];
+  }
+}
+
+function buildPreferredShiftCondition(shiftValues) {
+  if (shiftValues.length === 1) {
+    return `Preferred_Shift__c='${shiftValues[0]}'`;
+  } else {
+    return `Preferred_Shift__c IN ('${shiftValues.join("','")}')`;
   }
 }
 
@@ -746,18 +764,16 @@ function checkGHOAlert() {
   const currentTime = now.getHours() * 60 + now.getMinutes();
   const today = now.toDateString();
 
-  // Alert times (in minutes from midnight)
-  const apacAlertTime = 7 * 60 + 30;  // 7:30 AM
-  const emeaAlertTime = 14 * 60 + 30; // 2:30 PM (14:30)
-  const amerAlertTime = 22 * 60 + 30; // 10:30 PM (22:30)
+  const apacAlertTime = 7 * 60 + 30;  // 7:30 AM IST
+  const emeaAlertTime = 14 * 60 + 30; // 2:30 PM IST (14:30)
+  const amerAlertTime = 22 * 60 + 30; // 10:30 PM IST (22:30)
 
-  // Check if we're within 5 minutes of any alert time
   const isAPACTime = Math.abs(currentTime - apacAlertTime) <= 5;
   const isEMEATime = Math.abs(currentTime - emeaAlertTime) <= 5;
   const isAMERTime = Math.abs(currentTime - amerAlertTime) <= 5;
 
   if (!(isAPACTime || isEMEATime || isAMERTime)) {
-    return; // Not alert time
+    return;
   }
 
   // Determine which region alert this is
@@ -766,19 +782,20 @@ function checkGHOAlert() {
   else if (isEMEATime) region = 'EMEA';
   else if (isAMERTime) region = 'AMER';
 
-  // Check if alert already shown today for this region
   const alertKey = `gho_alert_${region}_${today}_${currentUserName}`;
   if (localStorage.getItem(alertKey)) {
-    return; // Alert already shown today for this user and region
+    return;
   }
 
-  // Execute GHO query to check for cases
   let conn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
   });
 
-  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND Preferred_Shift__c='${region}' AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const preferredShiftValues = getPreferredShiftValues(region);
+  const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
+
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
 
   conn.query(ghoQuery, function (err, result) {
     if (err) {
@@ -787,7 +804,7 @@ function checkGHOAlert() {
     }
 
     if (!result.records || result.records.length === 0) {
-      // No GHO cases found, mark alert as shown to prevent repeated checks
+
       localStorage.setItem(alertKey, 'true');
       return;
     }
@@ -881,6 +898,17 @@ function showGHOAlert(region, ghoRecords) {
 
   document.body.insertAdjacentHTML('beforeend', modalHtml);
 
+  // Play GHO alert sound immediately when modal appears
+  try {
+    const audio = new Audio('../assets/audio/ghoalert.wav');
+    audio.volume = 1.0;
+    audio.play().catch(e => {
+      console.log('Audio autoplay blocked or failed:', e);
+    });
+  } catch (e) {
+    console.log('Could not play GHO alert sound:', e);
+  }
+
   // Add event listeners
   document.getElementById('gho-alert-close').addEventListener('click', () => {
     document.getElementById('gho-alert-modal').remove();
@@ -894,14 +922,6 @@ function showGHOAlert(region, ghoRecords) {
     document.getElementById('gho-alert-modal').remove();
     checkGHOStatus(); // Open the GHO status modal
   });
-
-  // Play notification sound
-  try {
-    const audio = new Audio('../assets/audio/notification.wav');
-    audio.play();
-  } catch (e) {
-    console.log('Could not play notification sound:', e);
-  }
 }
 
 // Helper function to check if a case matches GHO criteria
@@ -922,7 +942,10 @@ function matchesGHOCriteria(caseRecord, targetShift) {
     );
 
   const isClosed = caseRecord.IsClosed === false;
-  const hasCorrectShift = caseRecord.Preferred_Shift__c === targetShift;
+
+  // Check if case matches target shift or valid shift combinations
+  const preferredShiftValues = getPreferredShiftValues(targetShift);
+  const hasCorrectShift = preferredShiftValues.includes(caseRecord.Preferred_Shift__c);
 
   const hasValidTaxonomy = (
     caseRecord.CaseRoutingTaxonomy__r.Name.includes('Sales-') ||
@@ -1202,12 +1225,12 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
       textToCopy = `Hi\nNew SEV${severity} assigned to you & App is updated...!`;
     } else if (currentMode === 'signature' && isCurrentlyWeekend()) {
       textToCopy = getWeekendSignatureTemplate(severity);
-    } else if (isMVPCase) {
-      // Use MVP template for MVP cases
-      textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI and SLA is in warning status. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
     } else if (isMVPCase && (severity === '1' || severity === '2')) {
       textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
-    } else {
+    } else if (isMVPCase) {
+      textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI and SLA is in warning status. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
+    }
+    else {
       textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} case, as it has not been assigned through OMNI. \nThank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
     }
 
@@ -1317,7 +1340,10 @@ function checkGHOStatus() {
 
   // Get current shift dynamically and use in GHO query
   const currentShift = getCurrentShift();
-  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND Preferred_Shift__c='${currentShift}' AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const preferredShiftValues = getPreferredShiftValues(currentShift);
+  const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
+
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
 
   conn.query(ghoQuery, function (err, result) {
     if (err) {
