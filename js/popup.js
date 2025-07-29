@@ -1,10 +1,11 @@
 import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js';
-import { applyFilter, updateWeekendModeIndicator } from './utils/dom.js';
+import { applyFilter, applySearch, updateWeekendModeIndicator } from './utils/dom.js';
 import { trackAction } from './utils/api.js';
 
 let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
 let currentUserName;
+let searchTimeout; // For debounced search functionality
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
 function getSessionIds() {
@@ -63,6 +64,9 @@ function getCaseDetails() {
 
         let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 1) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
 
+        // Get current shift dynamically
+        const currentShift = getCurrentShift();
+        let ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND Preferred_Shift__c='${currentShift}' AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
         let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
         return conn.query(query,
@@ -266,7 +270,7 @@ function getCaseDetails() {
                             <span style="background-color: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP URGENT</span>
                             <h3 class="case-title">${caseRecord.Subject}</h3>
                           </div>
-                          <div class="case-timestamp">${new Date(caseRecord.CreatedDate).toLocaleString()} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
+                          <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
                         </div>
                         
                         <div class="case-details">
@@ -428,7 +432,7 @@ function getCaseDetails() {
                             ${caseData.isSLAM ? '<span style="background-color: #d9534f; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">SLAM</span>' : ''}
                             <h3 class="case-title">${filteredRecords[x].Subject}</h3>
                           </div>
-                          <div class="case-timestamp">${new Date(filteredRecords[x].CreatedDate).toLocaleString()} (${timeElapsed(new Date(filteredRecords[x].CreatedDate))})</div>
+                          <div class="case-timestamp">${formatDateWithDayOfWeek(filteredRecords[x].CreatedDate)} (${timeElapsed(new Date(filteredRecords[x].CreatedDate))})</div>
                         </div>
                         
                         <div class="case-details">
@@ -557,7 +561,7 @@ function getCaseDetails() {
                             ${caseDetail.account}
                           </div>
                           <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
-                            Created: ${caseDetail.createdDate.toLocaleString()} (${caseDetail.minutesSinceCreation}m ago)
+                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
                           </div>
                         </div>
                         <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
@@ -631,7 +635,7 @@ function getCaseDetails() {
                             ${caseDetail.account}
                           </div>
                           <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
-                            Created: ${caseDetail.createdDate.toLocaleString()} (${caseDetail.minutesSinceCreation}m ago)
+                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
                           </div>
                         </div>
                         <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
@@ -693,6 +697,266 @@ New Sev${caseSeverity} case assigned to you & App is updated.
 Thank You`;
 }
 
+function getGHOTemplate() {
+  return `Hi @QB,
+Greetings for the day.!
+
+Kindly assist with GHO case assignment on this case.
+
+Thank You
+#GHOTriage`;
+}
+
+// Helper function to format date with day of the week
+function formatDateWithDayOfWeek(date) {
+  const dateObj = new Date(date);
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayOfWeek = dayNames[dateObj.getDay()];
+  return `${dayOfWeek}, ${dateObj.toLocaleString()}`;
+}
+
+// Function to determine current shift based on time of day
+function getCurrentShift() {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const totalMinutes = hours * 60 + minutes;
+
+  // Convert time ranges to minutes from midnight
+  // 5:30 AM = 330 minutes, 12:30 PM = 750 minutes, 8:00 PM = 1200 minutes
+  const apacStart = 5 * 60 + 30;  // 5:30 AM (330 minutes)
+  const emeaStart = 12 * 60 + 30; // 12:30 PM (750 minutes)
+  const amerStart = 20 * 60;      // 8:00 PM (1200 minutes)
+  const apacEnd = 12 * 60 + 30;   // 12:30 PM (750 minutes)
+  const emeaEnd = 20 * 60;        // 8:00 PM (1200 minutes)
+  const amerEnd = 5 * 60 + 30;    // 5:30 AM next day (330 minutes)
+
+  if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
+    return 'APAC'; // 5:30 AM - 12:30 PM
+  } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
+    return 'EMEA'; // 12:30 PM - 8:00 PM
+  } else {
+    return 'AMER'; // 8:00 PM - 5:30 AM (next day)
+  }
+}
+
+// GHO Alert System Functions
+function checkGHOAlert() {
+  const now = new Date();
+  const currentTime = now.getHours() * 60 + now.getMinutes();
+  const today = now.toDateString();
+
+  // Alert times (in minutes from midnight)
+  const apacAlertTime = 7 * 60 + 30;  // 7:30 AM
+  const emeaAlertTime = 14 * 60 + 30; // 2:30 PM (14:30)
+  const amerAlertTime = 22 * 60 + 30; // 10:30 PM (22:30)
+
+  // Check if we're within 5 minutes of any alert time
+  const isAPACTime = Math.abs(currentTime - apacAlertTime) <= 5;
+  const isEMEATime = Math.abs(currentTime - emeaAlertTime) <= 5;
+  const isAMERTime = Math.abs(currentTime - amerAlertTime) <= 5;
+
+  if (!(isAPACTime || isEMEATime || isAMERTime)) {
+    return; // Not alert time
+  }
+
+  // Determine which region alert this is
+  let region = '';
+  if (isAPACTime) region = 'APAC';
+  else if (isEMEATime) region = 'EMEA';
+  else if (isAMERTime) region = 'AMER';
+
+  // Check if alert already shown today for this region
+  const alertKey = `gho_alert_${region}_${today}_${currentUserName}`;
+  if (localStorage.getItem(alertKey)) {
+    return; // Alert already shown today for this user and region
+  }
+
+  // Execute GHO query to check for cases
+  let conn = new jsforce.Connection({
+    serverUrl: 'https://orgcs.my.salesforce.com',
+    sessionId: SESSION_ID,
+  });
+
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND Preferred_Shift__c='${region}' AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+
+  conn.query(ghoQuery, function (err, result) {
+    if (err) {
+      console.error('GHO Alert Query Error:', err);
+      return;
+    }
+
+    if (!result.records || result.records.length === 0) {
+      // No GHO cases found, mark alert as shown to prevent repeated checks
+      localStorage.setItem(alertKey, 'true');
+      return;
+    }
+
+    // Check if any cases need action (not all have #GHOTriage)
+    const caseIds = result.records.map(record => record.Id);
+    const commentQuery = `SELECT ParentId, Body FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+
+    conn.query(commentQuery, function (commentErr, commentResult) {
+      if (commentErr) {
+        console.error('GHO Comment Query Error:', commentErr);
+        return;
+      }
+
+      // Get cases that have #GHOTriage comments - filter using JavaScript
+      const actionedCaseIds = new Set();
+      if (commentResult.records) {
+        commentResult.records.forEach(comment => {
+          if (comment.Body && comment.Body.includes('#GHOTriage')) {
+            actionedCaseIds.add(comment.ParentId);
+          }
+        });
+      }
+
+      // Filter out cases that have been actioned
+      const unactionedCases = result.records.filter(caseRecord => !actionedCaseIds.has(caseRecord.Id));
+
+      if (unactionedCases.length > 0) {
+        // Show GHO alert
+        showGHOAlert(region, unactionedCases);
+      }
+
+      // Mark alert as shown regardless of whether we showed it
+      localStorage.setItem(alertKey, 'true');
+    });
+  });
+}
+
+function showGHOAlert(region, ghoRecords) {
+  const alertTime = region === 'APAC' ? '7:30 AM' : region === 'EMEA' ? '2:30 PM' : '10:30 PM';
+
+  // Create and show modal
+  let existingModal = document.getElementById('gho-alert-modal');
+  if (existingModal) {
+    existingModal.remove();
+  }
+
+  const modalHtml = `
+    <div id="gho-alert-modal" class="modal-overlay" style="display: flex; z-index: 1001;">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+          <h3 style="color: white; margin: 0;">🚨 GHO Alert - ${region} Region</h3>
+          <span class="modal-close" id="gho-alert-close" style="color: white; cursor: pointer; font-size: 24px;">&times;</span>
+        </div>
+        <div class="modal-body">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <h4 style="color: #f59e0b; margin-bottom: 8px;">Daily GHO Check - ${alertTime} IST</h4>
+            <p style="color: #6b7280; font-size: 14px;">Found ${ghoRecords.length} GHO case${ghoRecords.length === 1 ? '' : 's'} requiring attention for ${region} shift</p>
+          </div>
+          
+          <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+            <h5 style="color: #9a3412; margin: 0 0 8px 0;">Cases Needing Action:</h5>
+            <div style="max-height: 200px; overflow-y: auto;">
+              ${ghoRecords.map(caseRecord => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #fed7aa;">
+                  <div>
+                    <strong style="color: #9a3412;">${caseRecord.CaseNumber}</strong>
+                    <span style="color: #6b7280; margin-left: 8px;">${caseRecord.Severity_Level__c}</span>
+                    ${caseRecord.Contact && caseRecord.Contact.Is_MVP__c ? '<span style="background-color: #9333ea; color: white; padding: 1px 4px; border-radius: 4px; font-size: 10px; margin-left: 4px;">MVP</span>' : ''}
+                  </div>
+                  <div style="color: #6b7280; font-size: 12px;">
+                    ${timeElapsed(new Date(caseRecord.CreatedDate))}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button id="gho-alert-check" class="preview-btn" style="background: #f59e0b; border: none; padding: 12px 24px;">
+              Check GHO Cases
+            </button>
+            <button id="gho-alert-dismiss" class="preview-btn" style="background: #6b7280; border: none; padding: 12px 24px;">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+  // Add event listeners
+  document.getElementById('gho-alert-close').addEventListener('click', () => {
+    document.getElementById('gho-alert-modal').remove();
+  });
+
+  document.getElementById('gho-alert-dismiss').addEventListener('click', () => {
+    document.getElementById('gho-alert-modal').remove();
+  });
+
+  document.getElementById('gho-alert-check').addEventListener('click', () => {
+    document.getElementById('gho-alert-modal').remove();
+    checkGHOStatus(); // Open the GHO status modal
+  });
+
+  // Play notification sound
+  try {
+    const audio = new Audio('../assets/audio/notification.wav');
+    audio.play();
+  } catch (e) {
+    console.log('Could not play notification sound:', e);
+  }
+}
+
+// Helper function to check if a case matches GHO criteria
+function matchesGHOCriteria(caseRecord, targetShift) {
+  // Check basic criteria
+  const hasValidOwner = (
+    (caseRecord.Owner.Name.includes('Skills Queue') ||
+      caseRecord.Owner.Name === 'Kase Changer' ||
+      caseRecord.Owner.Name === 'Working in Org62' ||
+      caseRecord.Owner.Name === 'GHO Queue') &&
+    (caseRecord.Case_Support_level__c === 'Premier Priority' ||
+      caseRecord.Case_Support_level__c === 'Signature' ||
+      caseRecord.Case_Support_level__c === 'Signature Success')
+  ) || (
+      caseRecord.Contact &&
+      caseRecord.Contact.Is_MVP__c === true &&
+      caseRecord.Owner.Name === 'GHO Queue'
+    );
+
+  const isClosed = caseRecord.IsClosed === false;
+  const hasCorrectShift = caseRecord.Preferred_Shift__c === targetShift;
+
+  const hasValidTaxonomy = (
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Sales-') ||
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Service-') ||
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Industry') ||
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Community-') ||
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Scale Center') ||
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Customer Success Score') ||
+    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Data Cloud-')
+  );
+
+  const hasValidSeverity = (
+    caseRecord.Severity_Level__c === 'Level 1 - Critical' ||
+    caseRecord.Severity_Level__c === 'Level 2 - Urgent'
+  );
+
+  const isNotExcluded = !(
+    caseRecord.CaseRoutingTaxonomy__r.Name === 'Disability and Product Accessibility' ||
+    caseRecord.CaseRoutingTaxonomy__r.Name === 'DORA'
+  );
+
+  return hasValidOwner && isClosed && hasCorrectShift && hasValidTaxonomy && hasValidSeverity && isNotExcluded;
+}// Function to control GHO button visibility based on mode
+function updateGHOButtonVisibility() {
+  const ghoButton = document.getElementById("check-gho-button");
+  if (ghoButton) {
+    if (currentMode === 'signature') {
+      ghoButton.style.display = 'inline-block';
+    } else {
+      ghoButton.style.display = 'none';
+    }
+  }
+}
+
 // Function to ensure only one extension tab exists
 async function ensureSingleTab() {
   try {
@@ -712,25 +976,68 @@ document.addEventListener("DOMContentLoaded", function () {
   setInterval(updateWeekendModeIndicator, 60000);
   getSessionIds();
 
+  // Start GHO alert checking every minute
+  setInterval(checkGHOAlert, 60000);
+  // Check immediately on load
+  setTimeout(checkGHOAlert, 5000);
+
   const savedFilter = localStorage.getItem('caseFilter');
   if (savedFilter) {
     document.getElementById('action-filter').value = savedFilter;
   }
 
+  // Search input validation - enable/disable search button based on input
+  function validateSearchInput() {
+    const searchInput = document.getElementById("search-input");
+    const searchButton = document.getElementById("search-button");
+    const inputValue = searchInput.value.trim();
+
+    if (inputValue.length > 0) {
+      searchButton.disabled = false;
+    } else {
+      searchButton.disabled = true;
+    }
+  }
+
+  // Debounced search function for real-time filtering
+  function performRealTimeSearch() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      const searchValue = document.getElementById("search-input").value.trim();
+      applySearch(searchValue);
+    }, 300); // 300ms delay to avoid too many calls while typing
+  }
+
+  // Add input event listener to validate search input in real-time
+  document.getElementById("search-input").addEventListener("input", function () {
+    validateSearchInput();
+    performRealTimeSearch();
+  });
+
+  // Add keyup event listener for better responsiveness (handles backspace, delete, etc.)
+  document.getElementById("search-input").addEventListener("keyup", function () {
+    validateSearchInput();
+    performRealTimeSearch();
+  });
+
+  // Add Enter key support for search
+  document.getElementById("search-input").addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !document.getElementById("search-button").disabled) {
+      event.preventDefault();
+      clearTimeout(searchTimeout); // Cancel any pending real-time search
+      const searchValue = this.value.trim();
+      applySearch(searchValue);
+    }
+  });
+
   document.getElementById("search-button").addEventListener("click", function () {
-    let searchValue = document.getElementById("search-input").value.toLowerCase();
-    let allCases = document.querySelectorAll("#parentSigSev2 .case-card");
-    allCases.forEach(function (caseDiv) {
-      let caseNumberElement = caseDiv.querySelector(".case-info-item:nth-child(3) span:nth-child(2)");
-      if (caseNumberElement) {
-        let caseNumber = caseNumberElement.textContent.toLowerCase();
-        if (caseNumber.includes(searchValue)) {
-          caseDiv.style.display = "block";
-        } else {
-          caseDiv.style.display = "none";
-        }
-      }
-    });
+    // Safety check - prevent execution if button is disabled
+    if (this.disabled) {
+      return;
+    }
+
+    let searchValue = document.getElementById("search-input").value.trim();
+    applySearch(searchValue);
   });
 
   document.getElementById("action-filter").addEventListener("change", function () {
@@ -749,6 +1056,16 @@ document.addEventListener("DOMContentLoaded", function () {
       headerTitle.textContent = 'Zerolag Tool - Signature Mode';
     }
     localStorage.setItem('caseTriageMode', currentMode);
+
+    // Update GHO button visibility based on mode
+    updateGHOButtonVisibility();
+
+    // Clear search and filter when changing modes
+    document.getElementById("search-input").value = "";
+    document.getElementById("search-button").disabled = true;
+    document.getElementById("action-filter").value = "all";
+    localStorage.setItem('caseFilter', 'all');
+    clearTimeout(searchTimeout);
 
     // Clear existing content and show loading state
     document.getElementById("parentSigSev2").innerHTML = `
@@ -770,11 +1087,87 @@ document.addEventListener("DOMContentLoaded", function () {
   } else {
     headerTitle.textContent = 'Zerolag Tool - Signature Mode';
   }
+
+  // Set initial GHO button visibility
+  updateGHOButtonVisibility();
+
+  // GHO Button Event Listener
+  document.getElementById("check-gho-button").addEventListener("click", function () {
+    checkGHOStatus();
+  });
+
+  // GHO Modal Event Listeners
+  document.getElementById("gho-modal-close").addEventListener("click", function () {
+    document.getElementById('gho-modal').style.display = 'none';
+  });
+
+  // Close modal when clicking outside
+  document.getElementById("gho-modal").addEventListener("click", function (e) {
+    if (e.target === this) {
+      this.style.display = 'none';
+    }
+  });
+
+  // GHO Toggle Button Event Listener (using event delegation)
+  document.getElementById("gho-cases-container").addEventListener("click", function (e) {
+    // Find the button element, whether clicked directly or on a child element
+    const button = e.target.closest('.gho-toggle-btn');
+    if (button) {
+      const caseUniqueId = button.dataset.caseId;
+      toggleGhoTransfers(caseUniqueId);
+    }
+
+    // Handle GHO preview record clicks - auto-copy GHO template
+    if (e.target && e.target.classList.contains("gho-preview-btn")) {
+      const templateText = getGHOTemplate();
+      navigator.clipboard.writeText(templateText).then(function () {
+        const toast = document.getElementById('toast');
+        toast.textContent = 'GHO template copied to clipboard!';
+        toast.style.display = 'block';
+        setTimeout(function () {
+          toast.style.display = 'none';
+        }, 2000);
+      }).catch(function (err) {
+        console.error('Failed to copy GHO template: ', err);
+        showToast('Failed to copy template to clipboard');
+      });
+    }
+  });
+
+  // Add hover effects for GHO toggle buttons using event delegation
+  document.getElementById("gho-cases-container").addEventListener("mouseover", function (e) {
+    const button = e.target.closest('.gho-toggle-btn');
+    if (button) {
+      button.style.background = 'linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)';
+      button.style.transform = 'translateY(-1px)';
+      button.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
+    }
+  });
+
+  document.getElementById("gho-cases-container").addEventListener("mouseout", function (e) {
+    const button = e.target.closest('.gho-toggle-btn');
+    if (button) {
+      button.style.background = 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)';
+      button.style.transform = 'translateY(0)';
+      button.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.05)';
+    }
+  });
 });
 
 document.getElementById("clear-button").addEventListener("click", function () {
+  // Clear search input
   document.getElementById("search-input").value = "";
-  window.location.reload();
+  document.getElementById("search-button").disabled = true;
+
+  // Reset filter to "all"
+  document.getElementById("action-filter").value = "all";
+  localStorage.setItem('caseFilter', 'all');
+
+  // Clear any pending search timeout
+  clearTimeout(searchTimeout);
+
+  // Apply the reset state (show all cases)
+  applySearch("");
 });
 
 document.getElementById("refresh-button").addEventListener("click", function () {
@@ -812,6 +1205,8 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     } else if (isMVPCase) {
       // Use MVP template for MVP cases
       textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI and SLA is in warning status. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
+    } else if (isMVPCase && (severity === '1' || severity === '2')) {
+      textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} MVP case, as it has not been assigned through OMNI. Thank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
     } else {
       textToCopy = `Hi\nKindly help with the assignment of new SEV${severity} case, as it has not been assigned through OMNI. \nThank you!\nFYI: @Susanna Catherine \n#SigQBmention`;
     }
@@ -897,5 +1292,338 @@ function updateStatusIndicator(hasUnactionedCases, totalCases, actionedCases) {
   } else {
     statusDot.style.backgroundColor = '#22c55e'; // Green for all actioned
     statusText.textContent = 'All Cases Actioned';
+  }
+}
+
+// GHO Functions
+function checkGHOStatus() {
+  const modal = document.getElementById('gho-modal');
+  const container = document.getElementById('gho-cases-container');
+
+  // Show modal and loading state
+  modal.style.display = 'flex';
+  container.innerHTML = `
+    <div class="loading-message">
+      <h4>Loading GHO cases...</h4>
+      <p>Please wait while we fetch the latest GHO cases.</p>
+    </div>
+  `;
+
+  // Get connection and execute GHO query
+  let conn = new jsforce.Connection({
+    serverUrl: 'https://orgcs.my.salesforce.com',
+    sessionId: SESSION_ID,
+  });
+
+  // Get current shift dynamically and use in GHO query
+  const currentShift = getCurrentShift();
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND Preferred_Shift__c='${currentShift}' AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+
+  conn.query(ghoQuery, function (err, result) {
+    if (err) {
+      console.error('GHO Query Error:', err);
+      container.innerHTML = `
+        <div class="no-cases-message" style="background-color: #fef2f2; border: 2px solid #ef4444;">
+          <h4 class="no-cases-title" style="color: #dc2626;">Error Loading GHO Cases</h4>
+          <p class="no-cases-text" style="color: #dc2626;">Failed to fetch GHO cases. Please check your connection and try again.</p>
+          <p style="color: #6b7280; font-size: 12px; margin-top: 8px;">Error: ${err.message}</p>
+        </div>
+      `;
+      return;
+    }
+
+    showGHOStatusModal(result.records);
+  });
+}
+
+// Helper function to get user names from User IDs
+function getUserNames(userIds, callback) {
+  if (!userIds || userIds.length === 0) {
+    callback({});
+    return;
+  }
+
+  let conn = new jsforce.Connection({
+    serverUrl: 'https://orgcs.my.salesforce.com',
+    sessionId: SESSION_ID,
+  });
+
+  const userQuery = `SELECT Id, Name FROM User WHERE Id IN ('${userIds.join("','")}') AND Username LIKE '%orgcs.com'`;
+
+  conn.query(userQuery, function (err, result) {
+    if (err) {
+      console.error('Error fetching user names:', err);
+      callback({});
+      return;
+    }
+
+    const userMap = {};
+    if (result.records) {
+      result.records.forEach(user => {
+        userMap[user.Id] = user.Name;
+      });
+    }
+    callback(userMap);
+  });
+}
+
+function showGHOStatusModal(ghoRecords) {
+  const container = document.getElementById('gho-cases-container');
+  const currentShift = getCurrentShift();
+
+  if (!ghoRecords || ghoRecords.length === 0) {
+    container.innerHTML = `
+      <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6;">
+        <h4 class="no-cases-title" style="color: #1d4ed8;">No GHO Cases Found</h4>
+        <p class="no-cases-text">No cases matching GHO criteria were found for <strong>${currentShift}</strong> shift. Great work!</p>
+        <p class="mode-switch-hint">✅ All GHO cases are up to date for current shift.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Collect all unique user IDs from routing logs
+  const allUserIds = new Set();
+  ghoRecords.forEach(caseRecord => {
+    if (caseRecord.Case_Routing_Logs__r && caseRecord.Case_Routing_Logs__r.records) {
+      caseRecord.Case_Routing_Logs__r.records.forEach(log => {
+        if (log.CreatedById) {
+          allUserIds.add(log.CreatedById);
+        }
+      });
+    }
+  });
+
+  // Get user names for all user IDs
+  getUserNames(Array.from(allUserIds), function (userMap) {
+    let ghoHtml = `
+      <div style="margin-bottom: 16px;">
+        <h4 style="color: #374151; font-size: 18px; margin-bottom: 8px;">Found ${ghoRecords.length} GHO Case${ghoRecords.length === 1 ? '' : 's'}</h4>
+        <p style="color: #6b7280; font-size: 14px;">Cases matching GHO criteria for <strong>${currentShift}</strong> shift</p>
+        <div style="margin-top: 8px; padding: 8px 12px; background-color: #f3f4f6; border-radius: 6px; font-size: 12px; color: #374151;">
+          <strong>Current Shift:</strong> ${currentShift} | 
+          <strong>Time:</strong> ${new Date().toLocaleTimeString()} |
+          <strong>Shifts:</strong> APAC (5:30AM-2:30PM), EMEA (12:30PM-9:30PM), AMER (8:30PM-5:30AM)
+        </div>
+      </div>
+    `;
+
+    ghoRecords.forEach(caseRecord => {
+      const caseId = caseRecord.Id;
+      const isMVP = caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true;
+
+      // Determine status color
+      let statusColor = '';
+      if (caseRecord.SE_Initial_Response_Status__c === 'Met') {
+        statusColor = 'green';
+      } else if (caseRecord.SE_Initial_Response_Status__c === 'In Warning' || caseRecord.SE_Initial_Response_Status__c === 'Warning') {
+        statusColor = 'red';
+      }
+
+      // Build routing log HTML and GHO transfer information
+      let routingLogHtml = '';
+      let ghoTransferHtml = '';
+      const routingLogs = caseRecord.Case_Routing_Logs__r;
+
+      if (routingLogs && routingLogs.totalSize > 0) {
+        const lastLog = routingLogs.records[0];
+        if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+          routingLogHtml = `
+            <div class="case-info-item">
+              <span class="checkmark">✓</span>
+              <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+            </div>
+          `;
+        }
+
+        // Process GHO transfers and create nested list
+        const allGhoTransfers = routingLogs.records.filter(log =>
+          log.Transfer_Reason__c === 'GHO'
+        ).sort((a, b) => new Date(b.CreatedDate) - new Date(a.CreatedDate)); // Sort by CreatedDate DESC
+
+        if (allGhoTransfers.length > 0) {
+          // Separate transfers by current shift and others
+          const currentShiftTransfers = allGhoTransfers.filter(transfer =>
+            transfer.Preferred_Shift_Old_Value__c === currentShift
+          );
+          const otherTransfers = allGhoTransfers.filter(transfer =>
+            transfer.Preferred_Shift_Old_Value__c !== currentShift
+          );
+
+          const caseUniqueId = `gho-${caseRecord.Id}`;
+          let nestedListHtml = '';
+
+          // Default view: Current shift transfers
+          if (currentShiftTransfers.length > 0) {
+            currentShiftTransfers.forEach((transfer, index) => {
+              const userName = userMap[transfer.CreatedById] || 'Unknown User';
+              const transferTime = new Date(transfer.CreatedDate);
+              const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
+              const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
+
+              nestedListHtml += `
+                <div style="margin: 4px 0; padding: 8px 12px; background-color: #fef3c7; border-radius: 6px; border-left: 3px solid #f59e0b;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-weight: 600; color: #92400e; font-size: 13px;">${userName}</span>
+                    <span style="font-size: 11px; color: #78350f;">${formatDateWithDayOfWeek(transferTime)}</span>
+                  </div>
+                  <div style="display: flex; gap: 16px; font-size: 11px; color: #78350f;">
+                    <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
+                    <span><strong>GHO TO:</strong> ${ghoTo}</span>
+                  </div>
+                  <div style="font-size: 10px; color: #a3a3a3; margin-top: 2px;">${timeElapsed(transferTime)} ago</div>
+                </div>
+              `;
+            });
+          }
+
+          // Add expansion button if there are other transfers
+          if (otherTransfers.length > 0) {
+            nestedListHtml += `
+              <div style="margin: 8px 0;">
+                <button class="gho-toggle-btn" data-case-id="${caseUniqueId}"
+                        style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #475569; cursor: pointer; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);">
+                  <i class="fa fa-chevron-down" aria-hidden="true" style="font-size: 10px; color: #64748b; transition: transform 0.2s ease;"></i>
+                  <span id="${caseUniqueId}-toggle-text" style="font-weight: 500;">Show ${otherTransfers.length} more GHO transfer${otherTransfers.length > 1 ? 's' : ''}</span>
+                </button>
+              </div>
+              <div id="${caseUniqueId}-expanded" style="display: none;">
+            `;
+
+            otherTransfers.forEach(transfer => {
+              const userName = userMap[transfer.CreatedById] || 'Unknown User';
+              const transferTime = new Date(transfer.CreatedDate);
+              const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
+              const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
+
+              nestedListHtml += `
+                <div style="margin: 4px 0; padding: 8px 12px; background-color: #f9fafb; border-radius: 6px; border-left: 3px solid #9ca3af;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-weight: 600; color: #4b5563; font-size: 13px;">${userName}</span>
+                    <span style="font-size: 11px; color: #6b7280;">${formatDateWithDayOfWeek(transferTime)}</span>
+                  </div>
+                  <div style="display: flex; gap: 16px; font-size: 11px; color: #6b7280;">
+                    <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
+                    <span><strong>GHO TO:</strong> ${ghoTo}</span>
+                  </div>
+                  <div style="font-size: 10px; color: #a3a3a3; margin-top: 2px;">${timeElapsed(transferTime)} ago</div>
+                </div>
+              `;
+            });
+
+            nestedListHtml += `</div>`;
+          }
+
+          ghoTransferHtml = `
+            <div class="case-info-item" style="flex-direction: column; align-items: flex-start;">
+              <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span class="checkmark">✓</span>
+                <span style="color: #f59e0b; font-weight: bold;">GHO Transfer History (${allGhoTransfers.length} transfer${allGhoTransfers.length > 1 ? 's' : ''}):</span>
+              </div>
+              <div style="width: 100%; margin-left: 20px;">
+                ${nestedListHtml}
+              </div>
+            </div>
+          `;
+        } else {
+          ghoTransferHtml = `
+            <div class="case-info-item">
+              <span class="checkmark">✓</span>
+              <span style="color: #6b7280; font-style: italic;">No GHO transfers found</span>
+            </div>
+          `;
+        }
+      }
+
+      const caseHtml = `
+        <div class="case-card ${isMVP ? 'mvp-case' : ''}" style="margin-bottom: 16px; ${isMVP ? 'border-left: 4px solid #9333ea;' : ''}">
+          <div class="case-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              ${isMVP ? '<span style="background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP</span>' : ''}
+              <span style="background-color: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">GHO</span>
+              <h3 class="case-title">${caseRecord.Subject}</h3>
+            </div>
+            <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
+          </div>
+          
+          <div class="case-details">
+            <div class="case-info">
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span>${caseRecord.Account.Name}</span>
+              </div>
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span>${caseRecord.Owner.Name}</span>
+              </div>
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span>${caseRecord.CaseRoutingTaxonomy__r.Name}</span>
+              </div>
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span>${caseRecord.CaseNumber}</span>
+              </div>
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span>${caseRecord.Severity_Level__c}</span>
+              </div>
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c}${isMVP ? ' - MVP CASE' : ''}</span>
+              </div>
+              ${routingLogHtml}
+              ${ghoTransferHtml}
+            </div>
+            
+            <div class="case-actions">
+              <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
+                 class="preview-btn gho-preview-btn" 
+                 data-case-id="${caseId}"
+                 style="margin-top: 12px;">
+                View Case Record
+              </a>
+            </div>
+          </div>
+        </div>
+      `;
+
+      ghoHtml += caseHtml;
+    });
+
+    container.innerHTML = ghoHtml;
+  });
+}
+
+// Function to toggle GHO transfer expansion
+function toggleGhoTransfers(caseUniqueId) {
+  try {
+    const expandedDiv = document.getElementById(`${caseUniqueId}-expanded`);
+    const toggleText = document.getElementById(`${caseUniqueId}-toggle-text`);
+    const toggleButton = document.querySelector(`[data-case-id="${caseUniqueId}"]`);
+    const chevronIcon = toggleButton ? toggleButton.querySelector('.fa-chevron-down') : null;
+
+    if (!expandedDiv || !toggleText) {
+      console.error('GHO toggle elements not found for:', caseUniqueId);
+      return;
+    }
+
+    if (expandedDiv.style.display === 'none') {
+      // Expand the section
+      expandedDiv.style.display = 'block';
+      toggleText.innerHTML = toggleText.innerHTML.replace('Show', 'Hide');
+      if (chevronIcon) {
+        chevronIcon.style.transform = 'rotate(180deg)';
+      }
+    } else {
+      // Collapse the section
+      expandedDiv.style.display = 'none';
+      toggleText.innerHTML = toggleText.innerHTML.replace('Hide', 'Show');
+      if (chevronIcon) {
+        chevronIcon.style.transform = 'rotate(0deg)';
+      }
+    }
+  } catch (error) {
+    console.error('Error toggling GHO transfers:', error);
   }
 }
