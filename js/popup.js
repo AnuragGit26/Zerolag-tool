@@ -5,7 +5,7 @@ import { trackAction } from './utils/api.js';
 let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
 let currentUserName;
-let searchTimeout; // For debounced search functionality
+let searchTimeout;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
 function getSessionIds() {
@@ -69,7 +69,6 @@ function getCaseDetails() {
         const preferredShiftValues = getPreferredShiftValues(currentShift);
         const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-        let ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
         let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
         return conn.query(query,
@@ -134,9 +133,10 @@ function getCaseDetails() {
                             history.CreatedDate,
                             caseRecord.CaseNumber,
                             caseRecord.Severity_Level__c,
+                            'New Case',
                             caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
-                            'premier_manual_assignment',
-                            currentUserName // Use current user's name
+                            currentMode,
+                            currentUserName
                           );
                           localStorage.setItem(trackingKey, 'true');
                         }
@@ -168,8 +168,26 @@ function getCaseDetails() {
                       if (caseRecord) {
                         const trackingKey = `tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(trackingKey)) {
-                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
                           localStorage.setItem(trackingKey, 'true');
+                        }
+                      }
+                    }
+                  }
+
+                  // Track GHO Triage actions
+                  if (record.Body && record.Body.includes('#GHOTriage')) {
+                    console.log('GHO Triage action found:', record.ParentId);
+                    if (record.CreatedById === currentUserId) {
+                      const caseRecord = result.records.find(c => c.Id === record.ParentId);
+                      console.log('Case record for GHO triage comment:', caseRecord);
+                      if (caseRecord) {
+                        const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                        if (!localStorage.getItem(ghoTrackingKey)) {
+                          // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
+                          trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                          localStorage.setItem(ghoTrackingKey, 'true');
+                          console.log('GHO triage action tracked for case:', caseRecord.CaseNumber);
                         }
                       }
                     }
@@ -701,15 +719,21 @@ Thank You`;
 }
 
 function getGHOTemplate() {
-  return `Hi @QB,
+  if (isCurrentlyWeekend()) {
+    return `Hi @,
+GHO (WOC) case assigned to you & App is updated.
+Thank You`;
+  }
+  else {
+    return `Hi @QB,
 Greetings for the day.!
 
 Kindly assist with GHO case assignment on this case.
 
 Thank You
 #GHOTriage`;
+  }
 }
-
 // Helper function to format date with day of the week
 function formatDateWithDayOfWeek(date) {
   const dateObj = new Date(date);
@@ -727,10 +751,8 @@ function getCurrentShift() {
 
   const apacStart = 5 * 60 + 30;
   const emeaStart = 12 * 60 + 30;
-  const amerStart = 20 * 60;
   const apacEnd = 12 * 60 + 30;
   const emeaEnd = 20 * 60;
-  const amerEnd = 5 * 60 + 30;
 
   if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
     return 'APAC'; // 5:30 AM - 12:30 PM IST
@@ -787,11 +809,6 @@ function checkGHOAlert() {
     return;
   }
 
-  let conn = new jsforce.Connection({
-    serverUrl: 'https://orgcs.my.salesforce.com',
-    sessionId: SESSION_ID,
-  });
-
   const preferredShiftValues = getPreferredShiftValues(region);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
@@ -804,14 +821,13 @@ function checkGHOAlert() {
     }
 
     if (!result.records || result.records.length === 0) {
-
       localStorage.setItem(alertKey, 'true');
       return;
     }
 
     // Check if any cases need action (not all have #GHOTriage)
     const caseIds = result.records.map(record => record.Id);
-    const commentQuery = `SELECT ParentId, Body FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+    const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
     conn.query(commentQuery, function (commentErr, commentResult) {
       if (commentErr) {
@@ -819,26 +835,49 @@ function checkGHOAlert() {
         return;
       }
 
-      // Get cases that have #GHOTriage comments - filter using JavaScript
-      const actionedCaseIds = new Set();
-      if (commentResult.records) {
-        commentResult.records.forEach(comment => {
-          if (comment.Body && comment.Body.includes('#GHOTriage')) {
-            actionedCaseIds.add(comment.ParentId);
-          }
-        });
-      }
+      // Get current user ID for tracking
+      conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
+        let currentUserId = null;
+        if (!userErr && userResult.records.length > 0) {
+          currentUserId = userResult.records[0].Id;
+        }
 
-      // Filter out cases that have been actioned
-      const unactionedCases = result.records.filter(caseRecord => !actionedCaseIds.has(caseRecord.Id));
+        // Get cases that have #GHOTriage comments - filter using JavaScript
+        const actionedCaseIds = new Set();
+        if (commentResult.records) {
+          commentResult.records.forEach(comment => {
+            if (comment.Body && comment.Body.includes('#GHOTriage')) {
+              actionedCaseIds.add(comment.ParentId);
 
-      if (unactionedCases.length > 0) {
-        // Show GHO alert
-        showGHOAlert(region, unactionedCases);
-      }
+              // Track GHO Triage actions if current user made the comment
+              if (currentUserId && comment.CreatedById === currentUserId) {
+                const caseRecord = result.records.find(c => c.Id === comment.ParentId);
+                console.log('GHO alert - Case record for triage comment:', caseRecord);
+                if (caseRecord) {
+                  const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                  if (!localStorage.getItem(ghoTrackingKey)) {
+                    // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
+                    trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                    localStorage.setItem(ghoTrackingKey, 'true');
+                    console.log('GHO alert - GHO triage action tracked for case:', caseRecord.CaseNumber);
+                  }
+                }
+              }
+            }
+          });
+        }
 
-      // Mark alert as shown regardless of whether we showed it
-      localStorage.setItem(alertKey, 'true');
+        // Filter out cases that have been actioned
+        const unactionedCases = result.records.filter(caseRecord => !actionedCaseIds.has(caseRecord.Id));
+
+        if (unactionedCases.length > 0) {
+          // Show GHO alert
+          showGHOAlert(region, unactionedCases);
+        }
+
+        // Mark alert as shown regardless of whether we showed it
+        localStorage.setItem(alertKey, 'true');
+      });
     });
   });
 }
@@ -925,50 +964,6 @@ function showGHOAlert(region, ghoRecords) {
 }
 
 // Helper function to check if a case matches GHO criteria
-function matchesGHOCriteria(caseRecord, targetShift) {
-  // Check basic criteria
-  const hasValidOwner = (
-    (caseRecord.Owner.Name.includes('Skills Queue') ||
-      caseRecord.Owner.Name === 'Kase Changer' ||
-      caseRecord.Owner.Name === 'Working in Org62' ||
-      caseRecord.Owner.Name === 'GHO Queue') &&
-    (caseRecord.Case_Support_level__c === 'Premier Priority' ||
-      caseRecord.Case_Support_level__c === 'Signature' ||
-      caseRecord.Case_Support_level__c === 'Signature Success')
-  ) || (
-      caseRecord.Contact &&
-      caseRecord.Contact.Is_MVP__c === true &&
-      caseRecord.Owner.Name === 'GHO Queue'
-    );
-
-  const isClosed = caseRecord.IsClosed === false;
-
-  // Check if case matches target shift or valid shift combinations
-  const preferredShiftValues = getPreferredShiftValues(targetShift);
-  const hasCorrectShift = preferredShiftValues.includes(caseRecord.Preferred_Shift__c);
-
-  const hasValidTaxonomy = (
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Sales-') ||
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Service-') ||
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Industry') ||
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Community-') ||
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Scale Center') ||
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Customer Success Score') ||
-    caseRecord.CaseRoutingTaxonomy__r.Name.includes('Data Cloud-')
-  );
-
-  const hasValidSeverity = (
-    caseRecord.Severity_Level__c === 'Level 1 - Critical' ||
-    caseRecord.Severity_Level__c === 'Level 2 - Urgent'
-  );
-
-  const isNotExcluded = !(
-    caseRecord.CaseRoutingTaxonomy__r.Name === 'Disability and Product Accessibility' ||
-    caseRecord.CaseRoutingTaxonomy__r.Name === 'DORA'
-  );
-
-  return hasValidOwner && isClosed && hasCorrectShift && hasValidTaxonomy && hasValidSeverity && isNotExcluded;
-}// Function to control GHO button visibility based on mode
 function updateGHOButtonVisibility() {
   const ghoButton = document.getElementById("check-gho-button");
   if (ghoButton) {
@@ -1205,7 +1200,6 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
     const caseDiv = button.closest('.case-card');
-    const checkbox = caseDiv.querySelector('.action-checkbox');
 
     const severityInfoItems = caseDiv.querySelectorAll('.case-info-item');
     let severityText = '';
@@ -1358,6 +1352,40 @@ function checkGHOStatus() {
       return;
     }
 
+    // Check for and track any GHO triage actions before showing the modal
+    if (result.records && result.records.length > 0) {
+      const caseIds = result.records.map(record => record.Id);
+      const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost' AND Body LIKE '%#GHOTriage%'`;
+
+      conn.query(commentQuery, function (commentErr, commentResult) {
+        if (!commentErr && commentResult.records) {
+          // Get current user ID for tracking
+          conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
+            let currentUserId = null;
+            if (!userErr && userResult.records.length > 0) {
+              currentUserId = userResult.records[0].Id;
+            }
+
+            if (currentUserId) {
+              commentResult.records.forEach(comment => {
+                if (comment.CreatedById === currentUserId) {
+                  const caseRecord = result.records.find(c => c.Id === comment.ParentId);
+                  if (caseRecord) {
+                    const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                    if (!localStorage.getItem(ghoTrackingKey)) {
+                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                      localStorage.setItem(ghoTrackingKey, 'true');
+                      console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber);
+                    }
+                  }
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+
     showGHOStatusModal(result.records);
   });
 }
@@ -1368,11 +1396,6 @@ function getUserNames(userIds, callback) {
     callback({});
     return;
   }
-
-  let conn = new jsforce.Connection({
-    serverUrl: 'https://orgcs.my.salesforce.com',
-    sessionId: SESSION_ID,
-  });
 
   const userQuery = `SELECT Id, Name FROM User WHERE Id IN ('${userIds.join("','")}') AND Username LIKE '%orgcs.com'`;
 
@@ -1481,7 +1504,7 @@ function showGHOStatusModal(ghoRecords) {
 
           // Default view: Current shift transfers
           if (currentShiftTransfers.length > 0) {
-            currentShiftTransfers.forEach((transfer, index) => {
+            currentShiftTransfers.forEach((transfer) => {
               const userName = userMap[transfer.CreatedById] || 'Unknown User';
               const transferTime = new Date(transfer.CreatedDate);
               const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
@@ -1606,7 +1629,7 @@ function showGHOStatusModal(ghoRecords) {
               <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
                  class="preview-btn gho-preview-btn" 
                  data-case-id="${caseId}"
-                 style="margin-top: 12px;">
+                 style="margin-top: 12px;position:absolute;top:50px;right:10px">
                 View Case Record
               </a>
             </div>

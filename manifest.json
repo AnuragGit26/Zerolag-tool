@@ -43,7 +43,7 @@
 		"https://orgcs.my.salesforce.com/*",
 		"https://login.Salesforce.com/*",
 		"https://maxcdn.bootstrapcdn.com/*",
-		"https://sheets.googleapis.com/"
+		"https://sheets.googleapis.com/*"
 	],
 	"oauth2": {
 		"client_id": "334319683411-nmrnf0q6o414hiad6cnirgiou4rr7dbe.apps.googleusercontent.com",

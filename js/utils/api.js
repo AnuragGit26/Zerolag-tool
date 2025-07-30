@@ -1,4 +1,4 @@
-import { SPREADSHEET_ID } from '../popup.js';
+const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
 function getAuthToken(callback) {
     chrome.identity.getAuthToken({ interactive: true }, function (token) {
@@ -10,7 +10,7 @@ function getAuthToken(callback) {
     });
 }
 
-export function trackAction(dateofAction, caseNumber, severity, cloud, currentMode, currentUserName) {
+export function trackAction(dateofAction, caseNumber, severity, actionType, currentMode, currentUserName) {
     getAuthToken(function (token) {
         const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
 
@@ -32,8 +32,10 @@ export function trackAction(dateofAction, caseNumber, severity, cloud, currentMo
             hour12: true
         });
 
+
+        // Updated column order: Date, Type, Time of Action, Case Number, Engineer Name, Severity, Cloud
         const values = [
-            [pstDate, istTime, caseNumber, currentUserName, severity, cloud]
+            [pstDate, actionType, istTime, caseNumber, currentUserName, severity, cleanCloud]
         ];
 
         const body = {
