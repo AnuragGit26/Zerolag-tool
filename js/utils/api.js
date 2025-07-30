@@ -10,7 +10,7 @@ function getAuthToken(callback) {
     });
 }
 
-export function trackAction(dateofAction, caseNumber, severity, actionType, currentMode, currentUserName) {
+export function trackAction(dateofAction, caseNumber, severity, actionType, cloud, currentMode, currentUserName) {
     getAuthToken(function (token) {
         const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
 
@@ -35,7 +35,7 @@ export function trackAction(dateofAction, caseNumber, severity, actionType, curr
 
         // Updated column order: Date, Type, Time of Action, Case Number, Engineer Name, Severity, Cloud
         const values = [
-            [pstDate, actionType, istTime, caseNumber, currentUserName, severity, cleanCloud]
+            [pstDate, actionType, istTime, caseNumber, currentUserName, severity, cloud]
         ];
 
         const body = {
