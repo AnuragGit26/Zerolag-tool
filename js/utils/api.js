@@ -14,8 +14,13 @@ export function trackAction(dateofAction, caseNumber, severity, actionType, clou
     getAuthToken(function (token) {
         const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
 
-        // Handle undefined dateofAction by using current date as fallback
-        const actionDate = dateofAction || new Date();
+        // Handle dateofAction - convert to Date object if it's a string, or use current date as fallback
+        let actionDate;
+        if (dateofAction) {
+            actionDate = dateofAction instanceof Date ? dateofAction : new Date(dateofAction);
+        } else {
+            actionDate = new Date();
+        }
 
         const pstDate = actionDate.toLocaleDateString('en-US', {
             timeZone: 'America/Los_Angeles',

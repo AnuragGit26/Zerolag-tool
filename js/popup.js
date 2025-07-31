@@ -1327,7 +1327,7 @@ function checkGHOStatus() {
   `;
 
   // Get connection and execute GHO query
-  let conn = new jsforce.Connection({
+  let ghoConn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
   });
@@ -1339,7 +1339,7 @@ function checkGHOStatus() {
 
   const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
 
-  conn.query(ghoQuery, function (err, result) {
+  ghoConn.query(ghoQuery, function (err, result) {
     if (err) {
       console.error('GHO Query Error:', err);
       container.innerHTML = `
@@ -1355,12 +1355,12 @@ function checkGHOStatus() {
     // Check for and track any GHO triage actions before showing the modal
     if (result.records && result.records.length > 0) {
       const caseIds = result.records.map(record => record.Id);
-      const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost' AND Body LIKE '%#GHOTriage%'`;
+      const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
-      conn.query(commentQuery, function (commentErr, commentResult) {
+      ghoConn.query(commentQuery, function (commentErr, commentResult) {
         if (!commentErr && commentResult.records) {
           // Get current user ID for tracking
-          conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
+          ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
             let currentUserId = null;
             if (!userErr && userResult.records.length > 0) {
               currentUserId = userResult.records[0].Id;
@@ -1368,7 +1368,7 @@ function checkGHOStatus() {
 
             if (currentUserId) {
               commentResult.records.forEach(comment => {
-                if (comment.CreatedById === currentUserId) {
+                if (comment.Body && comment.Body.includes('#GHOTriage') && comment.CreatedById === currentUserId) {
                   const caseRecord = result.records.find(c => c.Id === comment.ParentId);
                   if (caseRecord) {
                     const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
@@ -1381,17 +1381,24 @@ function checkGHOStatus() {
                 }
               });
             }
+
+            // Show modal with results
+            showGHOStatusModal(result.records, ghoConn);
           });
+        } else {
+          // Show modal even if comment query fails
+          showGHOStatusModal(result.records, ghoConn);
         }
       });
+    } else {
+      // Show modal with empty results
+      showGHOStatusModal(result.records, ghoConn);
     }
-
-    showGHOStatusModal(result.records);
   });
 }
 
 // Helper function to get user names from User IDs
-function getUserNames(userIds, callback) {
+function getUserNames(userIds, conn, callback) {
   if (!userIds || userIds.length === 0) {
     callback({});
     return;
@@ -1416,7 +1423,7 @@ function getUserNames(userIds, callback) {
   });
 }
 
-function showGHOStatusModal(ghoRecords) {
+function showGHOStatusModal(ghoRecords, conn) {
   const container = document.getElementById('gho-cases-container');
   const currentShift = getCurrentShift();
 
@@ -1444,7 +1451,7 @@ function showGHOStatusModal(ghoRecords) {
   });
 
   // Get user names for all user IDs
-  getUserNames(Array.from(allUserIds), function (userMap) {
+  getUserNames(Array.from(allUserIds), conn, function (userMap) {
     let ghoHtml = `
       <div style="margin-bottom: 16px;">
         <h4 style="color: #374151; font-size: 18px; margin-bottom: 8px;">Found ${ghoRecords.length} GHO Case${ghoRecords.length === 1 ? '' : 's'}</h4>
