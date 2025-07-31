@@ -13,15 +13,18 @@ chrome.runtime.onStartup.addListener(() => {
 
 let tabId;
 
-// Function to close all existing extension tabs
+// Function to close all existing extension tabs (except active ones)
 async function closeExistingExtensionTabs() {
 	const extensionUrl = chrome.runtime.getURL('popup/popup.html');
 	try {
 		const tabs = await chrome.tabs.query({ url: extensionUrl });
 		if (tabs.length > 0) {
-			const tabIds = tabs.map(tab => tab.id);
-			await chrome.tabs.remove(tabIds);
-			console.log(`Closed ${tabs.length} existing extension tab(s)`);
+			const inactiveTabs = tabs.filter(tab => !tab.active);
+			if (inactiveTabs.length > 0) {
+				const tabIds = inactiveTabs.map(tab => tab.id);
+				await chrome.tabs.remove(tabIds);
+				console.log(`Closed ${inactiveTabs.length} inactive extension tab(s)`);
+			}
 		}
 	} catch (error) {
 		console.error('Error closing existing tabs:', error);
@@ -31,7 +34,19 @@ async function closeExistingExtensionTabs() {
 // Function to create a single extension tab
 async function createSingleExtensionTab() {
 	try {
-		// First, close any existing extension tabs
+		// First, check if there's already an active extension tab
+		const extensionUrl = chrome.runtime.getURL('popup/popup.html');
+		const existingTabs = await chrome.tabs.query({ url: extensionUrl });
+
+		// If there's an active tab, don't create a new one
+		const activeTabs = existingTabs.filter(tab => tab.active);
+		if (activeTabs.length > 0) {
+			tabId = activeTabs[0].id;
+			console.log(`Active extension tab already exists with ID: ${tabId}, skipping creation`);
+			return;
+		}
+
+		// Close any inactive extension tabs before creating a new one
 		await closeExistingExtensionTabs();
 
 		// Then create a new tab
@@ -117,18 +132,31 @@ chrome.runtime.onMessage.addListener(
 chrome.tabs.onCreated.addListener(async (tab) => {
 	const extensionUrl = chrome.runtime.getURL('popup/popup.html');
 	if (tab.url === extensionUrl) {
-		// A new extension tab was created, ensure we only keep one
+		// A new extension tab was created, ensure we only keep one active
 		const tabs = await chrome.tabs.query({ url: extensionUrl });
 		if (tabs.length > 1) {
-			// Keep the newest tab and close others
-			const sortedTabs = tabs.sort((a, b) => b.id - a.id);
-			const tabsToClose = sortedTabs.slice(1).map(t => t.id);
-			if (tabsToClose.length > 0) {
-				await chrome.tabs.remove(tabsToClose);
-				console.log(`Closed ${tabsToClose.length} duplicate extension tab(s)`);
+			// Check if there's already an active extension tab
+			const activeTabs = tabs.filter(t => t.active);
+			const inactiveTabs = tabs.filter(t => !t.active);
+
+			if (activeTabs.length > 0) {
+				// There's an active tab, close all inactive ones including the new one if it's inactive
+				if (inactiveTabs.length > 0) {
+					const tabsToClose = inactiveTabs.map(t => t.id);
+					await chrome.tabs.remove(tabsToClose);
+					console.log(`Closed ${tabsToClose.length} inactive duplicate tab(s)`);
+				}
+				tabId = activeTabs[0].id;
+			} else {
+				// No active tabs, keep the newest and close others
+				const sortedTabs = tabs.sort((a, b) => b.id - a.id);
+				const tabsToClose = sortedTabs.slice(1).map(t => t.id);
+				if (tabsToClose.length > 0) {
+					await chrome.tabs.remove(tabsToClose);
+					console.log(`Closed ${tabsToClose.length} duplicate extension tab(s)`);
+				}
+				tabId = sortedTabs[0].id;
 			}
-			// Update our tracked tab ID to the newest one
-			tabId = sortedTabs[0].id;
 		}
 	}
 });
@@ -147,12 +175,26 @@ async function performPeriodicCleanup() {
 	try {
 		const tabs = await chrome.tabs.query({ url: extensionUrl });
 		if (tabs.length > 1) {
-			// Keep the most recently created tab and close others
-			const sortedTabs = tabs.sort((a, b) => b.id - a.id);
-			const tabsToClose = sortedTabs.slice(1).map(t => t.id);
-			await chrome.tabs.remove(tabsToClose);
-			tabId = sortedTabs[0].id;
-			console.log(`Periodic cleanup: Closed ${tabsToClose.length} duplicate tab(s)`);
+			// Check for active tabs first
+			const activeTabs = tabs.filter(tab => tab.active);
+			const inactiveTabs = tabs.filter(tab => !tab.active);
+
+			if (activeTabs.length > 0) {
+				// Keep the active tab and close all inactive ones
+				if (inactiveTabs.length > 0) {
+					const tabsToClose = inactiveTabs.map(t => t.id);
+					await chrome.tabs.remove(tabsToClose);
+					console.log(`Periodic cleanup: Closed ${tabsToClose.length} inactive duplicate tab(s)`);
+				}
+				tabId = activeTabs[0].id;
+			} else {
+				// No active tabs, keep the most recently created tab and close others
+				const sortedTabs = tabs.sort((a, b) => b.id - a.id);
+				const tabsToClose = sortedTabs.slice(1).map(t => t.id);
+				await chrome.tabs.remove(tabsToClose);
+				tabId = sortedTabs[0].id;
+				console.log(`Periodic cleanup: Closed ${tabsToClose.length} duplicate tab(s)`);
+			}
 		} else if (tabs.length === 1) {
 			// Update our reference to the existing tab
 			tabId = tabs[0].id;
