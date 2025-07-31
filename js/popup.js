@@ -987,6 +987,177 @@ async function ensureSingleTab() {
   }
 }
 
+// Keyboard shortcuts handler
+document.addEventListener('keydown', function (e) {
+  // Check if Command (Mac) or Ctrl (Windows/Linux) is pressed
+  if (e.metaKey || e.ctrlKey) {
+    switch (e.key.toLowerCase()) {
+      case 'f':
+        e.preventDefault();
+        // Focus on search input
+        const searchInput = document.getElementById("search-input");
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select(); // Select all text if any exists
+        }
+        break;
+
+      case 'g':
+        e.preventDefault();
+        // Open GHO status modal (only in signature mode)
+        if (currentMode === 'signature') {
+          checkGHOStatus();
+        } else {
+          showToast('GHO status is only available in Signature mode');
+        }
+        break;
+
+      case 'r':
+        e.preventDefault();
+        // Refresh the page
+        const refreshIcon = document.querySelector('#refresh-button .fa-refresh');
+        if (refreshIcon) {
+          refreshIcon.classList.add('fa-spin');
+        }
+        setTimeout(() => {
+          window.location.reload();
+        }, 500);
+        break;
+
+      case '1':
+        e.preventDefault();
+        // Switch to signature mode
+        const modeSwitch = document.getElementById("mode-switch");
+        if (modeSwitch && modeSwitch.checked) {
+          modeSwitch.checked = false;
+          modeSwitch.dispatchEvent(new Event('change'));
+        }
+        break;
+
+      case '2':
+        e.preventDefault();
+        // Switch to premier mode
+        const modeSwitchPremier = document.getElementById("mode-switch");
+        if (modeSwitchPremier && !modeSwitchPremier.checked) {
+          modeSwitchPremier.checked = true;
+          modeSwitchPremier.dispatchEvent(new Event('change'));
+        }
+        break;
+
+      case 'a':
+        e.preventDefault();
+        // Clear all filters and search
+        document.getElementById("search-input").value = "";
+        document.getElementById("search-button").disabled = true;
+        document.getElementById("action-filter").value = "all";
+        localStorage.setItem('caseFilter', 'all');
+        clearTimeout(searchTimeout);
+        applySearch("");
+        showToast('Filters and search cleared');
+        break;
+    }
+  }
+
+  // ESC key to close modals
+  if (e.key === 'Escape') {
+    // Close GHO modal if open
+    const ghoModal = document.getElementById('gho-modal');
+    if (ghoModal && ghoModal.style.display === 'flex') {
+      ghoModal.style.display = 'none';
+    }
+
+    // Close GHO alert modal if open
+    const ghoAlertModal = document.getElementById('gho-alert-modal');
+    if (ghoAlertModal) {
+      ghoAlertModal.remove();
+    }
+  }
+});
+
+// Show keyboard shortcuts help on ? key
+document.addEventListener('keydown', function (e) {
+  if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    showKeyboardShortcutsHelp();
+  }
+});
+
+// Function to show keyboard shortcuts help
+function showKeyboardShortcutsHelp() {
+  const helpModal = `
+    <div id="shortcuts-help-modal" class="modal-overlay" style="display: flex; z-index: 1002;">
+      <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white;">
+          <h3 style="color: white; margin: 0;">⌨️ Keyboard Shortcuts</h3>
+          <span class="modal-close" id="shortcuts-help-close" style="color: white; cursor: pointer; font-size: 24px;">&times;</span>
+        </div>
+        <div class="modal-body" style="padding: 24px;">
+          <div style="display: grid; gap: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Search Cases</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + F</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Open GHO Status</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + G</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Refresh Data</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + R</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Signature Mode</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + 1</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Premier Mode</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + 2</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Clear All Filters</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + A</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Close Modals</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">ESC</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Show This Help</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">?</kbd>
+            </div>
+          </div>
+          
+          <div style="margin-top: 20px; padding: 12px; background: #f0f9ff; border: 1px solid #bfdbfe; border-radius: 6px;">
+            <p style="margin: 0; color: #1e40af; font-size: 14px;">
+              <strong>Tip:</strong> Use these shortcuts to navigate the app more efficiently!
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Remove existing help modal if any
+  const existingModal = document.getElementById('shortcuts-help-modal');
+  if (existingModal) {
+    existingModal.remove();
+  }
+
+  document.body.insertAdjacentHTML('beforeend', helpModal);
+
+  // Add event listeners
+  document.getElementById('shortcuts-help-close').addEventListener('click', () => {
+    document.getElementById('shortcuts-help-modal').remove();
+  });
+
+  // Close modal when clicking outside
+  document.getElementById('shortcuts-help-modal').addEventListener('click', function (e) {
+    if (e.target === this) {
+      this.remove();
+    }
+  });
+}
+
 // Check for duplicate tabs when popup loads
 document.addEventListener("DOMContentLoaded", function () {
   ensureSingleTab(); // Ensure only one tab exists
@@ -1108,6 +1279,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Set initial GHO button visibility
   updateGHOButtonVisibility();
+
+  // Help Button Event Listener
+  document.getElementById("shortcuts-help-btn").addEventListener("click", function () {
+    showKeyboardShortcutsHelp();
+  });
 
   // GHO Button Event Listener
   document.getElementById("check-gho-button").addEventListener("click", function () {
