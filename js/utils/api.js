@@ -10,9 +10,13 @@ function getAuthToken(callback) {
     });
 }
 
-export function trackAction(dateofAction, caseNumber, severity, actionType, cloud, currentMode, currentUserName) {
+export function trackAction(dateofAction, caseNumber, severity, actionType, cloud, currentMode, currentUserName, assignedTo = '') {
     getAuthToken(function (token) {
         const sheetName = currentMode === 'premier' ? 'premier' : 'signature';
+
+        if (!assignedTo) {
+            assignedTo = "--";
+        }
 
         // Handle dateofAction - convert to Date object if it's a string, or use current date as fallback
         let actionDate;
@@ -38,9 +42,9 @@ export function trackAction(dateofAction, caseNumber, severity, actionType, clou
         });
 
 
-        // Updated column order: Date, Type, Time of Action, Case Number, Engineer Name, Severity, Cloud
+        // Updated column order: Date, Type, Time of Action, Case Number, Engineer Name, Severity, Cloud, Assigned To
         const values = [
-            [pstDate, actionType, istTime, caseNumber, currentUserName, severity, cloud]
+            [pstDate, actionType, istTime, caseNumber, currentUserName, severity, cloud, assignedTo]
         ];
 
         const body = {

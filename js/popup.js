@@ -50,96 +50,162 @@ function getCaseDetails() {
       currentUserName = res.display_name;
       let displayedCaseCount = 0;
       let actionTakenCount = 0;
-      let currentUserId;
 
-      conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (err, userResult) {
-        if (err) {
-          return console.error('Error fetching user ID:', err);
-        }
-        if (userResult.records.length > 0) {
-          currentUserId = userResult.records[0].Id;
-        }
+      // Get current shift dynamically
+      const currentShift = getCurrentShift();
+      const preferredShiftValues = getPreferredShiftValues(currentShift);
+      const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 1) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
+      let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
-        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 1) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
+      return conn.query(query,
+        function (err, result) {
+          if (err) {
+            alert('Your query has failed');
+            return console.error(err);
+          }
 
-        // Get current shift dynamically
-        const currentShift = getCurrentShift();
-        const preferredShiftValues = getPreferredShiftValues(currentShift);
-        const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
+          if (result.records.length === 0) {
+            const noCasesHtml = `
+              <div class="no-cases-message">
+                <h4 class="no-cases-title">No Cases to Action</h4>
+                <p class="no-cases-text">All cases are up to date. Great work!</p>
+                <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
+              </div>
+            `;
+            document.getElementById("parentSigSev2").innerHTML = noCasesHtml;
+            // Auto-open tab without focus for easy mode switching
+            var data = 'openTabSilent';
+            chrome.runtime.sendMessage(data, function (response) {
+              console.log('response-----' + response);
+            });
+            return;
+          }
 
-        let query = currentMode === 'premier' ? premierQuery : signatureQuery;
+          const caseIds = result.records.map(record => record.Id);
+          const caseMap = new Map(result.records.map(record => [record.Id, record]));
 
-        return conn.query(query,
-          function (err, result) {
-            if (err) {
-              alert('Your query has failed');
-              return console.error(err);
+          // Fetch case history and track actions
+          const combinedHistoryQuery = `SELECT Field, CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND (Field = 'Routing_Status__c' OR (Field = 'Owner' AND CreatedById = '${currentUserId}')) ORDER BY CreatedDate DESC`;
+
+          conn.query(combinedHistoryQuery, function (historyErr, historyResult) {
+            if (historyErr) {
+              return console.error('Error fetching case history:', historyErr);
             }
 
-            if (result.records.length === 0) {
-              const noCasesHtml = `
-                <div class="no-cases-message">
-                  <h4 class="no-cases-title">No Cases to Action</h4>
-                  <p class="no-cases-text">All cases are up to date. Great work!</p>
-                  <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
-                </div>
-              `;
-              document.getElementById("parentSigSev2").innerHTML = noCasesHtml;
-              // Auto-open tab without focus for easy mode switching
-              var data = 'openTabSilent';
-              chrome.runtime.sendMessage(data, function (response) {
-                console.log('response-----' + response);
-              });
+            if (!historyResult.records || historyResult.records.length === 0) {
               return;
             }
 
-            const caseIds = result.records.map(record => record.Id);
+            // Separate the results by field type
+            const routingStatusHistories = historyResult.records.filter(history => history.Field === 'Routing_Status__c');
+            const ownerAssignmentHistories = historyResult.records.filter(history => history.Field === 'Owner' && history.CreatedById === currentUserId);
 
-            if (currentMode === 'premier') {
-              const caseMap = new Map(result.records.map(record => [record.Id, record]));
-              const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND Field = 'Routing_Status__c' ORDER BY CreatedDate ASC`;
+            // Process routing status histories (original historyQuery logic)
+            const manuallyAssignedHistories = routingStatusHistories.filter(
+              history => history.NewValue && typeof history.NewValue === 'string' && history.NewValue.startsWith('Manually Assigned')
+            );
 
-              conn.query(historyQuery, function (historyErr, historyResult) {
-                if (historyErr) {
-                  return console.error('Error fetching case history:', historyErr);
+            const firstAssignments = new Map();
+            for (const history of manuallyAssignedHistories) {
+              if (!firstAssignments.has(history.CaseId)) {
+                firstAssignments.set(history.CaseId, history);
+              }
+            }
+
+            // Combine both filtering logics into a single processing loop
+            const allTrackableHistories = [];
+
+            // Add routing status histories that meet the criteria
+            if (firstAssignments.size > 0) {
+              for (const [caseId, history] of firstAssignments.entries()) {
+                if (history.CreatedById === currentUserId) {
+                  allTrackableHistories.push({
+                    ...history,
+                    actionType: 'New Case',
+                    trackingKey: `tracked_premier_assignment_${caseId}`,
+                    assignedTo: '' // Empty for routing status changes
+                  });
                 }
+              }
+            }
 
-                if (!historyResult.records || historyResult.records.length === 0) {
-                  return;
+            // Add owner assignment histories that meet the criteria
+            if (ownerAssignmentHistories.length > 0) {
+              for (const assignment of ownerAssignmentHistories) {
+                if (assignment.NewValue) {
+                  allTrackableHistories.push({
+                    ...assignment,
+                    actionType: 'New Case',
+                    trackingKey: `tracked_assignment_${assignment.CaseId}_${assignment.CreatedDate}`,
+                    assignedTo: assignment.NewValue
+                  });
                 }
+              }
+            }
 
-                const manuallyAssignedHistories = historyResult.records.filter(
-                  history => history.NewValue && typeof history.NewValue === 'string' && history.NewValue.startsWith('Manually Assigned')
-                );
+            // Single loop to process all trackable histories
+            for (const historyItem of allTrackableHistories) {
+              const caseRecord = caseMap.get(historyItem.CaseId);
+              if (caseRecord) {
+                if (!localStorage.getItem(historyItem.trackingKey)) {
+                  trackAction(
+                    historyItem.CreatedDate,
+                    caseRecord.CaseNumber,
+                    caseRecord.Severity_Level__c,
+                    historyItem.actionType,
+                    caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
+                    currentMode,
+                    currentUserName,
+                    historyItem.assignedTo
+                  );
+                  localStorage.setItem(historyItem.trackingKey, 'true');
+                }
+              }
+            }
+          });
 
-                const firstAssignments = new Map();
-                for (const history of manuallyAssignedHistories) {
-                  if (!firstAssignments.has(history.CaseId)) {
-                    firstAssignments.set(history.CaseId, history);
+          const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+
+          conn.query(commentQuery, function (commentErr, commentResult) {
+            console.log("Case Comments:", commentResult);
+
+            if (commentErr) {
+              return console.error(commentErr);
+            }
+
+            const actionedCaseIds = new Set();
+            if (commentResult.records) {
+              commentResult.records.forEach(record => {
+                if (record.Body && record.Body.includes('#SigQBmention')) {
+                  console.log('Actioned case found:', record.ParentId);
+                  actionedCaseIds.add(record.ParentId);
+                  if (record.CreatedById === currentUserId) {
+                    const caseRecord = result.records.find(c => c.Id === record.ParentId);
+                    console.log('Case record for actioned comment:', caseRecord);
+                    if (caseRecord) {
+                      const trackingKey = `tracked_${caseRecord.Id}`;
+                      if (!localStorage.getItem(trackingKey)) {
+                        trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                        localStorage.setItem(trackingKey, 'true');
+                      }
+                    }
                   }
                 }
 
-                if (firstAssignments.size > 0) {
-                  for (const [caseId, history] of firstAssignments.entries()) {
-                    // Only track if the action was taken by the current user
-                    if (history.CreatedById === currentUserId) {
-                      const trackingKey = `tracked_premier_assignment_${caseId}`;
-                      if (!localStorage.getItem(trackingKey)) {
-                        const caseRecord = caseMap.get(caseId);
-                        if (caseRecord) {
-                          trackAction(
-                            history.CreatedDate,
-                            caseRecord.CaseNumber,
-                            caseRecord.Severity_Level__c,
-                            'New Case',
-                            caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
-                            currentMode,
-                            currentUserName
-                          );
-                          localStorage.setItem(trackingKey, 'true');
-                        }
+                // Track GHO Triage actions
+                if (record.Body && record.Body.includes('#GHOTriage')) {
+                  console.log('GHO Triage action found:', record.ParentId);
+                  if (record.CreatedById === currentUserId) {
+                    const caseRecord = result.records.find(c => c.Id === record.ParentId);
+                    console.log('Case record for GHO triage comment:', caseRecord);
+                    if (caseRecord) {
+                      const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                      if (!localStorage.getItem(ghoTrackingKey)) {
+                        // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
+                        trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                        localStorage.setItem(ghoTrackingKey, 'true');
+                        console.log('GHO triage action tracked for case:', caseRecord.CaseNumber);
                       }
                     }
                   }
@@ -147,233 +213,52 @@ function getCaseDetails() {
               });
             }
 
-            const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
-
-            conn.query(commentQuery, function (commentErr, commentResult) {
-              console.log("Case Comments:", commentResult);
-
-              if (commentErr) {
-                return console.error(commentErr);
-              }
-
-              const actionedCaseIds = new Set();
-              if (commentResult.records) {
-                commentResult.records.forEach(record => {
-                  if (record.Body && record.Body.includes('#SigQBmention')) {
-                    console.log('Actioned case found:', record.ParentId);
-                    actionedCaseIds.add(record.ParentId);
-                    if (record.CreatedById === currentUserId) {
-                      const caseRecord = result.records.find(c => c.Id === record.ParentId);
-                      console.log('Case record for actioned comment:', caseRecord);
-                      if (caseRecord) {
-                        const trackingKey = `tracked_${caseRecord.Id}`;
-                        if (!localStorage.getItem(trackingKey)) {
-                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
-                          localStorage.setItem(trackingKey, 'true');
-                        }
-                      }
-                    }
-                  }
-
-                  // Track GHO Triage actions
-                  if (record.Body && record.Body.includes('#GHOTriage')) {
-                    console.log('GHO Triage action found:', record.ParentId);
-                    if (record.CreatedById === currentUserId) {
-                      const caseRecord = result.records.find(c => c.Id === record.ParentId);
-                      console.log('Case record for GHO triage comment:', caseRecord);
-                      if (caseRecord) {
-                        const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
-                        if (!localStorage.getItem(ghoTrackingKey)) {
-                          // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
-                          trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
-                          localStorage.setItem(ghoTrackingKey, 'true');
-                          console.log('GHO triage action tracked for case:', caseRecord.CaseNumber);
-                        }
-                      }
-                    }
-                  }
-                });
-              }
-
-              var myHtml;
-              var mvpWarningHtml = '';
-              var isData = false;
-              var today = new Date();
-              var totalCasesCount = 0; // Track total cases before filtering
-              var pendingCasesCount = 0; // Track cases that exist but haven't met alert criteria
-              var pendingCasesDetails = []; // Store details of pending cases
+            var myHtml;
+            var mvpWarningHtml = '';
+            var isData = false;
+            var today = new Date();
+            var totalCasesCount = 0; // Track total cases before filtering
+            var pendingCasesCount = 0; // Track cases that exist but haven't met alert criteria
+            var pendingCasesDetails = []; // Store details of pending cases
 
 
-              function isWeekend() {
-                return isCurrentlyWeekend();
-              }
-              var minSev1 = isWeekend() ? 1 : 5;
-              var minSev2 = isWeekend() ? 1 : 20;
-              if (result.records.length > 0) {
-                isData = true;
+            function isWeekend() {
+              return isCurrentlyWeekend();
+            }
+            var minSev1 = isWeekend() ? 1 : 5;
+            var minSev2 = isWeekend() ? 1 : 20;
+            if (result.records.length > 0) {
+              isData = true;
 
-                console.log('All case records received:', result.records);
-                console.log('Total records:', result.records.length);
-                console.log(result.records.filter(x => x.Contact));
+              console.log('All case records received:', result.records);
+              console.log('Total records:', result.records.length);
+              console.log(result.records.filter(x => x.Contact));
 
-                // Set total cases count based on raw result before filtering for display
-                totalCasesCount = result.records.length;
+              // Set total cases count based on raw result before filtering for display
+              totalCasesCount = result.records.length;
 
-                const filteredRecords = result.records.filter(x => {
-                  // This filter logic removes MVP cases with 'Met' status from being displayed as actionable alerts
-                  if (x.Contact && x.Contact.Is_MVP__c === true && x.SE_Initial_Response_Status__c === 'Met') {
-                    console.log(`Filtering out MVP case with Met status: ${x.CaseNumber} ${x.SE_Initial_Response_Status__c}`);
-                    return false;
-                  }
-                  return true;
-                });
-
-                console.log('Filtered records (after removing MVP Met cases):', filteredRecords.length, 'out of', result.records.length);
-
-                for (var x in filteredRecords) {
-                  const caseRecord = filteredRecords[x];
-                  if (caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true &&
-                    (caseRecord.SE_Initial_Response_Status__c === 'In Warning' || caseRecord.SE_Initial_Response_Status__c === 'Warning')) {
-
-                    const caseId = caseRecord.Id; // Fix: Define caseId
-                    const snoozeUntil = localStorage.getItem('snooze_' + caseId);
-                    if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
-                      continue;
-                    } else if (snoozeUntil) {
-                      localStorage.removeItem('snooze_' + caseId);
-                    }
-
-                    if (actionedCaseIds.has(caseId)) {
-                      localStorage.setItem(caseId, 'true');
-                    }
-
-                    // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
-                    const routingLogs = caseRecord.Case_Routing_Logs__r;
-                    if (routingLogs && routingLogs.totalSize > 0) {
-                      const lastLog = routingLogs.records[0];
-                      if (lastLog.Transfer_Reason__c === 'GEO Locate' && caseRecord.SE_Initial_Response_Status__c === 'Met') {
-                        localStorage.setItem(caseId, 'true');
-                        console.log(`Auto-actioned case ${caseRecord.CaseNumber} due to GEO Locate routing with Met SLA`);
-                      }
-                    }
-
-                    const isActionTaken = localStorage.getItem(caseId) === 'true';
-                    const caseData = {
-                      number: caseRecord.CaseNumber,
-                      severity: caseRecord.Severity_Level__c,
-                      cloud: caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
-                      isMVP: true
-                    };
-                    displayedCaseCount++;
-                    if (isActionTaken) {
-                      actionTakenCount++;
-                    }
-
-                    let statusColor = 'red'; // Warning status always red
-                    let routingLogHtml = '';
-                    // routingLogs already declared above, reuse it
-                    if (routingLogs && routingLogs.totalSize > 0) {
-                      const lastLog = routingLogs.records[0];
-                      if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
-                        routingLogHtml = `
-                          <div class="case-info-item">
-                            <span class="checkmark">✓</span>
-                            <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
-                          </div>
-                        `;
-                      }
-                    }
-
-                    const mvpCaseHtml = `
-                      <div class="case-card mvp-warning-case" style="border: 3px solid #ef4444; background-color: #fef2f2;">
-                        <div class="case-header">
-                          <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="background-color: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP URGENT</span>
-                            <h3 class="case-title">${caseRecord.Subject}</h3>
-                          </div>
-                          <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
-                        </div>
-                        
-                        <div class="case-details">
-                          <div class="case-info">
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${caseRecord.Account.Name}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${caseRecord.CaseRoutingTaxonomy__r.Name}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${caseRecord.CaseNumber}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${caseRecord.Severity_Level__c}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c} - MVP CASE</span>
-                            </div>
-                            ${routingLogHtml}
-                          </div>
-                          
-                          <div class="case-actions">
-                            <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
-                               class="preview-btn preview-record-btn" 
-                               data-case-number="${caseData.number}" 
-                               data-severity="${caseData.severity}" 
-                               data-cloud="${caseData.cloud}"
-                               data-is-mvp="true">
-                              Preview Record
-                            </a>
-                            
-                            <div class="action-controls">
-                              <input type="checkbox" class="action-checkbox" 
-                                     data-case-id="${caseId}" 
-                                     ${isActionTaken ? 'checked' : ''} 
-                                     data-case-number="${caseData.number}" 
-                                     data-severity="${caseData.severity}" 
-                                     data-cloud="${caseData.cloud}"
-                                     data-is-mvp="true"
-                                     disabled>
-                              <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
-                            </div>
-                            
-                            <div class="snooze-controls">
-                              <select class="snooze-time" data-case-id="${caseId}">
-                                <option value="5">5 mins</option>
-                                <option value="10">10 mins</option>
-                                <option value="15">15 mins</option>
-                                <option value="20">20 mins</option>
-                                <option value="custom">Custom</option>
-                              </select>
-                              <input type="number" class="custom-snooze-input" data-case-id="${caseId}" 
-                                     placeholder="Minutes" min="1" max="1440" style="display: none;">
-                              <button class="snooze-btn" data-case-id="${caseId}">Snooze</button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    `;
-
-                    if (mvpWarningHtml) {
-                      mvpWarningHtml = mvpWarningHtml + mvpCaseHtml;
-                    } else {
-                      mvpWarningHtml = mvpCaseHtml;
-                    }
-                  }
+              const filteredRecords = result.records.filter(x => {
+                // This filter logic removes MVP cases with 'Met' status from being displayed as actionable alerts
+                if (x.Contact && x.Contact.Is_MVP__c === true && x.SE_Initial_Response_Status__c === 'Met') {
+                  console.log(`Filtering out MVP case with Met status: ${x.CaseNumber} ${x.SE_Initial_Response_Status__c}`);
+                  return false;
                 }
+                return true;
+              });
 
-                // Second pass: Process regular cases (using filtered records)
-                for (var x in filteredRecords) {
-                  const caseId = filteredRecords[x].Id;
+              console.log('Filtered records (after removing MVP Met cases):', filteredRecords.length, 'out of', result.records.length);
 
-                  // Skip MVP Warning cases as they're already processed above
-                  if (filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true &&
-                    (filteredRecords[x].SE_Initial_Response_Status__c === 'In Warning' || filteredRecords[x].SE_Initial_Response_Status__c === 'Warning')) {
+              for (var x in filteredRecords) {
+                const caseRecord = filteredRecords[x];
+                if (caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true &&
+                  (caseRecord.SE_Initial_Response_Status__c === 'In Warning' || caseRecord.SE_Initial_Response_Status__c === 'Warning')) {
+
+                  const caseId = caseRecord.Id; // Fix: Define caseId
+                  const snoozeUntil = localStorage.getItem('snooze_' + caseId);
+                  if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
                     continue;
+                  } else if (snoozeUntil) {
+                    localStorage.removeItem('snooze_' + caseId);
                   }
 
                   if (actionedCaseIds.has(caseId)) {
@@ -381,333 +266,465 @@ function getCaseDetails() {
                   }
 
                   // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
-                  const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
+                  const routingLogs = caseRecord.Case_Routing_Logs__r;
                   if (routingLogs && routingLogs.totalSize > 0) {
                     const lastLog = routingLogs.records[0];
-                    if (lastLog.Transfer_Reason__c === 'GEO Locate' || lastLog.Transfer_Reason__c === 'Dispatched' && filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
+                    if (lastLog.Transfer_Reason__c === 'GEO Locate' && caseRecord.SE_Initial_Response_Status__c === 'Met') {
                       localStorage.setItem(caseId, 'true');
-                      console.log(`Auto-actioned case ${filteredRecords[x].CaseNumber} due to GEO Locate routing with Met SLA`);
+                      console.log(`Auto-actioned case ${caseRecord.CaseNumber} due to GEO Locate routing with Met SLA`);
                     }
                   }
 
-                  const isSLAM = filteredRecords[x].CaseRoutingTaxonomy__r.Name === 'Sales-Issues Developing for Salesforce Functions (Product)';
-                  if (isSLAM && filteredRecords[x].support_available_timezone__c === '(GMT+09:00) Japan Standard Time (Asia/Tokyo)') {
-                    localStorage.setItem(caseId, 'true');
-                    console.log(`Auto-actioned SLAM case ${filteredRecords[x].CaseNumber} due to Japan timezone`);
+                  const isActionTaken = localStorage.getItem(caseId) === 'true';
+                  const caseData = {
+                    number: caseRecord.CaseNumber,
+                    severity: caseRecord.Severity_Level__c,
+                    cloud: caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
+                    isMVP: true
+                  };
+                  displayedCaseCount++;
+                  if (isActionTaken) {
+                    actionTakenCount++;
                   }
 
-                  console.log('Processing case:', filteredRecords[x]);
+                  let statusColor = 'red'; // Warning status always red
+                  let routingLogHtml = '';
+                  // routingLogs already declared above, reuse it
+                  if (routingLogs && routingLogs.totalSize > 0) {
+                    const lastLog = routingLogs.records[0];
+                    if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+                      routingLogHtml = `
+                        <div class="case-info-item">
+                          <span class="checkmark">✓</span>
+                          <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                        </div>
+                      `;
+                    }
+                  }
 
-                  // Check if case meets alert criteria (timing + severity)
-                  const meetsAlertCriteria = (filteredRecords[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') ||
-                    (today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
-                    (today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
-                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
-                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
-                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(210, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 3 - High') ||
-                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(430, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 4 - Medium');
-
-                  if (meetsAlertCriteria) {
-                    const snoozeUntil = localStorage.getItem('snooze_' + caseId);
-                    if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
-                      continue;
-                    } else if (snoozeUntil) {
-                      localStorage.removeItem('snooze_' + caseId);
-                    }
-                    const isActionTaken = localStorage.getItem(caseId) === 'true';
-                    const caseData = {
-                      number: filteredRecords[x].CaseNumber,
-                      severity: filteredRecords[x].Severity_Level__c,
-                      cloud: filteredRecords[x].CaseRoutingTaxonomy__r.Name.split('-')[0],
-                      isMVP: filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true,
-                      isSLAM: isSLAM
-                    };
-                    displayedCaseCount++;
-                    if (isActionTaken) {
-                      actionTakenCount++;
-                    }
-                    let statusColor = '';
-                    if (filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
-                      statusColor = 'green';
-                    } else if (filteredRecords[x].SE_Initial_Response_Status__c === 'In Warning' || filteredRecords[x].SE_Initial_Response_Status__c === 'Warning') {
-                      statusColor = 'red';
-                    }
-                    let routingLogHtml = '';
-                    if (routingLogs && routingLogs.totalSize > 0) {
-                      const lastLog = routingLogs.records[0];
-                      if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
-                        routingLogHtml = `
+                  const mvpCaseHtml = `
+                    <div class="case-card mvp-warning-case" style="border: 3px solid #ef4444; background-color: #fef2f2;">
+                      <div class="case-header">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                          <span style="background-color: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP URGENT</span>
+                          <h3 class="case-title">${caseRecord.Subject}</h3>
+                        </div>
+                        <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
+                      </div>
+                      
+                      <div class="case-details">
+                        <div class="case-info">
                           <div class="case-info-item">
                             <span class="checkmark">✓</span>
-                            <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                            <span>${caseRecord.Account.Name}</span>
                           </div>
-                        `;
-                      }
-                    }
-
-                    const newHtml = `
-                      <div class="case-card ${caseData.isMVP ? 'mvp-case' : ''}" ${caseData.isMVP ? 'style="border-left: 4px solid #9333ea;"' : ''}>
-                        <div class="case-header">
-                          <div style="display: flex; align-items: center; gap: 8px;">
-                            ${caseData.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP</span>' : ''}
-                            ${caseData.isSLAM ? '<span style="background-color: #d9534f; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">SLAM</span>' : ''}
-                            <h3 class="case-title">${filteredRecords[x].Subject}</h3>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${caseRecord.CaseRoutingTaxonomy__r.Name}</span>
                           </div>
-                          <div class="case-timestamp">${formatDateWithDayOfWeek(filteredRecords[x].CreatedDate)} (${timeElapsed(new Date(filteredRecords[x].CreatedDate))})</div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${caseRecord.CaseNumber}</span>
+                          </div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${caseRecord.Severity_Level__c}</span>
+                          </div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c} - MVP CASE</span>
+                          </div>
+                          ${routingLogHtml}
                         </div>
                         
-                        <div class="case-details">
-                          <div class="case-info">
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${filteredRecords[x].Account.Name}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${filteredRecords[x].CaseRoutingTaxonomy__r.Name}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${filteredRecords[x].CaseNumber}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span>${filteredRecords[x].Severity_Level__c}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span style="color: ${statusColor}">${filteredRecords[x].SE_Initial_Response_Status__c}${caseData.isMVP ? ' - MVP CASE' : ''}</span>
-                            </div>
-                            ${routingLogHtml}
+                        <div class="case-actions">
+                          <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
+                             class="preview-btn preview-record-btn" 
+                             data-case-number="${caseData.number}" 
+                             data-severity="${caseData.severity}" 
+                             data-cloud="${caseData.cloud}"
+                             data-is-mvp="true">
+                            Preview Record
+                          </a>
+                          
+                          <div class="action-controls">
+                            <input type="checkbox" class="action-checkbox" 
+                                   data-case-id="${caseId}" 
+                                   ${isActionTaken ? 'checked' : ''} 
+                                   data-case-number="${caseData.number}" 
+                                   data-severity="${caseData.severity}" 
+                                   data-cloud="${caseData.cloud}"
+                                   data-is-mvp="true"
+                                   disabled>
+                            <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
                           </div>
                           
-                          <div class="case-actions">
-                            <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
-                               class="preview-btn preview-record-btn" 
-                               data-case-number="${caseData.number}" 
-                               data-severity="${caseData.severity}" 
-                               data-cloud="${caseData.cloud}"
-                               data-is-mvp="${caseData.isMVP}"
-                               data-is-slam="${caseData.isSLAM}">
-                              Preview Record
-                            </a>
-                            
-                            <div class="action-controls">
-                              <input type="checkbox" class="action-checkbox" 
-                                     data-case-id="${caseId}" 
-                                     ${isActionTaken ? 'checked' : ''} 
-                                     data-case-number="${caseData.number}" 
-                                     data-severity="${caseData.severity}" 
-                                     data-cloud="${caseData.cloud}"
-                                     data-is-mvp="${caseData.isMVP}"
-                                     data-is-slam="${caseData.isSLAM}"
-                                     disabled>
-                              <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
-                            </div>
-                            
-                            <div class="snooze-controls">
-                              <select class="snooze-time" data-case-id="${caseId}">
-                                <option value="5">5 mins</option>
-                                <option value="10">10 mins</option>
-                                <option value="15">15 mins</option>
-                                <option value="20">20 mins</option>
-                                <option value="custom">Custom</option>
-                              </select>
-                              <input type="number" class="custom-snooze-input" data-case-id="${caseId}" 
-                                     placeholder="Minutes" min="1" max="1440" style="display: none;">
-                              <button class="snooze-btn" data-case-id="${caseId}">Snooze</button>
-                            </div>
+                          <div class="snooze-controls">
+                            <select class="snooze-time" data-case-id="${caseId}">
+                              <option value="5">5 mins</option>
+                              <option value="10">10 mins</option>
+                              <option value="15">15 mins</option>
+                              <option value="20">20 mins</option>
+                              <option value="custom">Custom</option>
+                            </select>
+                            <input type="number" class="custom-snooze-input" data-case-id="${caseId}" 
+                                   placeholder="Minutes" min="1" max="1440" style="display: none;">
+                            <button class="snooze-btn" data-case-id="${caseId}">Snooze</button>
                           </div>
                         </div>
                       </div>
-                    `;
-                    if (myHtml) {
-                      myHtml = myHtml + newHtml;
-                    } else {
-                      myHtml = newHtml;
-                    }
+                    </div>
+                  `;
+
+                  if (mvpWarningHtml) {
+                    mvpWarningHtml = mvpWarningHtml + mvpCaseHtml;
                   } else {
-                    // Case exists but doesn't meet alert criteria yet
-                    pendingCasesCount++;
-                    const minutesSinceCreation = Math.floor((today - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60));
-                    const requiredMinutes = filteredRecords[x].Severity_Level__c === 'Level 1 - Critical' ? minSev1 : filteredRecords[x].Severity_Level__c === 'Level 2 - Urgent' ? minSev2 : filteredRecords[x].Severity_Level__c === 'Level 3 - High' ? 210 : 430;
-                    const remainingMinutes = requiredMinutes - minutesSinceCreation;
+                    mvpWarningHtml = mvpCaseHtml;
+                  }
+                }
+              }
 
-                    pendingCasesDetails.push({
-                      caseNumber: filteredRecords[x].CaseNumber,
-                      severity: filteredRecords[x].Severity_Level__c,
-                      account: filteredRecords[x].Account.Name,
-                      createdDate: new Date(filteredRecords[x].CreatedDate),
-                      minutesSinceCreation: minutesSinceCreation,
-                      remainingMinutes: Math.max(0, remainingMinutes),
-                      isMVP: filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true
-                    });
+              // Second pass: Process regular cases (using filtered records)
+              for (var x in filteredRecords) {
+                const caseId = filteredRecords[x].Id;
 
-                    console.log('Case pending alert criteria:', filteredRecords[x].CaseNumber,
-                      'Severity:', filteredRecords[x].Severity_Level__c,
-                      'Created:', new Date(filteredRecords[x].CreatedDate),
-                      'Time since creation:', minutesSinceCreation, 'minutes',
-                      'Remaining:', remainingMinutes, 'minutes');
+                // Skip MVP Warning cases as they're already processed above
+                if (filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true &&
+                  (filteredRecords[x].SE_Initial_Response_Status__c === 'In Warning' || filteredRecords[x].SE_Initial_Response_Status__c === 'Warning')) {
+                  continue;
+                }
+
+                if (actionedCaseIds.has(caseId)) {
+                  localStorage.setItem(caseId, 'true');
+                }
+
+                // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
+                const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
+                if (routingLogs && routingLogs.totalSize > 0) {
+                  const lastLog = routingLogs.records[0];
+                  if (lastLog.Transfer_Reason__c === 'GEO Locate' || lastLog.Transfer_Reason__c === 'Dispatched' && filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
+                    localStorage.setItem(caseId, 'true');
+                    console.log(`Auto-actioned case ${filteredRecords[x].CaseNumber} due to GEO Locate routing with Met SLA`);
                   }
                 }
 
+                const isSLAM = filteredRecords[x].CaseRoutingTaxonomy__r.Name === 'Sales-Issues Developing for Salesforce Functions (Product)';
+                if (isSLAM && filteredRecords[x].support_available_timezone__c === '(GMT+09:00) Japan Standard Time (Asia/Tokyo)') {
+                  localStorage.setItem(caseId, 'true');
+                  console.log(`Auto-actioned SLAM case ${filteredRecords[x].CaseNumber} due to Japan timezone`);
+                }
+
+                console.log('Processing case:', filteredRecords[x]);
+
+                // Check if case meets alert criteria (timing + severity)
+                const meetsAlertCriteria = (filteredRecords[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') ||
+                  (today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
+                  (today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
+                  (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
+                  (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
+                  (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(210, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 3 - High') ||
+                  (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(430, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 4 - Medium');
+
+                if (meetsAlertCriteria) {
+                  const snoozeUntil = localStorage.getItem('snooze_' + caseId);
+                  if (snoozeUntil && new Date().getTime() < parseInt(snoozeUntil)) {
+                    continue;
+                  } else if (snoozeUntil) {
+                    localStorage.removeItem('snooze_' + caseId);
+                  }
+                  const isActionTaken = localStorage.getItem(caseId) === 'true';
+                  const caseData = {
+                    number: filteredRecords[x].CaseNumber,
+                    severity: filteredRecords[x].Severity_Level__c,
+                    cloud: filteredRecords[x].CaseRoutingTaxonomy__r.Name.split('-')[0],
+                    isMVP: filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true,
+                    isSLAM: isSLAM
+                  };
+                  displayedCaseCount++;
+                  if (isActionTaken) {
+                    actionTakenCount++;
+                  }
+                  let statusColor = '';
+                  if (filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
+                    statusColor = 'green';
+                  } else if (filteredRecords[x].SE_Initial_Response_Status__c === 'In Warning' || filteredRecords[x].SE_Initial_Response_Status__c === 'Warning') {
+                    statusColor = 'red';
+                  }
+                  let routingLogHtml = '';
+                  if (routingLogs && routingLogs.totalSize > 0) {
+                    const lastLog = routingLogs.records[0];
+                    if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+                      routingLogHtml = `
+                        <div class="case-info-item">
+                          <span class="checkmark">✓</span>
+                          <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                        </div>
+                      `;
+                    }
+                  }
+
+                  const newHtml = `
+                    <div class="case-card ${caseData.isMVP ? 'mvp-case' : ''}" ${caseData.isMVP ? 'style="border-left: 4px solid #9333ea;"' : ''}>
+                      <div class="case-header">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                          ${caseData.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP</span>' : ''}
+                          ${caseData.isSLAM ? '<span style="background-color: #d9534f; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">SLAM</span>' : ''}
+                          <h3 class="case-title">${filteredRecords[x].Subject}</h3>
+                        </div>
+                        <div class="case-timestamp">${formatDateWithDayOfWeek(filteredRecords[x].CreatedDate)} (${timeElapsed(new Date(filteredRecords[x].CreatedDate))})</div>
+                      </div>
+                      
+                      <div class="case-details">
+                        <div class="case-info">
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${filteredRecords[x].Account.Name}</span>
+                          </div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${filteredRecords[x].CaseRoutingTaxonomy__r.Name}</span>
+                          </div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${filteredRecords[x].CaseNumber}</span>
+                          </div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span>${filteredRecords[x].Severity_Level__c}</span>
+                          </div>
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span style="color: ${statusColor}">${filteredRecords[x].SE_Initial_Response_Status__c}${caseData.isMVP ? ' - MVP CASE' : ''}</span>
+                          </div>
+                          ${routingLogHtml}
+                        </div>
+                        
+                        <div class="case-actions">
+                          <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
+                             class="preview-btn preview-record-btn" 
+                             data-case-number="${caseData.number}" 
+                             data-severity="${caseData.severity}" 
+                             data-cloud="${caseData.cloud}"
+                             data-is-mvp="${caseData.isMVP}"
+                             data-is-slam="${caseData.isSLAM}">
+                            Preview Record
+                          </a>
+                          
+                          <div class="action-controls">
+                            <input type="checkbox" class="action-checkbox" 
+                                   data-case-id="${caseId}" 
+                                   ${isActionTaken ? 'checked' : ''} 
+                                   data-case-number="${caseData.number}" 
+                                   data-severity="${caseData.severity}" 
+                                   data-cloud="${caseData.cloud}"
+                                   data-is-mvp="${caseData.isMVP}"
+                                   data-is-slam="${caseData.isSLAM}"
+                                   disabled>
+                            <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
+                          </div>
+                          
+                          <div class="snooze-controls">
+                            <select class="snooze-time" data-case-id="${caseId}">
+                              <option value="5">5 mins</option>
+                              <option value="10">10 mins</option>
+                              <option value="15">15 mins</option>
+                              <option value="20">20 mins</option>
+                              <option value="custom">Custom</option>
+                            </select>
+                            <input type="number" class="custom-snooze-input" data-case-id="${caseId}" 
+                                   placeholder="Minutes" min="1" max="1440" style="display: none;">
+                            <button class="snooze-btn" data-case-id="${caseId}">Snooze</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                  if (myHtml) {
+                    myHtml = myHtml + newHtml;
+                  } else {
+                    myHtml = newHtml;
+                  }
+                } else {
+                  // Case exists but doesn't meet alert criteria yet
+                  pendingCasesCount++;
+                  const minutesSinceCreation = Math.floor((today - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60));
+                  const requiredMinutes = filteredRecords[x].Severity_Level__c === 'Level 1 - Critical' ? minSev1 : filteredRecords[x].Severity_Level__c === 'Level 2 - Urgent' ? minSev2 : filteredRecords[x].Severity_Level__c === 'Level 3 - High' ? 210 : 430;
+                  const remainingMinutes = requiredMinutes - minutesSinceCreation;
+
+                  pendingCasesDetails.push({
+                    caseNumber: filteredRecords[x].CaseNumber,
+                    severity: filteredRecords[x].Severity_Level__c,
+                    account: filteredRecords[x].Account.Name,
+                    createdDate: new Date(filteredRecords[x].CreatedDate),
+                    minutesSinceCreation: minutesSinceCreation,
+                    remainingMinutes: Math.max(0, remainingMinutes),
+                    isMVP: filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true
+                  });
+
+                  console.log('Case pending alert criteria:', filteredRecords[x].CaseNumber,
+                    'Severity:', filteredRecords[x].Severity_Level__c,
+                    'Created:', new Date(filteredRecords[x].CreatedDate),
+                    'Time since creation:', minutesSinceCreation, 'minutes',
+                    'Remaining:', remainingMinutes, 'minutes');
+                }
               }
-              // The condition now checks if there is actual HTML content to display, not just if variables are defined.
-              if (isData && (mvpWarningHtml || myHtml)) {
-                // Display MVP warning cases first, then regular cases
-                let finalHtml = '';
-                if (mvpWarningHtml) {
-                  finalHtml += mvpWarningHtml;
-                }
-                if (myHtml) {
-                  finalHtml += myHtml;
-                }
 
-                // Always show pending cases section if there are any pending cases
-                if (pendingCasesCount > 0) {
-                  let pendingCasesHtml = '';
-                  pendingCasesDetails.forEach(caseDetail => {
-                    const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
-                      caseDetail.severity.includes('Level 2') ? 'SEV2' :
-                        caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
-                    const mvpBadge = caseDetail.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 8px;">MVP</span>' : '';
+            }
+            // The condition now checks if there is actual HTML content to display, not just if variables are defined.
+            if (isData && (mvpWarningHtml || myHtml)) {
+              // Display MVP warning cases first, then regular cases
+              let finalHtml = '';
+              if (mvpWarningHtml) {
+                finalHtml += mvpWarningHtml;
+              }
+              if (myHtml) {
+                finalHtml += myHtml;
+              }
 
-                    pendingCasesHtml += `
-                      <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1;">
-                          <div style="font-weight: 600; color: #1d4ed8; font-size: 14px;">
-                            ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
-                          </div>
-                          <div style="color: #374151; font-size: 12px; margin-top: 2px;">
-                            ${caseDetail.account}
-                          </div>
-                          <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
-                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
-                          </div>
+              // Always show pending cases section if there are any pending cases
+              if (pendingCasesCount > 0) {
+                let pendingCasesHtml = '';
+                pendingCasesDetails.forEach(caseDetail => {
+                  const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
+                    caseDetail.severity.includes('Level 2') ? 'SEV2' :
+                      caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
+                  const mvpBadge = caseDetail.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 8px;">MVP</span>' : '';
+
+                  pendingCasesHtml += `
+                    <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
+                      <div style="flex: 1;">
+                        <div style="font-weight: 600; color: #1d4ed8; font-size: 14px;">
+                          ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
                         </div>
-                        <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
-                          ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
+                        <div style="color: #374151; font-size: 12px; margin-top: 2px;">
+                          ${caseDetail.account}
+                        </div>
+                        <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
+                          Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
                         </div>
                       </div>
-                    `;
-                  });
-
-                  const pendingCasesBanner = `
-                    <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6; margin-top: 20px;">
-                      <h4 class="no-cases-title" style="color: #1d4ed8;">Cases Monitoring - No Action Required Yet</h4>
-                      <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
-                      <div style="margin-top: 16px;">
-                        <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 8px; font-size: 14px;">Pending Cases:</div>
-                        ${pendingCasesHtml}
+                      <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
+                        ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
                       </div>
-                      <p class="mode-switch-hint" style="margin-top: 16px;">⏱️ These cases will appear in the action section when they exceed SLA thresholds.</p>
                     </div>
                   `;
+                });
 
-                  finalHtml = finalHtml + pendingCasesBanner;
-                }
+                const pendingCasesBanner = `
+                  <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6; margin-top: 20px;">
+                    <h4 class="no-cases-title" style="color: #1d4ed8;">Cases Monitoring - No Action Required Yet</h4>
+                    <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
+                    <div style="margin-top: 16px;">
+                      <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 8px; font-size: 14px;">Pending Cases:</div>
+                      ${pendingCasesHtml}
+                    </div>
+                    <p class="mode-switch-hint" style="margin-top: 16px;">⏱️ These cases will appear in the action section when they exceed SLA thresholds.</p>
+                  </div>
+                `;
 
-                document.getElementById("parentSigSev2").innerHTML += finalHtml;
+                finalHtml = finalHtml + pendingCasesBanner;
+              }
 
-                const savedFilter = localStorage.getItem('caseFilter');
-                if (savedFilter) {
-                  applyFilter(savedFilter);
-                }
+              document.getElementById("parentSigSev2").innerHTML += finalHtml;
 
-                // Check if there are cases without action taken
-                const hasUnactionedCases = actionTakenCount < displayedCaseCount;
-                updateStatusIndicator(hasUnactionedCases, displayedCaseCount, actionTakenCount);
+              const savedFilter = localStorage.getItem('caseFilter');
+              if (savedFilter) {
+                applyFilter(savedFilter);
+              }
 
-                if (hasUnactionedCases) {
-                  // There are unactioned cases - play sound and focus tab
-                  var audio = new Audio('../assets/audio/notification.wav');
-                  audio.play();
-                  var data = 'openTab';
-                  chrome.runtime.sendMessage(data, function (response) {
-                    console.log('response-----' + response);
-                  });
-                } else {
-                  // All cases have action taken - silent mode
-                  var data = 'openTabSilent';
-                  chrome.runtime.sendMessage(data, function (response) {
-                    console.log('response-----' + response);
-                  });
-                }
+              // Check if there are cases without action taken
+              const hasUnactionedCases = actionTakenCount < displayedCaseCount;
+              updateStatusIndicator(hasUnactionedCases, displayedCaseCount, actionTakenCount);
+
+              if (hasUnactionedCases) {
+                // There are unactioned cases - play sound and focus tab
+                var audio = new Audio('../assets/audio/notification.wav');
+                audio.play();
+                var data = 'openTab';
+                chrome.runtime.sendMessage(data, function (response) {
+                  console.log('response-----' + response);
+                });
               } else {
-                // No cases meet alert criteria - determine what to show
-                let noCasesHtml;
-
-                if (pendingCasesCount > 0) {
-                  // Cases exist but none meet alert criteria yet (still within SLA window)
-                  let pendingCasesHtml = '';
-                  pendingCasesDetails.forEach(caseDetail => {
-                    const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
-                      caseDetail.severity.includes('Level 2') ? 'SEV2' :
-                        caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
-                    const mvpBadge = caseDetail.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 8px;">MVP</span>' : '';
-
-                    pendingCasesHtml += `
-                      <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1;">
-                          <div style="font-weight: 600; color: #1d4ed8; font-size: 14px;">
-                            ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
-                          </div>
-                          <div style="color: #374151; font-size: 12px; margin-top: 2px;">
-                            ${caseDetail.account}
-                          </div>
-                          <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
-                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
-                          </div>
-                        </div>
-                        <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
-                          ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
-                        </div>
-                      </div>
-                    `;
-                  });
-
-                  noCasesHtml = `
-                    <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6;">
-                      <h4 class="no-cases-title" style="color: #1d4ed8;">No Action Required</h4>
-                      <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
-                      <div style="margin-top: 16px;">
-                        <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 8px; font-size: 14px;">Pending Cases:</div>
-                        ${pendingCasesHtml}
-                      </div>
-                      <p class="mode-switch-hint" style="margin-top: 16px;">⏱️ Cases will appear here when they exceed SLA thresholds.</p>
-                    </div>
-                  `;
-                } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
-                  // Cases exist but none require action (all are assigned/handled or filtered out)
-                  noCasesHtml = `
-                    <div class="no-cases-message">
-                      <h4 class="no-cases-title">No Cases for Now</h4>
-                      <p class="no-cases-text">All ${totalCasesCount} case${totalCasesCount === 1 ? ' is' : 's are'} assigned or handled. Check back later!</p>
-                      <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
-                    </div>
-                  `;
-                } else {
-                  // Truly no cases exist
-                  noCasesHtml = `
-                    <div class="no-cases-message">
-                      <h4 class="no-cases-title">No Cases to Action</h4>
-                      <p class="no-cases-text">All cases are up to date. Great work!</p>
-                      <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
-                    </div>
-                  `;
-                }
-
-                document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
-                updateStatusIndicator(false, 0, 0);
-                // No cases - silent mode
+                // All cases have action taken - silent mode
                 var data = 'openTabSilent';
                 chrome.runtime.sendMessage(data, function (response) {
                   console.log('response-----' + response);
                 });
               }
-            });
+            } else {
+              // No cases meet alert criteria - determine what to show
+              let noCasesHtml;
+
+              if (pendingCasesCount > 0) {
+                // Cases exist but none meet alert criteria yet (still within SLA window)
+                let pendingCasesHtml = '';
+                pendingCasesDetails.forEach(caseDetail => {
+                  const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
+                    caseDetail.severity.includes('Level 2') ? 'SEV2' :
+                      caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
+                  const mvpBadge = caseDetail.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 8px;">MVP</span>' : '';
+
+                  pendingCasesHtml += `
+                    <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
+                      <div style="flex: 1;">
+                        <div style="font-weight: 600; color: #1d4ed8; font-size: 14px;">
+                          ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
+                        </div>
+                        <div style="color: #374151; font-size: 12px; margin-top: 2px;">
+                          ${caseDetail.account}
+                        </div>
+                        <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
+                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
+                        </div>
+                      </div>
+                      <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
+                        ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
+                      </div>
+                    </div>
+                  `;
+                });
+
+                noCasesHtml = `
+                  <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6;">
+                    <h4 class="no-cases-title" style="color: #1d4ed8;">No Action Required</h4>
+                    <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
+                    <div style="margin-top: 16px;">
+                      <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 8px; font-size: 14px;">Pending Cases:</div>
+                      ${pendingCasesHtml}
+                    </div>
+                    <p class="mode-switch-hint" style="margin-top: 16px;">⏱️ Cases will appear here when they exceed SLA thresholds.</p>
+                  </div>
+                `;
+              } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
+                // Cases exist but none require action (all are assigned/handled or filtered out)
+                noCasesHtml = `
+                  <div class="no-cases-message">
+                    <h4 class="no-cases-title">No Cases for Now</h4>
+                    <p class="no-cases-text">All ${totalCasesCount} case${totalCasesCount === 1 ? ' is' : 's are'} assigned or handled. Check back later!</p>
+                    <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
+                  </div>
+                `;
+              } else {
+                // Truly no cases exist
+                noCasesHtml = `
+                  <div class="no-cases-message">
+                    <h4 class="no-cases-title">No Cases to Action</h4>
+                    <p class="no-cases-text">All cases are up to date. Great work!</p>
+                    <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
+                  </div>
+                `;
+              }
+
+              document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
+              updateStatusIndicator(false, 0, 0);
+              // No cases - silent mode
+              var data = 'openTabSilent';
+              chrome.runtime.sendMessage(data, function (response) {
+                console.log('response-----' + response);
+              });
+            }
           });
-      });
+        });
     }
   });
 }
@@ -857,7 +874,7 @@ function checkGHOAlert() {
                   const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                   if (!localStorage.getItem(ghoTrackingKey)) {
                     // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
-                    trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                    trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, '');
                     localStorage.setItem(ghoTrackingKey, 'true');
                     console.log('GHO alert - GHO triage action tracked for case:', caseRecord.CaseNumber);
                   }
@@ -1534,6 +1551,8 @@ function checkGHOStatus() {
       const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
       ghoConn.query(commentQuery, function (commentErr, commentResult) {
+        console.log("GHO Comments:", commentResult);
+
         if (!commentErr && commentResult.records) {
           // Get current user ID for tracking
           ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
@@ -1542,34 +1561,26 @@ function checkGHOStatus() {
               currentUserId = userResult.records[0].Id;
             }
 
-            if (currentUserId) {
-              commentResult.records.forEach(comment => {
-                if (comment.Body && comment.Body.includes('#GHOTriage') && comment.CreatedById === currentUserId) {
-                  const caseRecord = result.records.find(c => c.Id === comment.ParentId);
-                  if (caseRecord) {
-                    const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
-                    if (!localStorage.getItem(ghoTrackingKey)) {
-                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
-                      localStorage.setItem(ghoTrackingKey, 'true');
-                      console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber);
-                    }
+            commentResult.records.forEach(comment => {
+              if (comment.Body && comment.Body.includes('#GHOTriage') && comment.CreatedById === currentUserId) {
+                const caseRecord = result.records.find(c => c.Id === comment.ParentId);
+                if (caseRecord) {
+                  const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                  if (!localStorage.getItem(ghoTrackingKey)) {
+                    trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, '');
+                    localStorage.setItem(ghoTrackingKey, 'true');
+                    console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber);
                   }
                 }
-              });
-            }
-
-            // Show modal with results
-            showGHOStatusModal(result.records, ghoConn);
+              }
+            });
           });
-        } else {
-          // Show modal even if comment query fails
-          showGHOStatusModal(result.records, ghoConn);
         }
       });
-    } else {
-      // Show modal with empty results
-      showGHOStatusModal(result.records, ghoConn);
     }
+
+    // Show modal with results
+    showGHOStatusModal(result.records, ghoConn, comments);
   });
 }
 
@@ -1599,7 +1610,7 @@ function getUserNames(userIds, conn, callback) {
   });
 }
 
-function showGHOStatusModal(ghoRecords, conn) {
+function showGHOStatusModal(ghoRecords, conn, comments) {
   const container = document.getElementById('gho-cases-container');
   const currentShift = getCurrentShift();
 
@@ -1643,6 +1654,9 @@ function showGHOStatusModal(ghoRecords, conn) {
     ghoRecords.forEach(caseRecord => {
       const caseId = caseRecord.Id;
       const isMVP = caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true;
+      const actionTaken = comments.some(comment => comment.ParentId === caseId && comment.Body && comment.Body.includes('#GHOTriage'));
+      console.log(actionTaken ? `GHO triage action found for case ${caseRecord.CaseNumber}` : `No GHO triage action found for case ${caseRecord.CaseNumber}`);
+
 
       // Determine status color
       let statusColor = '';
@@ -1804,6 +1818,12 @@ function showGHOStatusModal(ghoRecords, conn) {
                 <span class="checkmark">✓</span>
                 <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c}${isMVP ? ' - MVP CASE' : ''}</span>
               </div>
+              ${actionTaken ? `
+              <div class="case-info-item">
+                <span class="checkmark">✓</span>
+                <span style="color: green; font-weight: bold;">Action Taken (#GHOTriage)</span>
+              </div>
+              ` : ''}
               ${routingLogHtml}
               ${ghoTransferHtml}
             </div>
