@@ -406,8 +406,8 @@ function getCaseDetails() {
                     (today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
                     (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
                     (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
-                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(210, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 3 - High') ||
-                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes(430, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 4 - Medium');
+                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes((new Date(filteredRecords[x].SE_Target_Response__c) - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60) - 30) && filteredRecords[x].Severity_Level__c == 'Level 3 - High') ||
+                    (filteredRecords[x].Contact.isMVP === true && filteredRecords[x].SE_Initial_Response_Status__c !== 'Met' && today >= addMinutes((new Date(filteredRecords[x].SE_Target_Response__c) - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60) - 30) && filteredRecords[x].Severity_Level__c == 'Level 4 - Medium');
 
                   if (meetsAlertCriteria) {
                     const snoozeUntil = localStorage.getItem('snooze_' + caseId);
@@ -532,8 +532,8 @@ function getCaseDetails() {
                     // Case exists but doesn't meet alert criteria yet
                     pendingCasesCount++;
                     const minutesSinceCreation = Math.floor((today - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60));
-                    const requiredMinutes = filteredRecords[x].Severity_Level__c === 'Level 1 - Critical' ? minSev1 : filteredRecords[x].Severity_Level__c === 'Level 2 - Urgent' ? minSev2 : filteredRecords[x].Severity_Level__c === 'Level 3 - High' ? 210 : 430;
-                    const remainingMinutes = requiredMinutes - minutesSinceCreation;
+                    const requiredMinutes = filteredRecords[x].Severity_Level__c === 'Level 1 - Critical' ? minSev1 : filteredRecords[x].Severity_Level__c === 'Level 2 - Urgent' ? minSev2 : (new Date(filteredRecords[x].SE_Target_Response__c) - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60) - 30;
+                    const remainingMinutes = Math.round(requiredMinutes - minutesSinceCreation);
 
                     pendingCasesDetails.push({
                       caseNumber: filteredRecords[x].CaseNumber,
@@ -801,6 +801,7 @@ function buildPreferredShiftCondition(shiftValues) {
   }
 }
 
+
 // GHO Alert System Functions
 function checkGHOAlert() {
   const now = new Date();
@@ -815,6 +816,16 @@ function checkGHOAlert() {
   const isEMEATime = Math.abs(currentTime - emeaAlertTime) <= 5;
   const isAMERTime = Math.abs(currentTime - amerAlertTime) <= 5;
 
+  // Debug logging
+  console.log('GHO Alert Check:', {
+    currentTime: `${Math.floor(currentTime / 60)}:${(currentTime % 60).toString().padStart(2, '0')}`,
+    isAPACTime,
+    isEMEATime,
+    isAMERTime,
+    today,
+    currentUserName
+  });
+
   if (!(isAPACTime || isEMEATime || isAMERTime)) {
     return;
   }
@@ -826,14 +837,25 @@ function checkGHOAlert() {
   else if (isAMERTime) region = 'AMER';
 
   const alertKey = `gho_alert_${region}_${today}_${currentUserName}`;
+  console.log('GHO Alert Key:', alertKey, 'Already shown:', !!localStorage.getItem(alertKey));
+
   if (localStorage.getItem(alertKey)) {
     return;
   }
 
   const preferredShiftValues = getPreferredShiftValues(region);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
+  console.log('GHO Alert Shift Condition:', shiftCondition);
 
   const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+
+  console.log('GHO Query:', ghoQuery);
+
+  // Check if SESSION_ID is available
+  if (!SESSION_ID) {
+    console.error('SESSION_ID not available for GHO alert');
+    return;
+  }
 
   // Create connection for GHO alert query
   let ghoConn = new jsforce.Connection({
@@ -842,12 +864,19 @@ function checkGHOAlert() {
   });
 
   ghoConn.query(ghoQuery, function (err, result) {
+    console.log('GHO Alert Query Result:', {
+      error: err,
+      recordCount: result ? result.records.length : 0,
+      records: result ? result.records : null
+    });
+
     if (err) {
       console.error('GHO Alert Query Error:', err);
       return;
     }
 
     if (!result.records || result.records.length === 0) {
+      console.log('No GHO records found for region:', region);
       localStorage.setItem(alertKey, 'true');
       return;
     }
@@ -872,9 +901,11 @@ function checkGHOAlert() {
         // Get cases that have #GHOTriage comments - filter using JavaScript
         const actionedCaseIds = new Set();
         if (commentResult.records) {
+          console.log('Checking comments for GHO triage actions:', commentResult.records.length, 'comments found');
           commentResult.records.forEach(comment => {
             if (comment.Body && comment.Body.includes('#GHOTriage')) {
               actionedCaseIds.add(comment.ParentId);
+              console.log('Found #GHOTriage comment for case:', comment.ParentId);
 
               // Track GHO Triage actions if current user made the comment
               if (currentUserId && comment.CreatedById === currentUserId) {
@@ -892,14 +923,26 @@ function checkGHOAlert() {
               }
             }
           });
+        } else {
+          console.log('No comments found for GHO cases');
         }
 
         // Filter out cases that have been actioned
         const unactionedCases = result.records.filter(caseRecord => !actionedCaseIds.has(caseRecord.Id));
 
+        console.log('GHO Alert Cases Analysis:', {
+          totalCases: result.records.length,
+          actionedCaseIds: Array.from(actionedCaseIds),
+          unactionedCases: unactionedCases.length,
+          unactionedCaseNumbers: unactionedCases.map(c => c.CaseNumber)
+        });
+
         if (unactionedCases.length > 0) {
           // Show GHO alert
+          console.log('Showing GHO alert for region:', region, 'with', unactionedCases.length, 'cases');
           showGHOAlert(region, unactionedCases);
+        } else {
+          console.log('All GHO cases have been actioned - no alert needed');
         }
 
         // Mark alert as shown regardless of whether we showed it
@@ -1689,6 +1732,39 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
     return;
   }
 
+  // Query comments for all filtered cases to check for #GHOTriage
+  const caseIds = filteredRecords.map(record => record.Id);
+  const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+
+  conn.query(commentQuery, function (commentErr, commentResult) {
+    if (commentErr) {
+      console.error('Error querying GHO comments:', commentErr);
+      // Continue rendering without comment info
+      renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set());
+      return;
+    }
+
+    // Check which cases have #GHOTriage comments
+    const ghoTriageCommentCases = new Set();
+    if (commentResult.records) {
+      commentResult.records.forEach(comment => {
+        if (comment.Body && comment.Body.includes('#GHOTriage')) {
+          ghoTriageCommentCases.add(comment.ParentId);
+        }
+      });
+    }
+
+    console.log('GHO Cases with #GHOTriage comments:', Array.from(ghoTriageCommentCases));
+
+    // Render cases with comment information
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases);
+  });
+}
+
+// Helper function to render GHO cases with comment information
+function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases) {
+  const container = document.getElementById('gho-cases-container');
+
   // Collect all unique user IDs from routing logs
   const allUserIds = new Set();
   filteredRecords.forEach(caseRecord => {
@@ -1703,10 +1779,14 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
 
   // Get user names for all user IDs
   getUserNames(Array.from(allUserIds), conn, function (userMap) {
+    // Count cases with QB mentions
+    const qbMentionedCount = Array.from(ghoTriageCommentCases).length;
+
     let ghoHtml = `
       <div style="margin-bottom: 16px;">
         <h4 style="color: #374151; font-size: 18px; margin-bottom: 8px;">Found ${filteredRecords.length} ${filterValue === 'All' ? '' : filterValue + ' '}GHO Case${filteredRecords.length === 1 ? '' : 's'}</h4>
         <p style="color: #6b7280; font-size: 14px;">Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift</p>
+        ${qbMentionedCount > 0 ? `<p style="color: #059669; font-size: 14px; margin-top: 4px;"><strong>${qbMentionedCount}</strong> case${qbMentionedCount === 1 ? ' has' : 's have'} QB mentioned (#GHOTriage)</p>` : ''}
         <div style="margin-top: 8px; padding: 8px 12px; background-color: #f3f4f6; border-radius: 6px; font-size: 12px; color: #374151;">
           <strong>Current Shift:</strong> ${currentShift} | 
           <strong>Time:</strong> ${new Date().toLocaleTimeString()} |
@@ -1718,6 +1798,7 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
     filteredRecords.forEach(caseRecord => {
       const caseId = caseRecord.Id;
       const isMVP = caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true;
+      const hasGHOTriage = ghoTriageCommentCases.has(caseId);
 
       // Determine status color
       let statusColor = '';
@@ -1848,6 +1929,7 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
             <div style="display: flex; align-items: center; gap: 8px;">
               ${isMVP ? '<span style="background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP</span>' : ''}
               <span style="background-color: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">GHO</span>
+              ${hasGHOTriage ? '<span style="background-color: #059669; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">QB Mentioned</span>' : ''}
               <h3 class="case-title">${caseRecord.Subject}</h3>
             </div>
             <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
@@ -1879,6 +1961,7 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
                 <span class="checkmark">✓</span>
                 <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c}${isMVP ? ' - MVP CASE' : ''}</span>
               </div>
+              ${hasGHOTriage ? '<div class="case-info-item"><span class="checkmark" style="color: #059669;">✓</span><span style="color: #059669; font-weight: bold;">QB has been mentioned (#GHOTriage found in comments)</span></div>' : ''}
               ${routingLogHtml}
               ${ghoTransferHtml}
             </div>
