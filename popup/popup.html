@@ -642,6 +642,20 @@
 		#gho-cases-container {
 			min-height: 200px;
 		}
+
+		/* GHO Filter Container Styles */
+		.gho-filter-container {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		.gho-filter-container .filter-select {
+			font-size: 14px;
+			padding: 8px 12px;
+			min-width: 150px;
+			border: 1px solid #d1d5db;
+		}
 	</style>
 </head>
 
@@ -653,6 +667,9 @@
 					<h1 class="header-title">ZeroLag Tool</h1>
 				</div>
 				<div class="header-toggle">
+					<div id="weekend-mode-indicator" style="display: none;">
+						Weekend Mode
+					</div>
 					<span class="toggle-label-text">Signature</span>
 					<label class="switch">
 						<input type="checkbox" id="mode-switch">
@@ -668,9 +685,6 @@
 					<button id="shortcuts-help-btn" class="help-button" title="Keyboard Shortcuts (?)">
 						<i class="fa fa-keyboard-o"></i>
 					</button>
-				</div>
-				<div id="weekend-mode-indicator" style="display: none;">
-					Weekend Mode
 				</div>
 			</div>
 		</div>
@@ -710,6 +724,13 @@
 		<div class="modal-content">
 			<div class="modal-header">
 				<h3>GHO Cases Status</h3>
+				<select id="gho-taxonomy-filter" class="filter-select"
+					style="margin-left: auto; margin-right: 1rem; font-size: 14px; padding: 8px 12px; min-width: 150px;">
+					<option value="All">All</option>
+					<option value="Sales">Sales</option>
+					<option value="Service">Service</option>
+					<option value="Industry">Industry</option>
+				</select>
 				<span class="modal-close" id="gho-modal-close">&times;</span>
 			</div>
 			<div class="modal-body">
