@@ -10,6 +10,22 @@ let ghoRecordsGlobal = []; // Store GHO records for filtering
 let ghoConnectionGlobal = null; // Store connection for filtering
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
+// Listen for messages from background script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  try {
+    if (request.action === 'trackActionFromBackground') {
+      const { createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue } = request.data;
+      trackAction(createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue);
+      sendResponse({ success: true });
+      return true;
+    }
+  } catch (error) {
+    console.error('Error handling background message:', error);
+    sendResponse({ success: false, error: error.message });
+  }
+  return false;
+});
+
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
     SESSION_ID = cookie.value;
@@ -99,55 +115,76 @@ function getCaseDetails() {
 
             const caseIds = result.records.map(record => record.Id);
 
-            if (currentMode === 'premier') {
-              const caseMap = new Map(result.records.map(record => [record.Id, record]));
-              const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND Field = 'Routing_Status__c' ORDER BY CreatedDate ASC`;
+            // Add cases to persistent set for both modes for continuous processing
+            chrome.runtime.sendMessage({
+              action: 'addCasesToPersistentSet',
+              cases: result.records,
+              currentMode: currentMode,
+              currentUserId: currentUserId,
+              currentUserName: currentUserName
+            }, function (response) {
+              if (response && response.success) {
+                console.log(response.message);
+              }
+            });
 
-              conn.query(historyQuery, function (historyErr, historyResult) {
-                if (historyErr) {
-                  return console.error('Error fetching case history:', historyErr);
+            // Use same case history tracking logic for both Premier and Signature modes
+            // Convert result.records to a proper Map instead of Set
+            const caseMap = new Map(result.records.map(record => [record.Id, record]));
+
+            //const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND Field = 'Routing_Status__c' ORDER BY CreatedDate ASC`;
+            const historyQuery2 = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND (Field = 'Routing_Status__c' OR Field = 'Owner') AND CreatedById = ${currentUserId} ORDER BY CreatedDate ASC LIMIT 2`;
+            conn.query(historyQuery2, function (historyErr, historyResult) {
+              if (historyErr) {
+                return console.error('Error fetching case history:', historyErr);
+              }
+
+              if (!historyResult.records || historyResult.records.length === 0) {
+                return;
+              }
+
+              const manuallyAssignedHistories = historyResult.records.filter(
+                history => history.NewValue && typeof history.NewValue === 'string' && history.NewValue.startsWith('Manually Assigned')
+              );
+
+              const firstAssignments = new Map();
+              for (const history of manuallyAssignedHistories) {
+                if (!firstAssignments.has(history.CaseId)) {
+                  firstAssignments.set(history.CaseId, history);
                 }
+              }
 
-                if (!historyResult.records || historyResult.records.length === 0) {
-                  return;
-                }
+              if (firstAssignments.size > 0) {
+                for (const [caseId, history] of firstAssignments.entries()) {
+                  // Only track if the action was taken by the current user
+                  if (history.CreatedById === currentUserId) {
+                    const trackingKey = `tracked_${currentMode}_assignment_${caseId}`;
+                    if (!localStorage.getItem(trackingKey)) {
+                      const caseRecord = caseMap.get(caseId);
+                      if (caseRecord) {
+                        trackAction(
+                          history.CreatedDate,
+                          caseRecord.CaseNumber,
+                          caseRecord.Severity_Level__c,
+                          'New Case',
+                          caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
+                          currentMode,
+                          currentUserName,
+                          history.NewValue
+                        );
+                        localStorage.setItem(trackingKey, 'true');
 
-                const manuallyAssignedHistories = historyResult.records.filter(
-                  history => history.NewValue && typeof history.NewValue === 'string' && history.NewValue.startsWith('Manually Assigned')
-                );
-
-                const firstAssignments = new Map();
-                for (const history of manuallyAssignedHistories) {
-                  if (!firstAssignments.has(history.CaseId)) {
-                    firstAssignments.set(history.CaseId, history);
-                  }
-                }
-
-                if (firstAssignments.size > 0) {
-                  for (const [caseId, history] of firstAssignments.entries()) {
-                    // Only track if the action was taken by the current user
-                    if (history.CreatedById === currentUserId) {
-                      const trackingKey = `tracked_premier_assignment_${caseId}`;
-                      if (!localStorage.getItem(trackingKey)) {
-                        const caseRecord = caseMap.get(caseId);
-                        if (caseRecord) {
-                          trackAction(
-                            history.CreatedDate,
-                            caseRecord.CaseNumber,
-                            caseRecord.Severity_Level__c,
-                            'New Case',
-                            caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
-                            currentMode,
-                            currentUserName
-                          );
-                          localStorage.setItem(trackingKey, 'true');
-                        }
+                        // Remove from persistent set as it's been processed
+                        chrome.runtime.sendMessage({
+                          action: 'removeCaseFromPersistentSet',
+                          caseId: caseId
+                        });
                       }
                     }
                   }
                 }
-              });
-            }
+              }
+            });
 
             const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
@@ -170,8 +207,14 @@ function getCaseDetails() {
                       if (caseRecord) {
                         const trackingKey = `tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(trackingKey)) {
-                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                           localStorage.setItem(trackingKey, 'true');
+
+                          // Remove from persistent set as it's been processed
+                          chrome.runtime.sendMessage({
+                            action: 'removeCaseFromPersistentSet',
+                            caseId: caseRecord.Id
+                          });
                         }
                       }
                     }
@@ -180,7 +223,24 @@ function getCaseDetails() {
                   // Track GHO Triage actions
                   if (record.Body && record.Body.includes('#GHOTriage')) {
                     console.log('GHO Triage action found:', record.ParentId);
-                    if (record.CreatedById === currentUserId) {
+
+                    // Check if comment is from today and same GEO
+                    const commentDate = record.LastModifiedDate || record.CreatedDate;
+                    const isCommentFromToday = isToday(commentDate);
+                    const commentShift = getShiftForDate(commentDate);
+                    const currentShift = getCurrentShift();
+                    const isSameGeo = commentShift === currentShift;
+
+                    console.log('GHO Triage comment analysis:', {
+                      commentDate,
+                      isFromToday: isCommentFromToday,
+                      commentShift,
+                      currentShift,
+                      isSameGeo
+                    });
+
+                    // Only process if comment is from today and same GEO
+                    if (isCommentFromToday && isSameGeo && record.CreatedById === currentUserId) {
                       const caseRecord = result.records.find(c => c.Id === record.ParentId);
                       console.log('Case record for GHO triage comment:', caseRecord);
                       if (caseRecord) {
@@ -189,9 +249,23 @@ function getCaseDetails() {
                           // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
                           trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
                           localStorage.setItem(ghoTrackingKey, 'true');
-                          console.log('GHO triage action tracked for case:', caseRecord.CaseNumber);
+                          console.log('GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
+
+                          // Remove from persistent set as it's been processed
+                          chrome.runtime.sendMessage({
+                            action: 'removeCaseFromPersistentSet',
+                            caseId: caseRecord.Id
+                          });
                         }
                       }
+                    } else {
+                      console.log('GHO Triage comment ignored - not from today/same GEO:', {
+                        isFromToday: isCommentFromToday,
+                        isSameGeo: isSameGeo,
+                        commentDate,
+                        commentShift,
+                        currentShift
+                      });
                     }
                   }
                 });
@@ -763,6 +837,34 @@ function formatDateWithDayOfWeek(date) {
   return `${dayOfWeek}, ${dateObj.toLocaleString()}`;
 }
 
+// Function to determine shift based on a specific date/time
+function getShiftForDate(date) {
+  const dateObj = new Date(date);
+  const hours = dateObj.getHours();
+  const minutes = dateObj.getMinutes();
+  const totalMinutes = hours * 60 + minutes;
+
+  const apacStart = 5 * 60 + 30;
+  const emeaStart = 12 * 60 + 30;
+  const apacEnd = 12 * 60 + 30;
+  const emeaEnd = 20 * 60;
+
+  if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
+    return 'APAC'; // 5:30 AM - 12:30 PM IST
+  } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
+    return 'EMEA'; // 12:30 PM - 8:00 PM IST
+  } else {
+    return 'AMER'; // 8:00 PM - 5:30 AM IST (next day)
+  }
+}
+
+// Function to check if a date is today
+function isToday(date) {
+  const today = new Date();
+  const checkDate = new Date(date);
+  return today.toDateString() === checkDate.toDateString();
+}
+
 // Function to determine current shift based on time of day
 function getCurrentShift() {
   const now = new Date();
@@ -904,22 +1006,49 @@ function checkGHOAlert() {
           console.log('Checking comments for GHO triage actions:', commentResult.records.length, 'comments found');
           commentResult.records.forEach(comment => {
             if (comment.Body && comment.Body.includes('#GHOTriage')) {
-              actionedCaseIds.add(comment.ParentId);
-              console.log('Found #GHOTriage comment for case:', comment.ParentId);
+              // Check if comment is from today and same GEO
+              const commentDate = comment.LastModifiedDate || comment.CreatedDate;
+              const isCommentFromToday = isToday(commentDate);
+              const commentShift = getShiftForDate(commentDate);
+              const isSameGeo = commentShift === region; // region is the current shift we're checking for
 
-              // Track GHO Triage actions if current user made the comment
-              if (currentUserId && comment.CreatedById === currentUserId) {
-                const caseRecord = result.records.find(c => c.Id === comment.ParentId);
-                console.log('GHO alert - Case record for triage comment:', caseRecord);
-                if (caseRecord) {
-                  const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
-                  if (!localStorage.getItem(ghoTrackingKey)) {
-                    // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
-                    trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
-                    localStorage.setItem(ghoTrackingKey, 'true');
-                    console.log('GHO alert - GHO triage action tracked for case:', caseRecord.CaseNumber);
+              console.log('GHO Alert - #GHOTriage comment analysis:', {
+                caseId: comment.ParentId,
+                commentDate,
+                isFromToday: isCommentFromToday,
+                commentShift,
+                currentRegion: region,
+                isSameGeo
+              });
+
+              // Only consider #GHOTriage comments from today and same GEO
+              if (isCommentFromToday && isSameGeo) {
+                actionedCaseIds.add(comment.ParentId);
+                console.log('Found valid #GHOTriage comment for case:', comment.ParentId, 'Date:', commentDate, 'Shift:', commentShift);
+
+                // Track GHO Triage actions if current user made the comment
+                if (currentUserId && comment.CreatedById === currentUserId) {
+                  const caseRecord = result.records.find(c => c.Id === comment.ParentId);
+                  console.log('GHO alert - Case record for triage comment:', caseRecord);
+                  if (caseRecord) {
+                    const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                    if (!localStorage.getItem(ghoTrackingKey)) {
+                      // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
+                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                      localStorage.setItem(ghoTrackingKey, 'true');
+                      console.log('GHO alert - triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
+                    }
                   }
                 }
+              } else {
+                console.log('GHO Alert - #GHOTriage comment ignored - not from today/same GEO:', {
+                  caseId: comment.ParentId,
+                  isFromToday: isCommentFromToday,
+                  isSameGeo: isSameGeo,
+                  commentDate,
+                  commentShift,
+                  currentRegion: region
+                });
               }
             }
           });
@@ -1554,16 +1683,29 @@ function updateStatusIndicator(hasUnactionedCases, totalCases, actionedCases) {
 
   if (!statusDot || !statusText) return;
 
-  if (totalCases === 0) {
-    statusDot.style.backgroundColor = '#22c55e'; // Green for no cases
-    statusText.textContent = 'No Cases - All Clear';
-  } else if (hasUnactionedCases) {
-    statusDot.style.backgroundColor = '#ef4444'; // Red for unactioned cases
-    statusText.textContent = `${totalCases - actionedCases} Cases Need Action`;
-  } else {
-    statusDot.style.backgroundColor = '#22c55e'; // Green for all actioned
-    statusText.textContent = 'All Cases Actioned';
-  }
+  // Get persistent case count from background
+  chrome.runtime.sendMessage({ action: 'getPersistentCaseCount' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('Error getting persistent case count:', chrome.runtime.lastError);
+      return;
+    }
+
+    let persistentCaseText = '';
+    if (response && response.count > 0) {
+      persistentCaseText = ` | ${response.count} cases being tracked`;
+    }
+
+    if (totalCases === 0) {
+      statusDot.style.backgroundColor = '#22c55e'; // Green for no cases
+      statusText.textContent = `No Cases - All Clear${persistentCaseText}`;
+    } else if (hasUnactionedCases) {
+      statusDot.style.backgroundColor = '#ef4444'; // Red for unactioned cases
+      statusText.textContent = `${totalCases - actionedCases} Cases Need Action${persistentCaseText}`;
+    } else {
+      statusDot.style.backgroundColor = '#22c55e'; // Green for all actioned
+      statusText.textContent = `All Cases Actioned${persistentCaseText}`;
+    }
+  });
 }
 
 // GHO Functions
@@ -1629,14 +1771,42 @@ function checkGHOStatus() {
             if (currentUserId) {
               commentResult.records.forEach(comment => {
                 if (comment.Body && comment.Body.includes('#GHOTriage') && comment.CreatedById === currentUserId) {
-                  const caseRecord = result.records.find(c => c.Id === comment.ParentId);
-                  if (caseRecord) {
-                    const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
-                    if (!localStorage.getItem(ghoTrackingKey)) {
-                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
-                      localStorage.setItem(ghoTrackingKey, 'true');
-                      console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber);
+                  // Check if comment is from today and same GEO
+                  const commentDate = comment.LastModifiedDate || comment.CreatedDate;
+                  const isCommentFromToday = isToday(commentDate);
+                  const commentShift = getShiftForDate(commentDate);
+                  const currentShift = getCurrentShift();
+                  const isSameGeo = commentShift === currentShift;
+
+                  console.log('GHO Status Check - #GHOTriage comment analysis:', {
+                    caseId: comment.ParentId,
+                    commentDate,
+                    isFromToday: isCommentFromToday,
+                    commentShift,
+                    currentShift,
+                    isSameGeo
+                  });
+
+                  // Only process if comment is from today and same GEO
+                  if (isCommentFromToday && isSameGeo) {
+                    const caseRecord = result.records.find(c => c.Id === comment.ParentId);
+                    if (caseRecord) {
+                      const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
+                      if (!localStorage.getItem(ghoTrackingKey)) {
+                        trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                        localStorage.setItem(ghoTrackingKey, 'true');
+                        console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
+                      }
                     }
+                  } else {
+                    console.log('GHO Status Check - #GHOTriage comment ignored - not from today/same GEO:', {
+                      caseId: comment.ParentId,
+                      isFromToday: isCommentFromToday,
+                      isSameGeo: isSameGeo,
+                      commentDate,
+                      commentShift,
+                      currentShift
+                    });
                   }
                 }
               });
@@ -1749,7 +1919,35 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
     if (commentResult.records) {
       commentResult.records.forEach(comment => {
         if (comment.Body && comment.Body.includes('#GHOTriage')) {
-          ghoTriageCommentCases.add(comment.ParentId);
+          // Check if comment is from today and same GEO
+          const commentDate = comment.LastModifiedDate || comment.CreatedDate;
+          const isCommentFromToday = isToday(commentDate);
+          const commentShift = getShiftForDate(commentDate);
+          const isSameGeo = commentShift === currentShift;
+
+          console.log('GHO Render - #GHOTriage comment analysis:', {
+            caseId: comment.ParentId,
+            commentDate,
+            isFromToday: isCommentFromToday,
+            commentShift,
+            currentShift,
+            isSameGeo
+          });
+
+          // Only consider #GHOTriage comments from today and same GEO
+          if (isCommentFromToday && isSameGeo) {
+            ghoTriageCommentCases.add(comment.ParentId);
+            console.log('GHO Render - Found valid #GHOTriage comment for case:', comment.ParentId, 'Date:', commentDate, 'Shift:', commentShift);
+          } else {
+            console.log('GHO Render - #GHOTriage comment ignored - not from today/same GEO:', {
+              caseId: comment.ParentId,
+              isFromToday: isCommentFromToday,
+              isSameGeo: isSameGeo,
+              commentDate,
+              commentShift,
+              currentShift
+            });
+          }
         }
       });
     }
@@ -1932,7 +2130,8 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
               ${hasGHOTriage ? '<span style="background-color: #059669; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">QB Mentioned</span>' : ''}
               <h3 class="case-title">${caseRecord.Subject}</h3>
             </div>
-            <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
+            <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)}<br/>
+             (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
           </div>
           
           <div class="case-details">
@@ -1970,7 +2169,7 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
               <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
                  class="preview-btn gho-preview-btn" 
                  data-case-id="${caseId}"
-                 style="margin-top: 12px;position:absolute;top:50px;right:10px">
+                 style="margin-top:20px;position:absolute;top:60px;right:20px">
                 View Case Record
               </a>
             </div>
@@ -1993,23 +2192,14 @@ function toggleGhoTransfers(caseUniqueId) {
     const toggleButton = document.querySelector(`[data-case-id="${caseUniqueId}"]`);
     const chevronIcon = toggleButton ? toggleButton.querySelector('.fa-chevron-down') : null;
 
-    if (!expandedDiv || !toggleText) {
-      console.error('GHO toggle elements not found for:', caseUniqueId);
-      return;
-    }
-
-    if (expandedDiv.style.display === 'none') {
-      // Expand the section
-      expandedDiv.style.display = 'block';
-      toggleText.innerHTML = toggleText.innerHTML.replace('Show', 'Hide');
-      if (chevronIcon) {
+    if (expandedDiv && toggleText && chevronIcon) {
+      if (expandedDiv.style.display === 'none' || expandedDiv.style.display === '') {
+        expandedDiv.style.display = 'block';
+        toggleText.textContent = 'Hide Transfer Logs';
         chevronIcon.style.transform = 'rotate(180deg)';
-      }
-    } else {
-      // Collapse the section
-      expandedDiv.style.display = 'none';
-      toggleText.innerHTML = toggleText.innerHTML.replace('Hide', 'Show');
-      if (chevronIcon) {
+      } else {
+        expandedDiv.style.display = 'none';
+        toggleText.textContent = 'Show Transfer Logs';
         chevronIcon.style.transform = 'rotate(0deg)';
       }
     }
@@ -2017,3 +2207,44 @@ function toggleGhoTransfers(caseUniqueId) {
     console.error('Error toggling GHO transfers:', error);
   }
 }
+
+// Debug function to check persistent case set status
+function debugPersistentCases() {
+  console.log('Requesting persistent case details...');
+
+  chrome.runtime.sendMessage({ action: 'getPersistentCaseDetails' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('Runtime error:', chrome.runtime.lastError);
+      return;
+    }
+
+    console.log('Response received:', response);
+
+    if (response && typeof response.count !== 'undefined') {
+      console.log(`✅ Persistent Case Set Status: ${response.count} cases being tracked`);
+      if (response.cases && response.cases.length > 0) {
+        console.log('📊 Case Details:');
+        console.table(response.cases);
+      } else if (response.count === 0) {
+        console.log('📭 No cases currently being tracked');
+      }
+    } else {
+      console.warn('⚠️ No response received or invalid response format');
+    }
+  });
+}
+
+// Alternative simple debug function
+function debugPersistentCasesSimple() {
+  chrome.runtime.sendMessage({ action: 'getPersistentCaseCount' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('Runtime error:', chrome.runtime.lastError);
+      return;
+    }
+    console.log('Persistent cases count:', response ? response.count : 'undefined');
+  });
+}
+
+// Add debug functions to global scope for console access
+window.debugPersistentCases = debugPersistentCases;
+window.debugPersistentCasesSimple = debugPersistentCasesSimple;

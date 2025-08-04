@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Zerolag",
-	"version": "3.0.13",
+	"version": "3.0.14",
 	"description": "Triage Team New Sev1/Sev2 Cases Notifier for Sig - Sales/Service/Industry Cloud and Premier Weekend New Cases",
 	"content_scripts": [
 		{
