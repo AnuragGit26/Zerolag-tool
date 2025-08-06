@@ -12,14 +12,14 @@ export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
 // Mouse activity tracking for auto-refresh
 let mouseActivityTimer;
-const MOUSE_ACTIVITY_TIMEOUT = 15000;
+const MOUSE_ACTIVITY_TIMEOUT = 30000;
 
 function resetMouseActivityTimer() {
   if (mouseActivityTimer) {
     clearTimeout(mouseActivityTimer);
   }
   mouseActivityTimer = setTimeout(() => {
-    console.log('No mouse activity for 15 seconds, refreshing window...');
+    console.log('No mouse activity for 30 seconds, refreshing window...');
     window.location.reload();
   }, MOUSE_ACTIVITY_TIMEOUT);
 }
@@ -31,7 +31,7 @@ function initMouseActivityTracking() {
     document.addEventListener(eventType, resetMouseActivityTimer, true);
   });
   resetMouseActivityTimer();
-  console.log('Mouse activity tracking initialized - auto-refresh after 15 seconds of inactivity');
+  console.log('Mouse activity tracking initialized - auto-refresh after 30 seconds of inactivity');
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
