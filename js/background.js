@@ -12,6 +12,7 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 let tabId;
+let persistentCases = new Map(); // Store persistent cases by case ID
 
 // Function to close all existing extension tabs (except active ones)
 async function closeExistingExtensionTabs() {
@@ -69,61 +70,159 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 chrome.runtime.onMessage.addListener(
 	function (request, sender, sendResponse) {
-		if (request == 'closeTab') {
-			if (tabId) {
-				chrome.tabs.remove(tabId, function () {
-					tabId = null;
-				});
+		try {
+			if (request == 'closeTab') {
+				if (tabId) {
+					chrome.tabs.remove(tabId, function () {
+						tabId = null;
+					});
+				}
+				sendResponse("tab closed");
+				return true;
 			}
-			sendResponse("tab closed");
-		}
-		if (request == 'openTab') {
-			// Check if the tab still exists before trying to update it
-			if (tabId) {
-				chrome.tabs.get(tabId, function (tab) {
-					if (chrome.runtime.lastError) {
-						// Tab doesn't exist anymore, create a new one
-						createSingleExtensionTab().then(() => {
-							if (tabId) {
-								chrome.tabs.update(tabId, { "active": true });
-							}
+			if (request == 'openTab') {
+				// Check if the tab still exists before trying to update it
+				if (tabId) {
+					chrome.tabs.get(tabId, function (tab) {
+						if (chrome.runtime.lastError) {
+							// Tab doesn't exist anymore, create a new one
+							createSingleExtensionTab().then(() => {
+								if (tabId) {
+									chrome.tabs.update(tabId, { "active": true });
+								}
+								sendResponse("tab open");
+							});
+						} else {
+							chrome.tabs.update(tabId, { "active": true });
+							sendResponse("tab open");
+						}
+					});
+				} else {
+					// No tab ID stored, create a new one
+					createSingleExtensionTab().then(() => {
+						if (tabId) {
+							chrome.tabs.update(tabId, { "active": true });
+						}
+						sendResponse("tab open");
+					});
+				}
+				return true; // Indicates async response
+			}
+			if (request == 'openTabSilent') {
+				// Ensure only one extension tab exists
+				if (tabId) {
+					chrome.tabs.get(tabId, function (tab) {
+						if (chrome.runtime.lastError) {
+							// Tab doesn't exist anymore, create a new one
+							createSingleExtensionTab().then(() => {
+								sendResponse("tab open silently");
+							});
+						} else {
+							// Tab exists, keep it as is
+							sendResponse("tab open silently");
+						}
+					});
+				} else {
+					// No tab ID stored, create a new one
+					createSingleExtensionTab().then(() => {
+						sendResponse("tab open silently");
+					});
+				}
+				return true; // Indicates async response
+			}
+			if (request == 'ensureSingleTab') {
+				// Perform immediate cleanup to ensure only one tab exists
+				performPeriodicCleanup().then(() => {
+					sendResponse("single tab ensured");
+				});
+				return true; // Indicates async response
+			}
+
+			// Handle persistent case management
+			if (request.action === 'addCasesToPersistentSet') {
+				try {
+					if (request.cases && Array.isArray(request.cases)) {
+						request.cases.forEach(caseObj => {
+							persistentCases.set(caseObj.Id, {
+								...caseObj,
+								mode: request.currentMode,
+								userId: request.currentUserId,
+								userName: request.currentUserName,
+								addedAt: Date.now()
+							});
+						});
+						sendResponse({
+							success: true,
+							message: `Added ${request.cases.length} cases to persistent set`,
+							count: persistentCases.size
 						});
 					} else {
-						chrome.tabs.update(tabId, { "active": true });
+						sendResponse({ success: false, message: 'Invalid cases data' });
 					}
-				});
-			} else {
-				// No tab ID stored, create a new one
-				createSingleExtensionTab().then(() => {
-					if (tabId) {
-						chrome.tabs.update(tabId, { "active": true });
-					}
-				});
+				} catch (error) {
+					console.error('Error adding cases to persistent set:', error);
+					sendResponse({ success: false, message: error.message });
+				}
+				return true;
 			}
-			sendResponse("tab open");
-		}
-		if (request == 'openTabSilent') {
-			// Ensure only one extension tab exists
-			if (tabId) {
-				chrome.tabs.get(tabId, function (tab) {
-					if (chrome.runtime.lastError) {
-						// Tab doesn't exist anymore, create a new one
-						createSingleExtensionTab();
+
+			if (request.action === 'removeCaseFromPersistentSet') {
+				try {
+					if (request.caseId) {
+						const wasRemoved = persistentCases.delete(request.caseId);
+						sendResponse({
+							success: true,
+							removed: wasRemoved,
+							message: wasRemoved ? 'Case removed from persistent set' : 'Case not found in persistent set',
+							count: persistentCases.size
+						});
+					} else {
+						sendResponse({ success: false, message: 'No case ID provided' });
 					}
-					// Tab exists, keep it as is
-				});
-			} else {
-				// No tab ID stored, create a new one
-				createSingleExtensionTab();
+				} catch (error) {
+					console.error('Error removing case from persistent set:', error);
+					sendResponse({ success: false, message: error.message });
+				}
+				return true;
 			}
-			sendResponse("tab open silently");
-		}
-		if (request == 'ensureSingleTab') {
-			// Perform immediate cleanup to ensure only one tab exists
-			performPeriodicCleanup().then(() => {
-				sendResponse("single tab ensured");
-			});
-			return true; // Indicates async response
+
+			if (request.action === 'getPersistentCaseCount') {
+				try {
+					sendResponse({
+						success: true,
+						count: persistentCases.size,
+						cases: Array.from(persistentCases.values())
+					});
+				} catch (error) {
+					console.error('Error getting persistent case count:', error);
+					sendResponse({ success: false, message: error.message, count: 0 });
+				}
+				return true;
+			}
+
+			if (request.action === 'getPersistentCaseDetails') {
+				try {
+					const cases = Array.from(persistentCases.values());
+					sendResponse({
+						success: true,
+						cases: cases,
+						count: cases.length
+					});
+				} catch (error) {
+					console.error('Error getting persistent case details:', error);
+					sendResponse({ success: false, message: error.message, cases: [] });
+				}
+				return true;
+			}
+
+			// Default response for unhandled messages
+			console.warn('Unhandled message type:', request);
+			sendResponse({ success: false, message: 'Unknown request type', request: request });
+			return true;
+		} catch (error) {
+			console.error('Error in message handler:', error);
+			sendResponse({ success: false, message: 'Internal error', error: error.message });
+			return true;
 		}
 	}
 );

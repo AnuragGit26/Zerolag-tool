@@ -11,8 +11,7 @@
 			"js": [
 				"js/vendor/jsforce.js",
 				"js/vendor/jquery.min.js",
-				"js/vendor/bootstrap.min.js",
-				"js/background.js"
+				"js/vendor/bootstrap.min.js"
 			]
 		}
 	],

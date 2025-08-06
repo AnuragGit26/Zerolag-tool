@@ -6,11 +6,10 @@ let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
 let currentUserName;
 let searchTimeout;
-let ghoRecordsGlobal = []; // Store GHO records for filtering
-let ghoConnectionGlobal = null; // Store connection for filtering
+let ghoRecordsGlobal = [];
+let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
-// Mouse activity tracking for auto-refresh
 let mouseActivityTimer;
 const MOUSE_ACTIVITY_TIMEOUT = 30000;
 
@@ -81,9 +80,12 @@ function getCaseDetails() {
         showToast('Connection or Session ID error. Please refresh or try toggling modes.');
       }
 
-      // Auto-open tab even on error for user to try toggle or troubleshoot
       var data = 'openTabSilent';
       chrome.runtime.sendMessage(data, function (response) {
+        if (chrome.runtime.lastError) {
+          console.error('Runtime error:', chrome.runtime.lastError.message);
+          return;
+        }
         console.log('response-----' + response);
       });
       return console.error('error---' + err);
@@ -105,7 +107,6 @@ function getCaseDetails() {
 
         let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
 
-        // Get current shift dynamically
         const currentShift = getCurrentShift();
         const preferredShiftValues = getPreferredShiftValues(currentShift);
         const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
@@ -131,6 +132,10 @@ function getCaseDetails() {
               // Auto-open tab without focus for easy mode switching
               var data = 'openTabSilent';
               chrome.runtime.sendMessage(data, function (response) {
+                if (chrome.runtime.lastError) {
+                  console.error('Runtime error:', chrome.runtime.lastError.message);
+                  return;
+                }
                 console.log('response-----' + response);
               });
               return;
@@ -146,6 +151,10 @@ function getCaseDetails() {
               currentUserId: currentUserId,
               currentUserName: currentUserName
             }, function (response) {
+              if (chrome.runtime.lastError) {
+                console.error('Runtime error adding cases to persistent set:', chrome.runtime.lastError.message);
+                return;
+              }
               if (response && response.success) {
                 console.log(response.message);
               }
@@ -201,6 +210,10 @@ function getCaseDetails() {
                         chrome.runtime.sendMessage({
                           action: 'removeCaseFromPersistentSet',
                           caseId: caseId
+                        }, function (response) {
+                          if (chrome.runtime.lastError) {
+                            console.error('Runtime error removing case from persistent set:', chrome.runtime.lastError.message);
+                          }
                         });
                       }
                     }
@@ -237,6 +250,10 @@ function getCaseDetails() {
                           chrome.runtime.sendMessage({
                             action: 'removeCaseFromPersistentSet',
                             caseId: caseRecord.Id
+                          }, function (response) {
+                            if (chrome.runtime.lastError) {
+                              console.error('Runtime error removing case from persistent set:', chrome.runtime.lastError.message);
+                            }
                           });
                         }
                       }
@@ -278,6 +295,10 @@ function getCaseDetails() {
                           chrome.runtime.sendMessage({
                             action: 'removeCaseFromPersistentSet',
                             caseId: caseRecord.Id
+                          }, function (response) {
+                            if (chrome.runtime.lastError) {
+                              console.error('Runtime error removing GHO case from persistent set:', chrome.runtime.lastError.message);
+                            }
                           });
                         }
                       }
@@ -750,12 +771,20 @@ function getCaseDetails() {
                   audio.play();
                   var data = 'openTab';
                   chrome.runtime.sendMessage(data, function (response) {
+                    if (chrome.runtime.lastError) {
+                      console.error('Runtime error opening tab:', chrome.runtime.lastError.message);
+                      return;
+                    }
                     console.log('response-----' + response);
                   });
                 } else {
                   // All cases have action taken - silent mode
                   var data = 'openTabSilent';
                   chrome.runtime.sendMessage(data, function (response) {
+                    if (chrome.runtime.lastError) {
+                      console.error('Runtime error opening tab silently:', chrome.runtime.lastError.message);
+                      return;
+                    }
                     console.log('response-----' + response);
                   });
                 }
@@ -837,6 +866,10 @@ function getCaseDetails() {
                 // No cases - silent mode
                 var data = 'openTabSilent';
                 chrome.runtime.sendMessage(data, function (response) {
+                  if (chrome.runtime.lastError) {
+                    console.error('Runtime error opening tab silently (no cases):', chrome.runtime.lastError.message);
+                    return;
+                  }
                   console.log('response-----' + response);
                 });
               }
@@ -1262,6 +1295,10 @@ async function ensureSingleTab() {
   try {
     // Send a message to background script to perform cleanup
     chrome.runtime.sendMessage('ensureSingleTab', function (response) {
+      if (chrome.runtime.lastError) {
+        console.error('Runtime error ensuring single tab:', chrome.runtime.lastError.message);
+        return;
+      }
       console.log('Tab cleanup requested:', response);
     });
   } catch (error) {
@@ -1779,6 +1816,8 @@ function updateStatusIndicator(hasUnactionedCases, totalCases, actionedCases) {
     let persistentCaseText = '';
     if (response && response.count > 0) {
       persistentCaseText = ` | ${response.count} cases being tracked`;
+      console.log(persistentCaseText);
+
     }
 
     if (totalCases === 0) {
