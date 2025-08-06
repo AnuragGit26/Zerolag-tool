@@ -10,7 +10,30 @@ let ghoRecordsGlobal = []; // Store GHO records for filtering
 let ghoConnectionGlobal = null; // Store connection for filtering
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
-// Listen for messages from background script
+// Mouse activity tracking for auto-refresh
+let mouseActivityTimer;
+const MOUSE_ACTIVITY_TIMEOUT = 15000;
+
+function resetMouseActivityTimer() {
+  if (mouseActivityTimer) {
+    clearTimeout(mouseActivityTimer);
+  }
+  mouseActivityTimer = setTimeout(() => {
+    console.log('No mouse activity for 15 seconds, refreshing window...');
+    window.location.reload();
+  }, MOUSE_ACTIVITY_TIMEOUT);
+}
+
+function initMouseActivityTracking() {
+  const events = ['mousemove', 'mousedown', 'mouseup', 'click', 'scroll', 'keydown', 'keyup'];
+
+  events.forEach(eventType => {
+    document.addEventListener(eventType, resetMouseActivityTimer, true);
+  });
+  resetMouseActivityTimer();
+  console.log('Mouse activity tracking initialized - auto-refresh after 15 seconds of inactivity');
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   try {
     if (request.action === 'trackActionFromBackground') {
@@ -78,9 +101,9 @@ function getCaseDetails() {
           currentUserId = userResult.records[0].Id;
         }
 
-        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 1) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
+        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
 
-        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 1) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
+        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
 
         // Get current shift dynamically
         const currentShift = getCurrentShift();
@@ -133,7 +156,7 @@ function getCaseDetails() {
             const caseMap = new Map(result.records.map(record => [record.Id, record]));
 
             //const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND Field = 'Routing_Status__c' ORDER BY CreatedDate ASC`;
-            const historyQuery2 = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND (Field = 'Routing_Status__c' OR Field = 'Owner') AND CreatedById = ${currentUserId} ORDER BY CreatedDate ASC LIMIT 2`;
+            const historyQuery2 = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND (Field = 'Routing_Status__c' OR Field = 'Owner') AND CreatedById = '${currentUserId}' ORDER BY CreatedDate ASC LIMIT 2`;
             conn.query(historyQuery2, function (historyErr, historyResult) {
               if (historyErr) {
                 return console.error('Error fetching case history:', historyErr);
@@ -247,7 +270,7 @@ function getCaseDetails() {
                         const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(ghoTrackingKey)) {
                           // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
-                          trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                          trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                           localStorage.setItem(ghoTrackingKey, 'true');
                           console.log('GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
 
@@ -329,7 +352,6 @@ function getCaseDetails() {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c === 'GEO Locate' && caseRecord.SE_Initial_Response_Status__c === 'Met') {
                         localStorage.setItem(caseId, 'true');
-                        console.log(`Auto-actioned case ${caseRecord.CaseNumber} due to GEO Locate routing with Met SLA`);
                       }
                     }
 
@@ -348,13 +370,16 @@ function getCaseDetails() {
                     let statusColor = 'red'; // Warning status always red
                     let routingLogHtml = '';
                     // routingLogs already declared above, reuse it
+
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+                        let logText = lastLog.Transfer_Reason__c;
+
                         routingLogHtml = `
                           <div class="case-info-item">
                             <span class="checkmark">✓</span>
-                            <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                            <span style="color: #9F2B68;">${logText} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
                           </div>
                         `;
                       }
@@ -512,10 +537,25 @@ function getCaseDetails() {
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+                        let logText = lastLog.Transfer_Reason__c;
+
                         routingLogHtml = `
                           <div class="case-info-item">
                             <span class="checkmark">✓</span>
-                            <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                            <span style="color: #9F2B68;">${logText} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+                          </div>
+                        `;
+                      }
+                    }
+
+                    if (routingLogs && routingLogs.totalSize > 1) {
+                      const lastLog2 = routingLogs.records[0];
+                      if (lastLog2.Severity_New_Value__c && lastLog2.Severity_Old_Value__c && (!lastLog2.Transfer_Reason__c || lastLog2.Transfer_Reason__c === '')) {
+
+                        routingLogHtml = `
+                          <div class="case-info-item">
+                            <span class="checkmark">✓</span>
+                            <span style="color: #9F2B68;">Severity changed to ${lastLog2.Severity_New_Value__c} (${timeElapsed(new Date(lastLog2.CreatedDate))})</span>
                           </div>
                         `;
                       }
@@ -914,7 +954,7 @@ function checkGHOAlert() {
   const emeaAlertTime = 14 * 60 + 30; // 2:30 PM IST (14:30)
   const amerAlertTime = 22 * 60 + 30; // 10:30 PM IST (22:30)
 
-  const isAPACTime = Math.abs(currentTime - apacAlertTime) <= 5;
+  const isAPACTime = Math.abs(currentTime - apacAlertTime) <= 5;  // 5-minute window for better precision
   const isEMEATime = Math.abs(currentTime - emeaAlertTime) <= 5;
   const isAMERTime = Math.abs(currentTime - amerAlertTime) <= 5;
 
@@ -949,7 +989,7 @@ function checkGHOAlert() {
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
   console.log('GHO Alert Shift Condition:', shiftCondition);
 
-  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
 
   console.log('GHO Query:', ghoQuery);
 
@@ -974,11 +1014,13 @@ function checkGHOAlert() {
 
     if (err) {
       console.error('GHO Alert Query Error:', err);
+      // Don't set alert flag on error to allow retry
       return;
     }
 
     if (!result.records || result.records.length === 0) {
       console.log('No GHO records found for region:', region);
+      // Set alert flag only when we've successfully checked and found no cases
       localStorage.setItem(alertKey, 'true');
       return;
     }
@@ -990,13 +1032,20 @@ function checkGHOAlert() {
     ghoConn.query(commentQuery, function (commentErr, commentResult) {
       if (commentErr) {
         console.error('GHO Comment Query Error:', commentErr);
+        // Don't set alert flag on error to allow retry
         return;
       }
 
       // Get current user ID for tracking
       ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
+        if (userErr) {
+          console.error('GHO User Query Error:', userErr);
+          // Don't set alert flag on error to allow retry
+          return;
+        }
+
         let currentUserId = null;
-        if (!userErr && userResult.records.length > 0) {
+        if (userResult.records.length > 0) {
           currentUserId = userResult.records[0].Id;
         }
 
@@ -1034,7 +1083,7 @@ function checkGHOAlert() {
                     const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                     if (!localStorage.getItem(ghoTrackingKey)) {
                       // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
-                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                       localStorage.setItem(ghoTrackingKey, 'true');
                       console.log('GHO alert - triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
                     }
@@ -1069,97 +1118,131 @@ function checkGHOAlert() {
         if (unactionedCases.length > 0) {
           // Show GHO alert
           console.log('Showing GHO alert for region:', region, 'with', unactionedCases.length, 'cases');
-          showGHOAlert(region, unactionedCases);
+          try {
+            showGHOAlert(region, unactionedCases, alertKey);
+            // Don't set flag here - only set it when user dismisses the alert
+          } catch (error) {
+            console.error('Failed to show GHO alert:', error);
+            // Don't set localStorage flag if alert failed to show
+          }
         } else {
           console.log('All GHO cases have been actioned - no alert needed');
+          // Set flag when no alert is needed (all cases actioned)
+          localStorage.setItem(alertKey, 'true');
         }
-
-        // Mark alert as shown regardless of whether we showed it
-        localStorage.setItem(alertKey, 'true');
       });
     });
   });
 }
 
-function showGHOAlert(region, ghoRecords) {
-  const alertTime = region === 'APAC' ? '7:30 AM' : region === 'EMEA' ? '2:30 PM' : '10:30 PM';
+function showGHOAlert(region, ghoRecords, alertKey) {
+  try {
+    console.log('showGHOAlert called with:', { region, recordCount: ghoRecords.length, alertKey });
 
-  // Create and show modal
-  let existingModal = document.getElementById('gho-alert-modal');
-  if (existingModal) {
-    existingModal.remove();
-  }
+    const alertTime = region === 'APAC' ? '7:30 AM' : region === 'EMEA' ? '2:30 PM' : '10:30 PM';
 
-  const modalHtml = `
-    <div id="gho-alert-modal" class="modal-overlay" style="display: flex; z-index: 1001;">
-      <div class="modal-content" style="max-width: 600px;">
-        <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
-          <h3 style="color: white; margin: 0;">🚨 GHO Alert - ${region} Region</h3>
-          <span class="modal-close" id="gho-alert-close" style="color: white; cursor: pointer; font-size: 24px;">&times;</span>
-        </div>
-        <div class="modal-body">
-          <div style="text-align: center; margin-bottom: 20px;">
-            <h4 style="color: #f59e0b; margin-bottom: 8px;">Daily GHO Check - ${alertTime} IST</h4>
-            <p style="color: #6b7280; font-size: 14px;">Found ${ghoRecords.length} GHO case${ghoRecords.length === 1 ? '' : 's'} requiring attention for ${region} shift</p>
+    // Create and show modal
+    let existingModal = document.getElementById('gho-alert-modal');
+    if (existingModal) {
+      console.log('Removing existing GHO alert modal');
+      existingModal.remove();
+    }
+
+    const modalHtml = `
+      <div id="gho-alert-modal" class="modal-overlay" style="display: flex; z-index: 1001;">
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+            <h3 style="color: white; margin: 0;">🚨 GHO Alert - ${region} Region</h3>
+            <span class="modal-close" id="gho-alert-close" style="color: white; cursor: pointer; font-size: 24px;">&times;</span>
           </div>
-          
-          <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-            <h5 style="color: #9a3412; margin: 0 0 8px 0;">Cases Needing Action:</h5>
-            <div style="max-height: 200px; overflow-y: auto;">
-              ${ghoRecords.map(caseRecord => `
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #fed7aa;">
-                  <div>
-                    <strong style="color: #9a3412;">${caseRecord.CaseNumber}</strong>
-                    <span style="color: #6b7280; margin-left: 8px;">${caseRecord.Severity_Level__c}</span>
-                    ${caseRecord.Contact && caseRecord.Contact.Is_MVP__c ? '<span style="background-color: #9333ea; color: white; padding: 1px 4px; border-radius: 4px; font-size: 10px; margin-left: 4px;">MVP</span>' : ''}
-                  </div>
-                  <div style="color: #6b7280; font-size: 12px;">
-                    ${timeElapsed(new Date(caseRecord.CreatedDate))}
-                  </div>
-                </div>
-              `).join('')}
+          <div class="modal-body">
+            <div style="text-align: center; margin-bottom: 20px;">
+              <h4 style="color: #f59e0b; margin-bottom: 8px;">Daily GHO Check - ${alertTime} IST</h4>
+              <p style="color: #6b7280; font-size: 14px;">Found ${ghoRecords.length} GHO case${ghoRecords.length === 1 ? '' : 's'} requiring attention for ${region} shift</p>
             </div>
-          </div>
-          
-          <div style="display: flex; gap: 12px; justify-content: center;">
-            <button id="gho-alert-check" class="preview-btn" style="background: #f59e0b; border: none; padding: 12px 24px;">
-              Check GHO Cases
-            </button>
-            <button id="gho-alert-dismiss" class="preview-btn" style="background: #6b7280; border: none; padding: 12px 24px;">
-              Dismiss
-            </button>
+            
+            <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+              <h5 style="color: #9a3412; margin: 0 0 8px 0;">Cases Needing Action:</h5>
+              <div style="max-height: 200px; overflow-y: auto;">
+                ${ghoRecords.map(caseRecord => `
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #fed7aa;">
+                    <div>
+                      <strong style="color: #9a3412;">${caseRecord.CaseNumber}</strong>
+                      <span style="color: #6b7280; margin-left: 8px;">${caseRecord.Severity_Level__c}</span>
+                      ${caseRecord.Contact && caseRecord.Contact.Is_MVP__c ? '<span style="background-color: #9333ea; color: white; padding: 1px 4px; border-radius: 4px; font-size: 10px; margin-left: 4px;">MVP</span>' : ''}
+                    </div>
+                    <div style="color: #6b7280; font-size: 12px;">
+                      ${timeElapsed(new Date(caseRecord.CreatedDate))}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+            
+            <div style="display: flex; gap: 12px; justify-content: center;">
+              <button id="gho-alert-check" class="preview-btn" style="background: #f59e0b; border: none; padding: 12px 24px;">
+                Check GHO Cases
+              </button>
+              <button id="gho-alert-dismiss" class="preview-btn" style="background: #6b7280; border: none; padding: 12px 24px;">
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  `;
+    `;
 
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
+    console.log('Inserting GHO alert modal into DOM');
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
 
-  // Play GHO alert sound immediately when modal appears
-  try {
-    const audio = new Audio('../assets/audio/ghoalert.wav');
-    audio.volume = 1.0;
-    audio.play().catch(e => {
-      console.log('Audio autoplay blocked or failed:', e);
+    // Verify modal was added
+    const modal = document.getElementById('gho-alert-modal');
+    if (modal) {
+      console.log('GHO alert modal successfully added to DOM');
+    } else {
+      console.error('Failed to add GHO alert modal to DOM');
+      return;
+    }
+
+    // Play GHO alert sound immediately when modal appears
+    try {
+      const audio = new Audio('../assets/audio/ghoalert.wav');
+      audio.volume = 1.0;
+      audio.play().catch(e => {
+        console.log('Audio autoplay blocked or failed:', e);
+      });
+    } catch (e) {
+      console.log('Could not play GHO alert sound:', e);
+    }
+
+    // Add event listeners
+    document.getElementById('gho-alert-close').addEventListener('click', () => {
+      console.log('GHO alert close button clicked - modal closed but alert not dismissed');
+      document.getElementById('gho-alert-modal').remove();
+      // Don't set localStorage flag - alert should reappear until properly dismissed
     });
-  } catch (e) {
-    console.log('Could not play GHO alert sound:', e);
+
+    document.getElementById('gho-alert-dismiss').addEventListener('click', () => {
+      console.log('GHO alert dismiss button clicked - marking alert as acknowledged');
+      document.getElementById('gho-alert-modal').remove();
+      // Only set the localStorage flag when user explicitly dismisses
+      localStorage.setItem(alertKey, 'true');
+      console.log('GHO alert dismissed and flagged as shown:', alertKey);
+    });
+
+    document.getElementById('gho-alert-check').addEventListener('click', () => {
+      console.log('GHO alert check button clicked - opening GHO status without dismissing alert');
+      document.getElementById('gho-alert-modal').remove();
+      checkGHOStatus(); // Open the GHO status modal
+      // Don't set localStorage flag - alert should reappear until properly dismissed
+    });
+
+    console.log('GHO alert modal setup completed successfully');
+  } catch (error) {
+    console.error('Error showing GHO alert:', error);
+    // Don't set localStorage flag if alert failed to show
+    throw error;
   }
-
-  // Add event listeners
-  document.getElementById('gho-alert-close').addEventListener('click', () => {
-    document.getElementById('gho-alert-modal').remove();
-  });
-
-  document.getElementById('gho-alert-dismiss').addEventListener('click', () => {
-    document.getElementById('gho-alert-modal').remove();
-  });
-
-  document.getElementById('gho-alert-check').addEventListener('click', () => {
-    document.getElementById('gho-alert-modal').remove();
-    checkGHOStatus(); // Open the GHO status modal
-  });
 }
 
 // Helper function to check if a case matches GHO criteria
@@ -1363,6 +1446,9 @@ document.addEventListener("DOMContentLoaded", function () {
   updateWeekendModeIndicator();
   setInterval(updateWeekendModeIndicator, 60000);
   getSessionIds();
+
+  // Initialize mouse activity tracking for auto-refresh
+  initMouseActivityTracking();
 
   // Start GHO alert checking every minute
   setInterval(checkGHOAlert, 60000);
@@ -1739,7 +1825,7 @@ function checkGHOStatus() {
   const preferredShiftValues = getPreferredShiftValues(currentShift);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
 
   ghoConn.query(ghoQuery, function (err, result) {
     if (err) {
@@ -1793,7 +1879,7 @@ function checkGHOStatus() {
                     if (caseRecord) {
                       const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                       if (!localStorage.getItem(ghoTrackingKey)) {
-                        trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName);
+                        trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                         localStorage.setItem(ghoTrackingKey, 'true');
                         console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
                       }
@@ -2014,10 +2100,17 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
       if (routingLogs && routingLogs.totalSize > 0) {
         const lastLog = routingLogs.records[0];
         if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+          let logText = lastLog.Transfer_Reason__c;
+
+          // Check for severity change
+          if (lastLog.Severity_Old_Value__c && lastLog.Severity_New_Value__c) {
+            logText += ` | Severity Changed: ${lastLog.Severity_Old_Value__c} → ${lastLog.Severity_New_Value__c}`;
+          }
+
           routingLogHtml = `
             <div class="case-info-item">
               <span class="checkmark">✓</span>
-              <span style="color: #9F2B68;">${lastLog.Transfer_Reason__c} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+              <span style="color: #9F2B68;">${logText} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
             </div>
           `;
         }
@@ -2245,6 +2338,42 @@ function debugPersistentCasesSimple() {
   });
 }
 
-// Add debug functions to global scope for console access
+// Debug function to clear GHO alert flags
+function clearGHOAlertFlags() {
+  const today = new Date().toDateString();
+  const currentUser = currentUserName || 'unknown';
+
+  console.log('Clearing GHO alert flags for today:', today, 'user:', currentUser);
+
+  const regions = ['APAC', 'EMEA', 'AMER'];
+  let clearedCount = 0;
+
+  regions.forEach(region => {
+    const alertKey = `gho_alert_${region}_${today}_${currentUser}`;
+    if (localStorage.getItem(alertKey)) {
+      localStorage.removeItem(alertKey);
+      clearedCount++;
+      console.log(`Cleared dismissed flag for ${region}:`, alertKey);
+    }
+  });
+
+  // Also clear any old tracking keys that might be lingering
+  const allKeys = Object.keys(localStorage);
+  const ghoKeys = allKeys.filter(key => key.startsWith('gho_alert_') || key.startsWith('gho_tracked_'));
+
+  console.log(`Found ${ghoKeys.length} GHO-related localStorage keys`);
+  console.log(`Cleared ${clearedCount} dismissed alert flags for today`);
+
+  if (clearedCount > 0) {
+    console.log('✅ GHO alert flags cleared. Alerts will now reappear at designated times until properly dismissed.');
+  } else {
+    console.log('ℹ️ No dismissed alert flags found for today to clear.');
+  }
+
+  console.log('💡 Remember: Alerts will only be marked as "shown" when you click the DISMISS button, not just close or check buttons.');
+
+  return { clearedAlertFlags: clearedCount, totalGHOKeys: ghoKeys.length };
+}// Add debug functions to global scope for console access
 window.debugPersistentCases = debugPersistentCases;
 window.debugPersistentCasesSimple = debugPersistentCasesSimple;
+window.clearGHOAlertFlags = clearGHOAlertFlags;
