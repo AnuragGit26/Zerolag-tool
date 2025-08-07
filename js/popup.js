@@ -1363,6 +1363,46 @@ document.addEventListener('keydown', function (e) {
         }
         break;
 
+      case 'q':
+        e.preventDefault();
+        // Switch to signature mode
+        const modeSwitchSig = document.getElementById("mode-switch");
+        if (modeSwitchSig && modeSwitchSig.checked) {
+          modeSwitchSig.checked = false;
+          modeSwitchSig.dispatchEvent(new Event('change'));
+        }
+        break;
+
+      case 'w':
+        e.preventDefault();
+        // Switch to premier mode
+        const modeSwitchPrem = document.getElementById("mode-switch");
+        if (modeSwitchPrem && !modeSwitchPrem.checked) {
+          modeSwitchPrem.checked = true;
+          modeSwitchPrem.dispatchEvent(new Event('change'));
+        }
+        break;
+
+      case 'i':
+        e.preventDefault();
+        // Switch to signature mode
+        const modeSwitchSig2 = document.getElementById("mode-switch");
+        if (modeSwitchSig2 && modeSwitchSig2.checked) {
+          modeSwitchSig2.checked = false;
+          modeSwitchSig2.dispatchEvent(new Event('change'));
+        }
+        break;
+
+      case 'p':
+        e.preventDefault();
+        // Switch to premier mode
+        const modeSwitchPrem2 = document.getElementById("mode-switch");
+        if (modeSwitchPrem2 && !modeSwitchPrem2.checked) {
+          modeSwitchPrem2.checked = true;
+          modeSwitchPrem2.dispatchEvent(new Event('change'));
+        }
+        break;
+
       case 'a':
         e.preventDefault();
         // Clear all filters and search
@@ -1373,6 +1413,12 @@ document.addEventListener('keydown', function (e) {
         clearTimeout(searchTimeout);
         applySearch("");
         showToast('Filters and search cleared');
+        break;
+
+      case 's':
+        e.preventDefault();
+        // Clear snoozed cases
+        clearSnoozedCases();
         break;
     }
   }
@@ -1426,15 +1472,19 @@ function showKeyboardShortcutsHelp() {
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Signature Mode</span>
-              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + 1</kbd>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + I</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Premier Mode</span>
-              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + 2</kbd>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + P</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Clear All Filters</span>
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + A</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Clear Snoozed Cases</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + S</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Close Modals</span>
@@ -1586,7 +1636,7 @@ document.addEventListener("DOMContentLoaded", function () {
       </div>
     `;
 
-    // Reload data for the new mode
+
     getSessionIds();
   });
 
@@ -1601,6 +1651,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Set initial GHO button visibility
   updateGHOButtonVisibility();
+
+  // Set initial Clear Snoozed button visibility
+  updateClearSnoozedButtonVisibility();
 
   // Help Button Event Listener
   document.getElementById("shortcuts-help-btn").addEventListener("click", function () {
@@ -1625,14 +1678,13 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // Close modal when clicking outside
   document.getElementById("gho-modal").addEventListener("click", function (e) {
     if (e.target === this) {
       this.style.display = 'none';
     }
   });
 
-  // GHO Toggle Button Event Listener (using event delegation)
+  // GHO Toggle Button Event Listener
   document.getElementById("gho-cases-container").addEventListener("click", function (e) {
     // Find the button element, whether clicked directly or on a child element
     const button = e.target.closest('.gho-toggle-btn');
@@ -1678,19 +1730,16 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
+//clear search input and reset filters
 document.getElementById("clear-button").addEventListener("click", function () {
-  // Clear search input
   document.getElementById("search-input").value = "";
   document.getElementById("search-button").disabled = true;
 
-  // Reset filter to "all"
   document.getElementById("action-filter").value = "all";
   localStorage.setItem('caseFilter', 'all');
 
-  // Clear any pending search timeout
   clearTimeout(searchTimeout);
 
-  // Apply the reset state (show all cases)
   applySearch("");
 });
 
@@ -1700,6 +1749,10 @@ document.getElementById("refresh-button").addEventListener("click", function () 
   setTimeout(() => {
     window.location.reload();
   }, 500);
+});
+
+document.getElementById("clear-snoozed-button").addEventListener("click", function () {
+  clearSnoozedCases();
 });
 
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
@@ -1766,13 +1819,12 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     const snoozeUntil = new Date().getTime() + snoozeMinutes * 60 * 1000;
     localStorage.setItem('snooze_' + caseId, snoozeUntil);
     caseDiv.style.display = 'none';
-
-    // Show success message
+    updateClearSnoozedButtonVisibility();
     showToast(`Case snoozed for ${snoozeMinutes} minute${snoozeMinutes === 1 ? '' : 's'}`);
   }
 });
 
-// Handle snooze time select change to show/hide custom input
+// Handle snooze time
 document.getElementById("parentSigSev2").addEventListener("change", function (e) {
   if (e.target.classList.contains("snooze-time")) {
     const select = e.target;
@@ -1799,6 +1851,42 @@ function showToast(message) {
   }, 3000);
 }
 
+// Function to check if there are snoozed cases and update button visibility
+function updateClearSnoozedButtonVisibility() {
+  const allKeys = Object.keys(localStorage);
+  const snoozeKeys = allKeys.filter(key => key.startsWith('snooze_'));
+  const clearSnoozedButton = document.getElementById("clear-snoozed-button");
+
+  if (clearSnoozedButton) {
+    if (snoozeKeys.length > 0) {
+      clearSnoozedButton.style.display = 'inline-block';
+    } else {
+      clearSnoozedButton.style.display = 'none';
+    }
+  }
+}
+
+function clearSnoozedCases() {
+  const allKeys = Object.keys(localStorage);
+  const snoozeKeys = allKeys.filter(key => key.startsWith('snooze_'));
+
+  if (snoozeKeys.length === 0) {
+    showToast('No snoozed cases found');
+    return;
+  }
+
+  snoozeKeys.forEach(key => {
+    localStorage.removeItem(key);
+  });
+
+  showToast(`Cleared ${snoozeKeys.length} snoozed case${snoozeKeys.length === 1 ? '' : 's'}`);
+  updateClearSnoozedButtonVisibility();
+
+  setTimeout(() => {
+    window.location.reload();
+  }, 1000);
+}
+
 // Function to update status indicator based on case status
 function updateStatusIndicator(hasUnactionedCases, totalCases, actionedCases) {
   const statusDot = document.querySelector('.status-dot');
@@ -1821,13 +1909,13 @@ function updateStatusIndicator(hasUnactionedCases, totalCases, actionedCases) {
     }
 
     if (totalCases === 0) {
-      statusDot.style.backgroundColor = '#22c55e'; // Green for no cases
+      statusDot.style.backgroundColor = '#22c55e';
       statusText.textContent = `No Cases - All Clear${persistentCaseText}`;
     } else if (hasUnactionedCases) {
-      statusDot.style.backgroundColor = '#ef4444'; // Red for unactioned cases
+      statusDot.style.backgroundColor = '#ef4444';
       statusText.textContent = `${totalCases - actionedCases} Cases Need Action${persistentCaseText}`;
     } else {
-      statusDot.style.backgroundColor = '#22c55e'; // Green for all actioned
+      statusDot.style.backgroundColor = '#22c55e';
       statusText.textContent = `All Cases Actioned${persistentCaseText}`;
     }
   });
