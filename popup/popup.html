@@ -735,7 +735,6 @@
 			border: 1px solid #d1d5db;
 		}
 
-		/* GHO modal header spacing tweaks (stabilized) */
 		#gho-modal .modal-header {
 			padding: 16px 20px;
 			display: grid;
@@ -743,10 +742,8 @@
 			/* title | filter | close */
 			align-items: center;
 			column-gap: 12px;
-			min-height: 56px;
-			/* lock header height to avoid jumps */
+			min-height: 60px;
 			margin-bottom: 12px;
-			/* add space below header */
 		}
 
 		#gho-modal .modal-header h3 {
@@ -754,18 +751,15 @@
 			line-height: 1.25;
 			margin: 0;
 			min-width: 0;
-			/* allow text to shrink inside grid */
 			overflow: hidden;
 			text-overflow: ellipsis;
 			white-space: nowrap;
-			/* prevent multi-line wrap */
 		}
 
 		#gho-taxonomy-filter {
 			font-size: 14px;
 			padding: 8px 12px;
 			width: 160px;
-			/* fixed width prevents reflow */
 			min-width: 160px;
 			height: 36px;
 		}
@@ -784,7 +778,6 @@
 		@media (max-width: 840px) {
 			#gho-modal .modal-header {
 				grid-template-columns: 1fr auto;
-				/* title | controls */
 				row-gap: 8px;
 			}
 
@@ -793,7 +786,6 @@
 			}
 		}
 
-		/* Modern utility badges and accents */
 		.badge-soft {
 			display: inline-block;
 			padding: 2px 8px;
@@ -818,7 +810,6 @@
 			animation: pulseGlow 2000ms ease-in-out infinite alternate;
 		}
 
-		/* Additional badge variants */
 		.badge-soft--success {
 			background-color: #dcfce7;
 			color: #166534;
@@ -840,7 +831,6 @@
 			background-color: #fef2f2;
 		}
 
-		/* Pending list modernized */
 		.pending-item {
 			background: rgba(59, 130, 246, 0.1);
 			border: 1px solid rgba(59, 130, 246, 0.3);
@@ -882,7 +872,6 @@
 			font-size: 12px;
 		}
 
-		/* GHO Modal Polished UI */
 		.gho-summary {
 			margin-bottom: 16px;
 			padding: 16px;
