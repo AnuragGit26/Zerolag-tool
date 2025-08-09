@@ -1278,42 +1278,6 @@ document.addEventListener('keydown', function (e) {
         }, 500);
         break;
 
-      case '1':
-        e.preventDefault();
-        const modeSwitch = document.getElementById("mode-switch");
-        if (modeSwitch && modeSwitch.checked) {
-          modeSwitch.checked = false;
-          modeSwitch.dispatchEvent(new Event('change'));
-        }
-        break;
-
-      case '2':
-        e.preventDefault();
-        const modeSwitchPremier = document.getElementById("mode-switch");
-        if (modeSwitchPremier && !modeSwitchPremier.checked) {
-          modeSwitchPremier.checked = true;
-          modeSwitchPremier.dispatchEvent(new Event('change'));
-        }
-        break;
-
-      case 'q':
-        e.preventDefault();
-        const modeSwitchSig = document.getElementById("mode-switch");
-        if (modeSwitchSig && modeSwitchSig.checked) {
-          modeSwitchSig.checked = false;
-          modeSwitchSig.dispatchEvent(new Event('change'));
-        }
-        break;
-
-      case 'w':
-        e.preventDefault();
-        const modeSwitchPrem = document.getElementById("mode-switch");
-        if (modeSwitchPrem && !modeSwitchPrem.checked) {
-          modeSwitchPrem.checked = true;
-          modeSwitchPrem.dispatchEvent(new Event('change'));
-        }
-        break;
-
       case 'i':
         e.preventDefault();
         const modeSwitchSig2 = document.getElementById("mode-switch");
@@ -1433,7 +1397,6 @@ function showKeyboardShortcutsHelp() {
   }
 
   document.body.insertAdjacentHTML('beforeend', helpModal);
-  // Ensure visibility per CSS rules (avoid :not(.modal-show) opacity:0)
   const helpEl = document.getElementById('shortcuts-help-modal');
   if (helpEl) {
     requestAnimationFrame(() => helpEl.classList.add('modal-show'));
@@ -1472,11 +1435,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const searchButton = document.getElementById("search-button");
     const inputValue = searchInput.value.trim();
 
-    if (inputValue.length > 0) {
-      searchButton.disabled = false;
-    } else {
-      searchButton.disabled = true;
-    }
+    // Enable only when 4+ characters
+    searchButton.disabled = !(inputValue.length >= 4);
   }
 
   // Debounced search function for real-time filtering
@@ -1484,7 +1444,12 @@ document.addEventListener("DOMContentLoaded", function () {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
       const searchValue = document.getElementById("search-input").value.trim();
-      applySearch(searchValue);
+      if (searchValue.length >= 4) {
+        applySearch(searchValue);
+      } else if (searchValue.length === 0) {
+        // Reset when cleared
+        applySearch("");
+      }
     }, 300); // 300ms delay to avoid too many calls while typing
   }
 
@@ -1502,11 +1467,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Add Enter key support for search
   document.getElementById("search-input").addEventListener("keydown", function (event) {
-    if (event.key === "Enter" && !document.getElementById("search-button").disabled) {
-      event.preventDefault();
-      clearTimeout(searchTimeout); // Cancel any pending real-time search
+    if (event.key === "Enter") {
+      const searchButton = document.getElementById("search-button");
       const searchValue = this.value.trim();
-      applySearch(searchValue);
+      if (!searchButton.disabled && searchValue.length >= 4) {
+        event.preventDefault();
+        clearTimeout(searchTimeout);
+        applySearch(searchValue);
+      }
     }
   });
 
