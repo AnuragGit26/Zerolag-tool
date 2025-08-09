@@ -38,7 +38,7 @@
 			padding: 0;
 		}
 
-		/* Header Styles */
+
 		.header-container {
 			background: linear-gradient(135deg, #F76C5E 0%, #E85A4F 60%, #f08a7f 100%);
 			padding: 16px 24px;
@@ -57,7 +57,6 @@
 			max-width: 1200px;
 			margin: 0 auto;
 			gap: 20px;
-			/* Add gap between title and toggle */
 		}
 
 		.header-left {
@@ -74,39 +73,7 @@
 			letter-spacing: 0.5px;
 		}
 
-		.status-indicator {
-			display: flex;
-			align-items: center;
-			gap: 8px;
-		}
 
-		.status-dot {
-			width: 8px;
-			height: 8px;
-			background-color: #22c55e;
-			border-radius: 50%;
-			animation: pulse 2s infinite;
-		}
-
-		@keyframes pulse {
-			0% {
-				opacity: 1;
-			}
-
-			50% {
-				opacity: 0.5;
-			}
-
-			100% {
-				opacity: 1;
-			}
-		}
-
-		.status-text {
-			color: rgba(255, 255, 255, 0.8);
-			font-size: 12px;
-			font-weight: 500;
-		}
 
 		.header-toggle {
 			display: flex;
@@ -120,10 +87,9 @@
 			font-weight: 600;
 			font-size: 16px;
 			white-space: nowrap;
-			/* Prevent text wrapping */
 		}
 
-		/* Toggle Switch Styles */
+
 		.switch {
 			--circle-dim: 1.4em;
 			font-size: 17px;
@@ -134,14 +100,14 @@
 			flex-shrink: 0;
 		}
 
-		/* Hide default HTML checkbox */
+
 		.switch input {
 			opacity: 0;
 			width: 0;
 			height: 0;
 		}
 
-		/* The slider */
+
 		.slider {
 			position: absolute;
 			cursor: pointer;
@@ -200,7 +166,7 @@
 			background-color: rgba(158, 217, 156, 0.8);
 		}
 
-		/* Search Section Styles */
+
 		.search-section {
 			background: white;
 			padding: 20px 24px;
@@ -285,7 +251,7 @@
 			background: #4b5563;
 		}
 
-		/* Help Button Styles */
+
 		.help-button {
 			background: rgba(255, 255, 255, 0.2);
 			border: 2px solid rgba(255, 255, 255, 0.3);
@@ -313,11 +279,26 @@
 			transform: translateY(0);
 		}
 
-		/* Content Area */
+
 		.content-area {
 			padding: 24px;
 			background-color: #f5f7fa;
 			width: 100%;
+		}
+
+
+		#parentSigSev2 {
+			transition: opacity 200ms ease, transform 200ms ease;
+		}
+
+		#parentSigSev2.content-enter {
+			opacity: 1;
+			transform: translateY(0);
+		}
+
+		#parentSigSev2.is-loading {
+			opacity: 0.6;
+			transform: translateY(4px);
 		}
 
 		.content-wrapper {
@@ -325,7 +306,7 @@
 			margin: 0 auto;
 		}
 
-		/* Case Card Styles */
+
 		.case-card {
 			background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
 			border-radius: 16px;
@@ -333,10 +314,9 @@
 			margin-bottom: 16px;
 			box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
 			border: 1px solid #e6ebf1;
-			position: relative;
-			transition: box-shadow 220ms ease, transform 180ms ease;
-			opacity: 0;
-			animation: fadeUp 360ms cubic-bezier(.22, .61, .36, 1) forwards;
+			opacity: 1;
+
+			transition: box-shadow 200ms ease, transform 180ms ease;
 		}
 
 		.case-card:hover {
@@ -344,7 +324,7 @@
 			transform: translateY(-2px);
 		}
 
-		/* Stagger reveal for cards */
+
 		#parentSigSev2 .case-card:nth-child(1) {
 			animation-delay: 30ms;
 		}
@@ -395,7 +375,7 @@
 			display: grid;
 			grid-template-columns: 1fr auto;
 			gap: 24px;
-			align-items: center;
+			align-items: start;
 		}
 
 		.case-info {
@@ -422,6 +402,7 @@
 			flex-direction: column;
 			align-items: flex-end;
 			gap: 12px;
+			position: relative;
 		}
 
 		.preview-btn {
@@ -510,7 +491,7 @@
 			filter: brightness(1.03);
 		}
 
-		/* No Cases Message */
+
 		.no-cases-message {
 			background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
 			border: 1.5px solid #bfe3ff;
@@ -540,7 +521,7 @@
 			font-size: 16px;
 		}
 
-		/* Weekend Mode Indicator */
+
 		#weekend-mode-indicator {
 			background: #fbbf24;
 			color: #92400e;
@@ -550,7 +531,7 @@
 			font-size: 14px;
 		}
 
-		/* Toast Message */
+
 		#toast {
 			position: fixed;
 			top: 20px;
@@ -565,7 +546,7 @@
 			animation: slideInRight 260ms ease-out;
 		}
 
-		/* Responsive Design */
+
 		@media (max-width: 768px) {
 			.header-content {
 				flex-direction: column;
@@ -591,7 +572,7 @@
 			}
 		}
 
-		/* Add your custom styles here */
+
 		.action-taken-text {
 			color: #059669;
 			font-weight: 600;
@@ -606,7 +587,7 @@
 			display: block !important;
 		}
 
-		/* No Cases and Loading Message Styles */
+
 		.no-cases-message,
 		.loading-message {
 			text-align: center;
@@ -637,7 +618,7 @@
 			font-style: italic;
 		}
 
-		/* Modal Styles */
+
 		.modal-overlay {
 			position: fixed;
 			top: 0;
@@ -649,6 +630,7 @@
 			display: flex;
 			align-items: center;
 			justify-content: center;
+			animation: fadeIn 180ms ease;
 		}
 
 		.modal-content {
@@ -661,6 +643,38 @@
 			display: flex;
 			flex-direction: column;
 			animation: scaleIn 220ms cubic-bezier(.22, .61, .36, 1);
+		}
+
+		.modal-overlay .modal-content {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+
+		.modal-overlay:not(.modal-show) .modal-content {
+			opacity: 0;
+			transform: translateY(8px) scale(0.98);
+		}
+
+		@keyframes fadeIn {
+			from {
+				opacity: 0;
+			}
+
+			to {
+				opacity: 1;
+			}
+		}
+
+		@keyframes scaleIn {
+			from {
+				opacity: 0;
+				transform: translateY(8px) scale(0.98);
+			}
+
+			to {
+				opacity: 1;
+				transform: translateY(0) scale(1);
+			}
 		}
 
 		.modal-header {
@@ -698,7 +712,7 @@
 			flex: 1;
 		}
 
-		/* Smooth, minimal scrollbars for WebKit */
+
 		.modal-body::-webkit-scrollbar {
 			width: 10px;
 		}
@@ -717,11 +731,70 @@
 			background: #a7a9b2;
 		}
 
+
+		.loading-message {
+			position: relative;
+		}
+
+		.spinner {
+			width: 28px;
+			height: 28px;
+			border-radius: 50%;
+			border: 3px solid rgba(99, 102, 241, 0.2);
+			border-top-color: #6366f1;
+			animation: spin 1s linear infinite;
+			margin: 0 auto 14px auto;
+		}
+
+		@keyframes spin {
+			to {
+				transform: rotate(360deg);
+			}
+		}
+
+		.skeleton-list {
+			display: grid;
+			gap: 12px;
+			margin-top: 8px;
+		}
+
+		.skeleton-card {
+			background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 37%, #f3f4f6 63%);
+			background-size: 400% 100%;
+			animation: shimmer 1.2s ease-in-out infinite;
+			height: 76px;
+			border-radius: 10px;
+			border: 1px solid #e5e7eb;
+		}
+
+		@keyframes shimmer {
+			0% {
+				background-position: 100% 0;
+			}
+
+			100% {
+				background-position: 0 0;
+			}
+		}
+
+
+		@keyframes fadeUp {
+			from {
+				opacity: 0;
+				transform: translateY(6px);
+			}
+
+			to {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+
 		#gho-cases-container {
 			min-height: 200px;
 		}
 
-		/* GHO Filter Container Styles */
+
 		.gho-filter-container {
 			display: flex;
 			align-items: center;
@@ -739,7 +812,7 @@
 			padding: 16px 20px;
 			display: grid;
 			grid-template-columns: 1fr auto auto;
-			/* title | filter | close */
+
 			align-items: center;
 			column-gap: 12px;
 			min-height: 60px;
@@ -995,7 +1068,7 @@
 			font-style: italic;
 		}
 
-		/* Keyframes */
+
 		@keyframes fadeUp {
 			0% {
 				opacity: 0;
@@ -1054,7 +1127,7 @@
 			}
 		}
 
-		/* Respect reduced motion preferences */
+
 		@media (prefers-reduced-motion: reduce) {
 			* {
 				animation: none !important;
@@ -1070,10 +1143,6 @@
 			<div class="header-content">
 				<div class="header-left">
 					<h1 class="header-title">ZeroLag Tool</h1>
-					<div class="status-indicator">
-						<span class="status-dot"></span>
-						<span class="status-text">Loading cases…</span>
-					</div>
 				</div>
 				<div class="header-toggle">
 					<div id="weekend-mode-indicator" style="display: none;">
@@ -1090,7 +1159,6 @@
 					</label>
 					<span class="toggle-label-text">Premier</span>
 
-					<!-- Keyboard Shortcuts Help Button -->
 					<button id="shortcuts-help-btn" class="help-button" title="Keyboard Shortcuts (?)">
 						<i class="fa fa-keyboard-o"></i>
 					</button>
@@ -1098,7 +1166,6 @@
 			</div>
 		</div>
 
-		<!-- Search Section -->
 		<div class="search-section">
 			<div class="search-container">
 				<input type="text" class="search-input" id="search-input" placeholder="Search by Case Number...">
@@ -1113,6 +1180,8 @@
 					Refresh</button>
 				<button class="btn-secondary" id="check-gho-button"><i class="fa fa-list" aria-hidden="true"></i>
 					Check GHO Status</button>
+				<button class="btn-secondary" id="cic-button"><i class="fa fa-users" aria-hidden="true"></i>
+					Weekend Roster</button>
 				<button class="btn-secondary" id="clear-snoozed-button" style="display: none;"><i class="fa fa-clock-o"
 						aria-hidden="true"></i>
 					Clear Snoozed</button>
@@ -1131,7 +1200,6 @@
 		Copied to clipboard!
 	</div>
 
-	<!-- GHO Status Modal -->
 	<div id="gho-modal" class="modal-overlay" style="display: none;">
 		<div class="modal-content">
 			<div class="modal-header">

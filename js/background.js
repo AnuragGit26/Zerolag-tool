@@ -166,6 +166,30 @@ chrome.runtime.onMessage.addListener(
 				return true;
 			}
 
+			// Remove stale cases for a mode that are no longer in the latest query results
+			if (request.action === 'syncPersistentCases') {
+				try {
+					const mode = request.mode;
+					const ids = Array.isArray(request.caseIds) ? new Set(request.caseIds) : new Set();
+					if (!mode) {
+						sendResponse({ success: false, message: 'Mode is required' });
+						return true;
+					}
+					let removed = 0;
+					for (const [caseId, data] of persistentCases.entries()) {
+						if (data.mode === mode && !ids.has(caseId)) {
+							persistentCases.delete(caseId);
+							removed++;
+						}
+					}
+					sendResponse({ success: true, removed, count: persistentCases.size });
+				} catch (error) {
+					console.error('Error syncing persistent cases:', error);
+					sendResponse({ success: false, message: error.message });
+				}
+				return true;
+			}
+
 			if (request.action === 'removeCaseFromPersistentSet') {
 				try {
 					if (request.caseId) {
@@ -188,9 +212,15 @@ chrome.runtime.onMessage.addListener(
 
 			if (request.action === 'getPersistentCaseCount') {
 				try {
+					let count;
+					if (request.mode) {
+						count = Array.from(persistentCases.values()).filter(v => v.mode === request.mode).length;
+					} else {
+						count = persistentCases.size;
+					}
 					sendResponse({
 						success: true,
-						count: persistentCases.size,
+						count,
 						cases: Array.from(persistentCases.values())
 					});
 				} catch (error) {

@@ -9,6 +9,7 @@ let searchTimeout;
 let ghoRecordsGlobal = [];
 let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
+export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70iXfT-MVfhPs';
 
 let mouseActivityTimer;
 const MOUSE_ACTIVITY_TIMEOUT = 60000;
@@ -128,8 +129,10 @@ function getCaseDetails() {
                   <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
                 </div>
               `;
-              document.getElementById("parentSigSev2").innerHTML = noCasesHtml;
-              // Auto-open tab without focus for easy mode switching
+              const container = document.getElementById("parentSigSev2");
+              container.classList.remove('is-loading');
+              container.innerHTML = noCasesHtml;
+              container.classList.add('content-enter');
               var data = 'openTabSilent';
               chrome.runtime.sendMessage(data, function (response) {
                 if (chrome.runtime.lastError) {
@@ -143,7 +146,18 @@ function getCaseDetails() {
 
             const caseIds = result.records.map(record => record.Id);
 
-            // Add cases to persistent set for both modes for continuous processing
+            chrome.runtime.sendMessage({
+              action: 'syncPersistentCases',
+              mode: currentMode,
+              caseIds: caseIds
+            }, function (response) {
+              if (chrome.runtime.lastError) {
+                console.error('Runtime error syncing persistent cases:', chrome.runtime.lastError.message);
+              } else if (response && response.success) {
+                console.log(`Synced persistent cases for mode ${currentMode}. Removed: ${response.removed}. Now tracking: ${response.count}`);
+              }
+            });
+
             chrome.runtime.sendMessage({
               action: 'addCasesToPersistentSet',
               cases: result.records,
@@ -160,11 +174,9 @@ function getCaseDetails() {
               }
             });
 
-            // Use same case history tracking logic for both Premier and Signature modes
-            // Convert result.records to a proper Map instead of Set
+
             const caseMap = new Map(result.records.map(record => [record.Id, record]));
 
-            //const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND Field = 'Routing_Status__c' ORDER BY CreatedDate ASC`;
             const historyQuery2 = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND (Field = 'Routing_Status__c' OR Field = 'Owner') AND CreatedById = '${currentUserId}' ORDER BY CreatedDate ASC LIMIT 2`;
             conn.query(historyQuery2, function (historyErr, historyResult) {
               if (historyErr) {
@@ -188,7 +200,6 @@ function getCaseDetails() {
 
               if (firstAssignments.size > 0) {
                 for (const [caseId, history] of firstAssignments.entries()) {
-                  // Only track if the action was taken by the current user
                   if (history.CreatedById === currentUserId) {
                     const trackingKey = `tracked_${currentMode}_assignment_${caseId}`;
                     if (!localStorage.getItem(trackingKey)) {
@@ -206,7 +217,6 @@ function getCaseDetails() {
                         );
                         localStorage.setItem(trackingKey, 'true');
 
-                        // Remove from persistent set as it's been processed
                         chrome.runtime.sendMessage({
                           action: 'removeCaseFromPersistentSet',
                           caseId: caseId
@@ -260,11 +270,9 @@ function getCaseDetails() {
                     }
                   }
 
-                  // Track GHO Triage actions
                   if (record.Body && record.Body.includes('#GHOTriage')) {
                     console.log('GHO Triage action found:', record.ParentId);
 
-                    // Check if comment is from today and same GEO
                     const commentDate = record.LastModifiedDate || record.CreatedDate;
                     const isCommentFromToday = isToday(commentDate);
                     const commentShift = getShiftForDate(commentDate);
@@ -279,19 +287,16 @@ function getCaseDetails() {
                       isSameGeo
                     });
 
-                    // Only process if comment is from today and same GEO
                     if (isCommentFromToday && isSameGeo && record.CreatedById === currentUserId) {
                       const caseRecord = result.records.find(c => c.Id === record.ParentId);
                       console.log('Case record for GHO triage comment:', caseRecord);
                       if (caseRecord) {
                         const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(ghoTrackingKey)) {
-                          // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
                           trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                           localStorage.setItem(ghoTrackingKey, 'true');
                           console.log('GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
 
-                          // Remove from persistent set as it's been processed
                           chrome.runtime.sendMessage({
                             action: 'removeCaseFromPersistentSet',
                             caseId: caseRecord.Id
@@ -336,11 +341,9 @@ function getCaseDetails() {
                 console.log('Total records:', result.records.length);
                 console.log(result.records.filter(x => x.Contact));
 
-                // Set total cases count based on raw result before filtering for display
                 totalCasesCount = result.records.length;
 
                 const filteredRecords = result.records.filter(x => {
-                  // This filter logic removes MVP cases with 'Met' status from being displayed as actionable alerts
                   if (x.Contact && x.Contact.Is_MVP__c === true && x.SE_Initial_Response_Status__c === 'Met') {
                     console.log(`Filtering out MVP case with Met status: ${x.CaseNumber} ${x.SE_Initial_Response_Status__c}`);
                     return false;
@@ -367,7 +370,6 @@ function getCaseDetails() {
                       localStorage.setItem(caseId, 'true');
                     }
 
-                    // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
                     const routingLogs = caseRecord.Case_Routing_Logs__r;
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
@@ -388,9 +390,8 @@ function getCaseDetails() {
                       actionTakenCount++;
                     }
 
-                    let statusColor = 'red'; // Warning status always red
+                    let statusColor = 'red';
                     let routingLogHtml = '';
-                    // routingLogs already declared above, reuse it
 
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
@@ -433,10 +434,6 @@ function getCaseDetails() {
                             <div class="case-info-item">
                               <span class="checkmark">✓</span>
                               <span>${caseRecord.Severity_Level__c}</span>
-                            </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c} - MVP CASE</span>
                             </div>
                             ${routingLogHtml}
                           </div>
@@ -488,11 +485,9 @@ function getCaseDetails() {
                   }
                 }
 
-                // Second pass: Process regular cases (using filtered records)
                 for (var x in filteredRecords) {
                   const caseId = filteredRecords[x].Id;
 
-                  // Skip MVP Warning cases as they're already processed above
                   if (filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true &&
                     (filteredRecords[x].SE_Initial_Response_Status__c === 'In Warning' || filteredRecords[x].SE_Initial_Response_Status__c === 'Warning')) {
                     continue;
@@ -502,7 +497,6 @@ function getCaseDetails() {
                     localStorage.setItem(caseId, 'true');
                   }
 
-                  // Check for GEO Locate routing log with Met SLA and auto-mark as actioned
                   const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
                   if (routingLogs && routingLogs.totalSize > 0) {
                     const lastLog = routingLogs.records[0];
@@ -520,7 +514,6 @@ function getCaseDetails() {
 
                   console.log('Processing case:', filteredRecords[x]);
 
-                  // Check if case meets alert criteria (timing + severity)
                   const meetsAlertCriteria = (filteredRecords[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') ||
                     (today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
                     (today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
@@ -611,10 +604,6 @@ function getCaseDetails() {
                               <span class="checkmark">✓</span>
                               <span>${filteredRecords[x].Severity_Level__c}</span>
                             </div>
-                            <div class="case-info-item">
-                              <span class="checkmark">✓</span>
-                              <span style="color: ${statusColor}">${filteredRecords[x].SE_Initial_Response_Status__c}${caseData.isMVP ? ' - MVP CASE' : ''}</span>
-                            </div>
                             ${routingLogHtml}
                           </div>
                           
@@ -664,7 +653,6 @@ function getCaseDetails() {
                       myHtml = newHtml;
                     }
                   } else {
-                    // Case exists but doesn't meet alert criteria yet
                     pendingCasesCount++;
                     const minutesSinceCreation = Math.floor((today - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60));
                     const requiredMinutes = filteredRecords[x].Severity_Level__c === 'Level 1 - Critical' ? minSev1 : filteredRecords[x].Severity_Level__c === 'Level 2 - Urgent' ? minSev2 : (new Date(filteredRecords[x].SE_Target_Response__c) - new Date(filteredRecords[x].CreatedDate)) / (1000 * 60) - 30;
@@ -690,9 +678,7 @@ function getCaseDetails() {
                 }
 
               }
-              // The condition now checks if there is actual HTML content to display, not just if variables are defined.
               if (isData && (mvpWarningHtml || myHtml)) {
-                // Display MVP warning cases first, then regular cases
                 let finalHtml = '';
                 if (mvpWarningHtml) {
                   finalHtml += mvpWarningHtml;
@@ -701,7 +687,6 @@ function getCaseDetails() {
                   finalHtml += myHtml;
                 }
 
-                // Always show pending cases section if there are any pending cases
                 if (pendingCasesCount > 0) {
                   let pendingCasesHtml = '';
                   pendingCasesDetails.forEach(caseDetail => {
@@ -709,13 +694,6 @@ function getCaseDetails() {
                       caseDetail.severity.includes('Level 2') ? 'SEV2' :
                         caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
                     const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
-                    let statusColor = '';
-                    if (caseDetail.initialResponseStatus === 'Met') {
-                      statusColor = 'green';
-                    } else if (caseDetail.initialResponseStatus === 'In Warning' || caseDetail.initialResponseStatus === 'Warning') {
-                      statusColor = 'red';
-                    }
-
                     pendingCasesHtml += `
                       <div class="pending-item">
                         <div class="pending-left">
@@ -727,9 +705,6 @@ function getCaseDetails() {
                           </div>
                           <div class="pending-meta">
                             Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
-                          </div>
-                          <div style="color: ${statusColor}; font-size: 11px; margin-top: 2px; font-weight: bold;">
-                            ${caseDetail.initialResponseStatus}
                           </div>
                         </div>
                         <div class="pending-right">
@@ -754,19 +729,19 @@ function getCaseDetails() {
                   finalHtml = finalHtml + pendingCasesBanner;
                 }
 
-                document.getElementById("parentSigSev2").innerHTML += finalHtml;
+                const container = document.getElementById("parentSigSev2");
+                container.classList.remove('is-loading');
+                container.innerHTML = finalHtml; // replace loading tile entirely
+                container.classList.add('content-enter');
 
                 const savedFilter = localStorage.getItem('caseFilter');
                 if (savedFilter) {
                   applyFilter(savedFilter);
                 }
 
-                // Check if there are cases without action taken
                 const hasUnactionedCases = actionTakenCount < displayedCaseCount;
-                updateStatusIndicator(hasUnactionedCases, displayedCaseCount, actionTakenCount);
 
                 if (hasUnactionedCases) {
-                  // There are unactioned cases - play sound and focus tab
                   var audio = new Audio('../assets/audio/notification.wav');
                   audio.play();
                   var data = 'openTab';
@@ -778,7 +753,6 @@ function getCaseDetails() {
                     console.log('response-----' + response);
                   });
                 } else {
-                  // All cases have action taken - silent mode
                   var data = 'openTabSilent';
                   chrome.runtime.sendMessage(data, function (response) {
                     if (chrome.runtime.lastError) {
@@ -789,24 +763,15 @@ function getCaseDetails() {
                   });
                 }
               } else {
-                // No cases meet alert criteria - determine what to show
                 let noCasesHtml;
 
                 if (pendingCasesCount > 0) {
-                  // Cases exist but none meet alert criteria yet (still within SLA window)
                   let pendingCasesHtml = '';
                   pendingCasesDetails.forEach(caseDetail => {
                     const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
                       caseDetail.severity.includes('Level 2') ? 'SEV2' :
                         caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
                     const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
-                    let statusColor = '';
-                    if (caseDetail.initialResponseStatus === 'Met') {
-                      statusColor = 'green';
-                    } else if (caseDetail.initialResponseStatus === 'In Warning' || caseDetail.initialResponseStatus === 'Warning') {
-                      statusColor = 'red';
-                    }
-
                     pendingCasesHtml += `
                       <div class="pending-item">
                         <div class="pending-left">
@@ -818,9 +783,6 @@ function getCaseDetails() {
                           </div>
                           <div class="pending-meta">
                             Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
-                          </div>
-                          <div style="color: ${statusColor}; font-size: 11px; margin-top: 2px; font-weight: bold;">
-                            ${caseDetail.initialResponseStatus}
                           </div>
                         </div>
                         <div class="pending-right">
@@ -842,7 +804,6 @@ function getCaseDetails() {
                     </div>
                   `;
                 } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
-                  // Cases exist but none require action (all are assigned/handled or filtered out)
                   noCasesHtml = `
                     <div class="no-cases-message">
                       <h4 class="no-cases-title">No Cases for Now</h4>
@@ -851,7 +812,6 @@ function getCaseDetails() {
                     </div>
                   `;
                 } else {
-                  // Truly no cases exist
                   noCasesHtml = `
                     <div class="no-cases-message">
                       <h4 class="no-cases-title">No Cases to Action</h4>
@@ -861,9 +821,10 @@ function getCaseDetails() {
                   `;
                 }
 
-                document.getElementById("parentSigSev2").innerHTML += noCasesHtml;
-                updateStatusIndicator(false, 0, 0);
-                // No cases - silent mode
+                const container = document.getElementById("parentSigSev2");
+                container.classList.remove('is-loading');
+                container.innerHTML = noCasesHtml; // replace loading tile entirely
+                container.classList.add('content-enter');
                 var data = 'openTabSilent';
                 chrome.runtime.sendMessage(data, function (response) {
                   if (chrome.runtime.lastError) {
@@ -923,11 +884,11 @@ function getShiftForDate(date) {
   const emeaEnd = 20 * 60;
 
   if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
-    return 'APAC'; // 5:30 AM - 12:30 PM IST
+    return 'APAC';
   } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
-    return 'EMEA'; // 12:30 PM - 8:00 PM IST
+    return 'EMEA';
   } else {
-    return 'AMER'; // 8:00 PM - 5:30 AM IST (next day)
+    return 'AMER';
   }
 }
 
@@ -951,11 +912,11 @@ function getCurrentShift() {
   const emeaEnd = 20 * 60;
 
   if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
-    return 'APAC'; // 5:30 AM - 12:30 PM IST
+    return 'APAC';
   } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
-    return 'EMEA'; // 12:30 PM - 8:00 PM IST
+    return 'EMEA';
   } else {
-    return 'AMER'; // 8:00 PM - 5:30 AM IST (next day)
+    return 'AMER';
   }
 }
 function getPreferredShiftValues(currentShift) {
@@ -983,15 +944,14 @@ function checkGHOAlert() {
   const currentTime = now.getHours() * 60 + now.getMinutes();
   const today = now.toDateString();
 
-  const apacAlertTime = 7 * 60 + 30;  // 7:30 AM IST
-  const emeaAlertTime = 14 * 60 + 30; // 2:30 PM IST (14:30)
-  const amerAlertTime = 22 * 60 + 30; // 10:30 PM IST (22:30)
+  const apacAlertTime = 7 * 60 + 30;
+  const emeaAlertTime = 14 * 60 + 30;
+  const amerAlertTime = 22 * 60 + 30;
 
-  const isAPACTime = Math.abs(currentTime - apacAlertTime) <= 5;  // 5-minute window for better precision
+  const isAPACTime = Math.abs(currentTime - apacAlertTime) <= 5;
   const isEMEATime = Math.abs(currentTime - emeaAlertTime) <= 5;
   const isAMERTime = Math.abs(currentTime - amerAlertTime) <= 5;
 
-  // Debug logging
   console.log('GHO Alert Check:', {
     currentTime: `${Math.floor(currentTime / 60)}:${(currentTime % 60).toString().padStart(2, '0')}`,
     isAPACTime,
@@ -1005,7 +965,6 @@ function checkGHOAlert() {
     return;
   }
 
-  // Determine which region alert this is
   let region = '';
   if (isAPACTime) region = 'APAC';
   else if (isEMEATime) region = 'EMEA';
@@ -1026,13 +985,11 @@ function checkGHOAlert() {
 
   console.log('GHO Query:', ghoQuery);
 
-  // Check if SESSION_ID is available
   if (!SESSION_ID) {
     console.error('SESSION_ID not available for GHO alert');
     return;
   }
 
-  // Create connection for GHO alert query
   let ghoConn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
@@ -1047,33 +1004,27 @@ function checkGHOAlert() {
 
     if (err) {
       console.error('GHO Alert Query Error:', err);
-      // Don't set alert flag on error to allow retry
       return;
     }
 
     if (!result.records || result.records.length === 0) {
       console.log('No GHO records found for region:', region);
-      // Set alert flag only when we've successfully checked and found no cases
       localStorage.setItem(alertKey, 'true');
       return;
     }
 
-    // Check if any cases need action (not all have #GHOTriage)
     const caseIds = result.records.map(record => record.Id);
     const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
     ghoConn.query(commentQuery, function (commentErr, commentResult) {
       if (commentErr) {
         console.error('GHO Comment Query Error:', commentErr);
-        // Don't set alert flag on error to allow retry
         return;
       }
 
-      // Get current user ID for tracking
       ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
         if (userErr) {
           console.error('GHO User Query Error:', userErr);
-          // Don't set alert flag on error to allow retry
           return;
         }
 
@@ -1082,17 +1033,15 @@ function checkGHOAlert() {
           currentUserId = userResult.records[0].Id;
         }
 
-        // Get cases that have #GHOTriage comments - filter using JavaScript
         const actionedCaseIds = new Set();
         if (commentResult.records) {
           console.log('Checking comments for GHO triage actions:', commentResult.records.length, 'comments found');
           commentResult.records.forEach(comment => {
             if (comment.Body && comment.Body.includes('#GHOTriage')) {
-              // Check if comment is from today and same GEO
               const commentDate = comment.LastModifiedDate || comment.CreatedDate;
               const isCommentFromToday = isToday(commentDate);
               const commentShift = getShiftForDate(commentDate);
-              const isSameGeo = commentShift === region; // region is the current shift we're checking for
+              const isSameGeo = commentShift === region;
 
               console.log('GHO Alert - #GHOTriage comment analysis:', {
                 caseId: comment.ParentId,
@@ -1103,19 +1052,16 @@ function checkGHOAlert() {
                 isSameGeo
               });
 
-              // Only consider #GHOTriage comments from today and same GEO
               if (isCommentFromToday && isSameGeo) {
                 actionedCaseIds.add(comment.ParentId);
                 console.log('Found valid #GHOTriage comment for case:', comment.ParentId, 'Date:', commentDate, 'Shift:', commentShift);
 
-                // Track GHO Triage actions if current user made the comment
                 if (currentUserId && comment.CreatedById === currentUserId) {
                   const caseRecord = result.records.find(c => c.Id === comment.ParentId);
                   console.log('GHO alert - Case record for triage comment:', caseRecord);
                   if (caseRecord) {
                     const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                     if (!localStorage.getItem(ghoTrackingKey)) {
-                      // Track to Google Sheet with "GHO" prefix for cloud type to distinguish from regular cases
                       trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                       localStorage.setItem(ghoTrackingKey, 'true');
                       console.log('GHO alert - triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
@@ -1137,8 +1083,6 @@ function checkGHOAlert() {
         } else {
           console.log('No comments found for GHO cases');
         }
-
-        // Filter out cases that have been actioned
         const unactionedCases = result.records.filter(caseRecord => !actionedCaseIds.has(caseRecord.Id));
 
         console.log('GHO Alert Cases Analysis:', {
@@ -1149,18 +1093,14 @@ function checkGHOAlert() {
         });
 
         if (unactionedCases.length > 0) {
-          // Show GHO alert
           console.log('Showing GHO alert for region:', region, 'with', unactionedCases.length, 'cases');
           try {
             showGHOAlert(region, unactionedCases, alertKey);
-            // Don't set flag here - only set it when user dismisses the alert
           } catch (error) {
             console.error('Failed to show GHO alert:', error);
-            // Don't set localStorage flag if alert failed to show
           }
         } else {
           console.log('All GHO cases have been actioned - no alert needed');
-          // Set flag when no alert is needed (all cases actioned)
           localStorage.setItem(alertKey, 'true');
         }
       });
@@ -1174,7 +1114,6 @@ function showGHOAlert(region, ghoRecords, alertKey) {
 
     const alertTime = region === 'APAC' ? '7:30 AM' : region === 'EMEA' ? '2:30 PM' : '10:30 PM';
 
-    // Create and show modal
     let existingModal = document.getElementById('gho-alert-modal');
     if (existingModal) {
       console.log('Removing existing GHO alert modal');
@@ -1228,16 +1167,16 @@ function showGHOAlert(region, ghoRecords, alertKey) {
     console.log('Inserting GHO alert modal into DOM');
     document.body.insertAdjacentHTML('beforeend', modalHtml);
 
-    // Verify modal was added
     const modal = document.getElementById('gho-alert-modal');
     if (modal) {
       console.log('GHO alert modal successfully added to DOM');
+      requestAnimationFrame(() => modal.classList.add('modal-show'));
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     } else {
       console.error('Failed to add GHO alert modal to DOM');
       return;
     }
 
-    // Play GHO alert sound immediately when modal appears
     try {
       const audio = new Audio('../assets/audio/ghoalert.wav');
       audio.volume = 1.0;
@@ -1248,17 +1187,14 @@ function showGHOAlert(region, ghoRecords, alertKey) {
       console.log('Could not play GHO alert sound:', e);
     }
 
-    // Add event listeners
     document.getElementById('gho-alert-close').addEventListener('click', () => {
       console.log('GHO alert close button clicked - modal closed but alert not dismissed');
       document.getElementById('gho-alert-modal').remove();
-      // Don't set localStorage flag - alert should reappear until properly dismissed
     });
 
     document.getElementById('gho-alert-dismiss').addEventListener('click', () => {
       console.log('GHO alert dismiss button clicked - marking alert as acknowledged');
       document.getElementById('gho-alert-modal').remove();
-      // Only set the localStorage flag when user explicitly dismisses
       localStorage.setItem(alertKey, 'true');
       console.log('GHO alert dismissed and flagged as shown:', alertKey);
     });
@@ -1266,14 +1202,12 @@ function showGHOAlert(region, ghoRecords, alertKey) {
     document.getElementById('gho-alert-check').addEventListener('click', () => {
       console.log('GHO alert check button clicked - opening GHO status without dismissing alert');
       document.getElementById('gho-alert-modal').remove();
-      checkGHOStatus(); // Open the GHO status modal
-      // Don't set localStorage flag - alert should reappear until properly dismissed
+      checkGHOStatus();
     });
 
     console.log('GHO alert modal setup completed successfully');
   } catch (error) {
     console.error('Error showing GHO alert:', error);
-    // Don't set localStorage flag if alert failed to show
     throw error;
   }
 }
@@ -1290,10 +1224,16 @@ function updateGHOButtonVisibility() {
   }
 }
 
+function updateCICButtonVisibility() {
+  const cicButton = document.getElementById("cic-button");
+  if (cicButton) {
+    cicButton.style.display = isCurrentlyWeekend() ? 'inline-block' : 'none';
+  }
+}
+
 // Function to ensure only one extension tab exists
 async function ensureSingleTab() {
   try {
-    // Send a message to background script to perform cleanup
     chrome.runtime.sendMessage('ensureSingleTab', function (response) {
       if (chrome.runtime.lastError) {
         console.error('Runtime error ensuring single tab:', chrome.runtime.lastError.message);
@@ -1306,24 +1246,20 @@ async function ensureSingleTab() {
   }
 }
 
-// Keyboard shortcuts handler
 document.addEventListener('keydown', function (e) {
-  // Check if Command (Mac) or Ctrl (Windows/Linux) is pressed
   if (e.metaKey || e.ctrlKey) {
     switch (e.key.toLowerCase()) {
       case 'f':
         e.preventDefault();
-        // Focus on search input
         const searchInput = document.getElementById("search-input");
         if (searchInput) {
           searchInput.focus();
-          searchInput.select(); // Select all text if any exists
+          searchInput.select();
         }
         break;
 
       case 'g':
         e.preventDefault();
-        // Open GHO status modal (only in signature mode)
         if (currentMode === 'signature') {
           checkGHOStatus();
         } else {
@@ -1333,7 +1269,6 @@ document.addEventListener('keydown', function (e) {
 
       case 'r':
         e.preventDefault();
-        // Refresh the page
         const refreshIcon = document.querySelector('#refresh-button .fa-refresh');
         if (refreshIcon) {
           refreshIcon.classList.add('fa-spin');
@@ -1345,7 +1280,6 @@ document.addEventListener('keydown', function (e) {
 
       case '1':
         e.preventDefault();
-        // Switch to signature mode
         const modeSwitch = document.getElementById("mode-switch");
         if (modeSwitch && modeSwitch.checked) {
           modeSwitch.checked = false;
@@ -1355,7 +1289,6 @@ document.addEventListener('keydown', function (e) {
 
       case '2':
         e.preventDefault();
-        // Switch to premier mode
         const modeSwitchPremier = document.getElementById("mode-switch");
         if (modeSwitchPremier && !modeSwitchPremier.checked) {
           modeSwitchPremier.checked = true;
@@ -1365,7 +1298,6 @@ document.addEventListener('keydown', function (e) {
 
       case 'q':
         e.preventDefault();
-        // Switch to signature mode
         const modeSwitchSig = document.getElementById("mode-switch");
         if (modeSwitchSig && modeSwitchSig.checked) {
           modeSwitchSig.checked = false;
@@ -1375,7 +1307,6 @@ document.addEventListener('keydown', function (e) {
 
       case 'w':
         e.preventDefault();
-        // Switch to premier mode
         const modeSwitchPrem = document.getElementById("mode-switch");
         if (modeSwitchPrem && !modeSwitchPrem.checked) {
           modeSwitchPrem.checked = true;
@@ -1385,7 +1316,6 @@ document.addEventListener('keydown', function (e) {
 
       case 'i':
         e.preventDefault();
-        // Switch to signature mode
         const modeSwitchSig2 = document.getElementById("mode-switch");
         if (modeSwitchSig2 && modeSwitchSig2.checked) {
           modeSwitchSig2.checked = false;
@@ -1395,7 +1325,6 @@ document.addEventListener('keydown', function (e) {
 
       case 'p':
         e.preventDefault();
-        // Switch to premier mode
         const modeSwitchPrem2 = document.getElementById("mode-switch");
         if (modeSwitchPrem2 && !modeSwitchPrem2.checked) {
           modeSwitchPrem2.checked = true;
@@ -1405,7 +1334,6 @@ document.addEventListener('keydown', function (e) {
 
       case 'a':
         e.preventDefault();
-        // Clear all filters and search
         document.getElementById("search-input").value = "";
         document.getElementById("search-button").disabled = true;
         document.getElementById("action-filter").value = "all";
@@ -1417,21 +1345,15 @@ document.addEventListener('keydown', function (e) {
 
       case 's':
         e.preventDefault();
-        // Clear snoozed cases
         clearSnoozedCases();
         break;
     }
   }
-
-  // ESC key to close modals
   if (e.key === 'Escape') {
-    // Close GHO modal if open
     const ghoModal = document.getElementById('gho-modal');
     if (ghoModal && ghoModal.style.display === 'flex') {
       ghoModal.style.display = 'none';
     }
-
-    // Close GHO alert modal if open
     const ghoAlertModal = document.getElementById('gho-alert-modal');
     if (ghoAlertModal) {
       ghoAlertModal.remove();
@@ -1439,7 +1361,6 @@ document.addEventListener('keydown', function (e) {
   }
 });
 
-// Show keyboard shortcuts help on ? key
 document.addEventListener('keydown', function (e) {
   if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault();
@@ -1506,20 +1427,20 @@ function showKeyboardShortcutsHelp() {
     </div>
   `;
 
-  // Remove existing help modal if any
   const existingModal = document.getElementById('shortcuts-help-modal');
   if (existingModal) {
     existingModal.remove();
   }
 
   document.body.insertAdjacentHTML('beforeend', helpModal);
-
-  // Add event listeners
+  // Ensure visibility per CSS rules (avoid :not(.modal-show) opacity:0)
+  const helpEl = document.getElementById('shortcuts-help-modal');
+  if (helpEl) {
+    requestAnimationFrame(() => helpEl.classList.add('modal-show'));
+  }
   document.getElementById('shortcuts-help-close').addEventListener('click', () => {
     document.getElementById('shortcuts-help-modal').remove();
   });
-
-  // Close modal when clicking outside
   document.getElementById('shortcuts-help-modal').addEventListener('click', function (e) {
     if (e.target === this) {
       this.remove();
@@ -1527,19 +1448,17 @@ function showKeyboardShortcutsHelp() {
   });
 }
 
-// Check for duplicate tabs when popup loads
 document.addEventListener("DOMContentLoaded", function () {
-  ensureSingleTab(); // Ensure only one tab exists
+  ensureSingleTab();
   updateWeekendModeIndicator();
   setInterval(updateWeekendModeIndicator, 60000);
+  const firstContainer = document.getElementById('parentSigSev2');
+  if (firstContainer) {
+    firstContainer.classList.add('is-loading');
+  }
   getSessionIds();
-
-  // Initialize mouse activity tracking for auto-refresh
   initMouseActivityTracking();
-
-  // Start GHO alert checking every minute
   setInterval(checkGHOAlert, 60000);
-  // Check immediately on load
   setTimeout(checkGHOAlert, 5000);
 
   const savedFilter = localStorage.getItem('caseFilter');
@@ -1620,6 +1539,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Update GHO button visibility based on mode
     updateGHOButtonVisibility();
+    updateCICButtonVisibility();
 
     // Clear search and filter when changing modes
     document.getElementById("search-input").value = "";
@@ -1629,7 +1549,10 @@ document.addEventListener("DOMContentLoaded", function () {
     clearTimeout(searchTimeout);
 
     // Clear existing content and show loading state
-    document.getElementById("parentSigSev2").innerHTML = `
+    const listContainer = document.getElementById("parentSigSev2");
+    listContainer.classList.add('is-loading');
+    listContainer.classList.remove('content-enter');
+    listContainer.innerHTML = `
       <div class="loading-message">
         <h4 style="color: #374151; font-size: 20px; margin-bottom: 16px; font-weight: 600;">Switching to ${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} Mode...</h4>
         <p style="color: #6b7280; font-size: 16px; margin: 0;">Loading cases...</p>
@@ -1637,6 +1560,7 @@ document.addEventListener("DOMContentLoaded", function () {
     `;
 
 
+    // Fetch new data
     getSessionIds();
   });
 
@@ -1651,6 +1575,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Set initial GHO button visibility
   updateGHOButtonVisibility();
+  // Set initial CIC button visibility
+  updateCICButtonVisibility();
+  // Keep CIC button visibility in sync with weekend window
+  setInterval(updateCICButtonVisibility, 60000);
 
   // Set initial Clear Snoozed button visibility
   updateClearSnoozedButtonVisibility();
@@ -1665,9 +1593,20 @@ document.addEventListener("DOMContentLoaded", function () {
     checkGHOStatus();
   });
 
+  // Weekend Roster Button Event Listener
+  document.getElementById("cic-button").addEventListener("click", function () {
+    if (!isCurrentlyWeekend()) {
+      showToast('Weekend Roster is for weekends only');
+      return;
+    }
+    showCICManagers();
+  });
+
   // GHO Modal Event Listeners
   document.getElementById("gho-modal-close").addEventListener("click", function () {
-    document.getElementById('gho-modal').style.display = 'none';
+    const m = document.getElementById('gho-modal');
+    m.classList.remove('modal-show');
+    setTimeout(() => { m.style.display = 'none'; }, 150);
   });
 
   // GHO Filter Event Listener
@@ -1680,7 +1619,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("gho-modal").addEventListener("click", function (e) {
     if (e.target === this) {
-      this.style.display = 'none';
+      this.classList.remove('modal-show');
+      setTimeout(() => { this.style.display = 'none'; }, 150);
     }
   });
 
@@ -1824,7 +1764,6 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
   }
 });
 
-// Handle snooze time
 document.getElementById("parentSigSev2").addEventListener("change", function (e) {
   if (e.target.classList.contains("snooze-time")) {
     const select = e.target;
@@ -1849,6 +1788,353 @@ function showToast(message) {
   setTimeout(() => {
     toast.style.display = 'none';
   }, 3000);
+}
+
+// Determine weekend target date based on shift rules
+function getWeekendLookupDateForShift(shift) {
+  const now = new Date();
+  const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const day = istNow.getDay();
+  const hours = istNow.getHours();
+  const minutes = istNow.getMinutes();
+  const totalMin = hours * 60 + minutes;
+  const cutoff = 5 * 60 + 30;
+  let target = new Date(istNow);
+
+  const lastSat = new Date(istNow);
+  lastSat.setDate(istNow.getDate() - ((day + 1) % 7));
+  while (lastSat.getDay() !== 6) lastSat.setDate(lastSat.getDate() - 1);
+
+  if (shift === 'AMER') {
+    if (day === 0 && totalMin < cutoff) {
+      target = lastSat;
+    } else if (day === 6 && totalMin >= cutoff) {
+      target = lastSat;
+    } else if (day === 0 && totalMin >= cutoff) {
+      target = istNow;
+    } else if (day === 1 && totalMin < cutoff) {
+      const sun = new Date(istNow);
+      sun.setDate(sun.getDate() - 1);
+      target = sun;
+    } else {
+      target = lastSat;
+    }
+  } else {
+    if (day === 6 && totalMin >= cutoff) {
+      target = istNow;
+    } else if (day === 0) {
+      target = istNow;
+    } else if (day === 1 && totalMin < cutoff) {
+      const sun = new Date(istNow);
+      sun.setDate(sun.getDate() - 1);
+      target = sun;
+    } else {
+      target = lastSat;
+    }
+  }
+  const m = target.getMonth() + 1;
+  const dNum = target.getDate();
+  const d = dNum < 10 ? `0${dNum}` : `${dNum}`;
+  const y = target.getFullYear();
+  return `${m}/${d}/${y}`;
+}
+
+function getCICColumnForShift(shift) {
+  if (shift === 'APAC') return 'B';
+  if (shift === 'EMEA') return 'J';
+  return 'S';
+}
+
+function getTEColumnForShift(shift) {
+  if (shift === 'APAC') return 'F';
+  if (shift === 'EMEA') return 'O';
+  return 'W';
+}
+
+function getCurrentShiftIST() {
+  const now = new Date();
+  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const hours = ist.getHours();
+  const minutes = ist.getMinutes();
+  const totalMinutes = hours * 60 + minutes;
+  const apacStart = 5 * 60 + 30;
+  const emeaStart = 12 * 60 + 30;
+  const apacEnd = 12 * 60 + 30;
+  const emeaEnd = 20 * 60;
+  if (totalMinutes >= apacStart && totalMinutes < apacEnd) return 'APAC';
+  if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) return 'EMEA';
+  return 'AMER';
+}
+
+function googleSheetsGET(rangeA1, callback, onError) {
+  chrome.identity.getAuthToken({ interactive: true }, function (token) {
+    if (chrome.runtime.lastError || !token) {
+      console.error('Auth token error:', chrome.runtime.lastError);
+      onError && onError(new Error('Auth token error'));
+      return;
+    }
+    fetch(`https://sheets.googleapis.com/v4/spreadsheets/${WEEKEND_ROSTER_SPREADSHEET_ID}/values/${encodeURIComponent(rangeA1)}?majorDimension=ROWS`, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    }).then(r => r.json()).then(data => {
+      if (data.error) throw new Error(data.error.message || 'Sheets error');
+      callback && callback(data);
+    }).catch(err => {
+      console.error('Sheets read failed:', err);
+      onError && onError(err);
+    });
+  });
+}
+
+function showCICManagers() {
+  const shift = getCurrentShiftIST();
+  const weekendDateStr = getWeekendLookupDateForShift(shift);
+  const column = getCICColumnForShift(shift);
+
+  const range = `'Service Cloud'!A:S`;
+
+  const showLoading = () => {
+    const loadingHtml = `
+      <div id="cic-modal" class="modal-overlay" style="display:flex; z-index:1003;">
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-header" style="background: linear-gradient(135deg,#14b8a6 0%, #0ea5e9 100%); color: white;">
+            <h3 style="color:white; margin:0;">Weekend Roster</h3>
+            <span class="modal-close" id="cic-modal-close" style="color:white; cursor:pointer; font-size:24px;">&times;</span>
+          </div>
+          <div class="modal-body">
+            <div class="loading-message" style="animation: fadeUp 300ms ease;">
+              <div class="spinner"></div>
+              <h4 style="margin-bottom:8px">Loading Weekend Roster...</h4>
+              <p>${shift} · ${weekendDateStr}</p>
+              <div class="skeleton-list">
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer" style="padding:12px 16px; border-top:1px solid #e5e7eb; background:#f8fafc; color:#64748b; font-size:12px;">
+            Tip: Click any names area to copy all names as a comma-separated list.
+          </div>
+        </div>
+      </div>`;
+    const existing = document.getElementById('cic-modal');
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML('beforeend', loadingHtml);
+    const modalEl = document.getElementById('cic-modal');
+    if (modalEl) requestAnimationFrame(() => modalEl.classList.add('modal-show'));
+    document.getElementById('cic-modal-close').addEventListener('click', () => {
+      const m = document.getElementById('cic-modal');
+      if (m) {
+        m.classList.remove('modal-show');
+        setTimeout(() => { m.remove(); }, 150);
+      }
+    });
+    document.getElementById('cic-modal').addEventListener('click', function (e) {
+      if (e.target === this) {
+        this.classList.remove('modal-show');
+        setTimeout(() => { this.remove(); }, 150);
+      }
+    });
+  };
+
+  showLoading();
+
+  googleSheetsGET(range, (resp) => {
+    try {
+      const rows = resp.values || [];
+      let foundRowIdx = -1;
+      const targetDatePadded = weekendDateStr;
+      const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+      const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+      const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+      const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+      for (let i = 0; i < rows.length; i++) {
+        const aVal = rows[i][0];
+        if (!aVal) continue;
+        const aStr = String(aVal).trim();
+        if (aStr === targetDatePadded || aStr === targetDateAlt) {
+          foundRowIdx = i;
+          break;
+        }
+        const dt = new Date(aStr);
+        if (!isNaN(dt.getTime())) {
+          const am = dt.getMonth() + 1;
+          const ad = dt.getDate();
+          const ay = dt.getFullYear();
+          if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) {
+            foundRowIdx = i;
+            break;
+          }
+        }
+      }
+
+      let namesCell = '';
+      if (foundRowIdx >= 0) {
+        const colIndex = column.charCodeAt(0) - 'A'.charCodeAt(0);
+        namesCell = (rows[foundRowIdx][colIndex] || '').toString();
+      }
+      const prettyTitle = `CIC Managers — ${shift}`;
+      const bodyEl = document.querySelector('#cic-modal .modal-body');
+      if (!bodyEl) return;
+
+      if (!namesCell) {
+        bodyEl.innerHTML = `<div class="no-cases-message" style="animation: fadeUp 260ms ease;">
+          <h4 class="no-cases-title" style="color:#0f766e;">No names found</h4>
+          <p class="no-cases-text">No Weekend Roster listed for ${shift} on ${weekendDateStr}.</p>
+          <p class="mode-switch-hint">Verify the date in Column A matches M/DD/YYYY.</p>
+        </div>`;
+        return;
+      }
+
+      const namesComma = namesCell
+        .replace(/[\r\n]+/g, ', ')     // new lines -> comma
+        .replace(/\s*&\s*/g, ', ')     // ampersand -> comma
+        .replace(/\s*,\s*/g, ', ')     // collapse spaces around commas
+        .replace(/,\s*,+/g, ', ')       // remove duplicate commas
+        .replace(/\s{2,}/g, ' ')        // collapse multiple spaces
+        .replace(/,\s*$/, '')           // trim trailing comma
+        .trim();
+
+      bodyEl.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <div>
+            <div style="font-weight:700; color:#0f766e; margin-bottom:6px;">${prettyTitle}</div>
+    <div id="cic-names" title="Click to copy" style="padding:12px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">
+      ${formatNamesToMultiline(namesCell)}
+            </div>
+          </div>
+        </div>`;
+
+      const cell = document.getElementById('cic-names');
+      cell.addEventListener('click', () => {
+        navigator.clipboard.writeText(namesComma).then(() => {
+          showToast('Weekend Roster copied');
+        }).catch(() => showToast('Copy failed'));
+      });
+
+      // In Signature mode, also show Sales/Service Cloud TEs sections
+      if (currentMode === 'signature') {
+        const bodyEl2 = document.querySelector('#cic-modal .modal-body');
+        if (bodyEl2) {
+          // Helper to append a TE section for a given sheet and title
+          const appendTESection = (sheetName, titlePrefix, idSuffix) => {
+            const teColumn = getTEColumnForShift(shift);
+            const teRange = `'${sheetName}'!A:Z`;
+            googleSheetsGET(teRange, (r2) => {
+              try {
+                const rows2 = r2.values || [];
+                let rowIdx2 = -1;
+                const targetDatePadded = weekendDateStr;
+                const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+                const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+                const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+                const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+                for (let i = 0; i < rows2.length; i++) {
+                  const aVal2 = rows2[i][0];
+                  if (!aVal2) continue;
+                  const aStr2 = String(aVal2).trim();
+                  if (aStr2 === targetDatePadded || aStr2 === targetDateAlt) { rowIdx2 = i; break; }
+                  const dt2 = new Date(aStr2);
+                  if (!isNaN(dt2.getTime())) {
+                    const am2 = dt2.getMonth() + 1, ad2 = dt2.getDate(), ay2 = dt2.getFullYear();
+                    if (am2 === mNumTarget && ad2 === dNumTarget && ay2 === yNumTarget) { rowIdx2 = i; break; }
+                  }
+                }
+
+                let teNamesCell = '';
+                if (rowIdx2 >= 0) {
+                  const colIdx2 = teColumn.charCodeAt(0) - 'A'.charCodeAt(0);
+                  teNamesCell = (rows2[rowIdx2][colIdx2] || '').toString();
+                }
+
+                const sectionTitle = `${titlePrefix} ${shift}`;
+                let sectionHtml = '';
+                if (!teNamesCell) {
+                  sectionHtml = `
+                    <div class="no-cases-message" style="animation: fadeUp 260ms ease; margin-top:12px;">
+                      <h4 class="no-cases-title" style="color:#0f766e;">${sectionTitle}</h4>
+                      <p class="no-cases-text">No TEs found for ${shift} on ${weekendDateStr}.</p>
+                    </div>`;
+                  bodyEl2.insertAdjacentHTML('beforeend', sectionHtml);
+                  return;
+                }
+
+                const teNamesComma = normalizeNamesForCopy(teNamesCell);
+                sectionHtml = `
+                  <div style="display:flex; flex-direction:column; gap:12px; margin-top:12px;">
+                    <div>
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:6px;">${sectionTitle}</div>
+          <div id="${idSuffix}-names" title="Click to copy" style="padding:12px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(teNamesCell)}</div>
+                    </div>
+                  </div>`;
+                bodyEl2.insertAdjacentHTML('beforeend', sectionHtml);
+
+                const teDiv = document.getElementById(`${idSuffix}-names`);
+                if (teDiv) {
+                  teDiv.addEventListener('click', () => {
+                    navigator.clipboard.writeText(teNamesComma).then(() => {
+                      showToast(`${titlePrefix} copied`);
+                    }).catch(() => showToast('Copy failed'));
+                  });
+                }
+              } catch (e) {
+                console.error(`Failed building ${titlePrefix} section:`, e);
+              }
+            }, (err2) => {
+              console.error(`Failed loading ${sheetName} sheet:`, err2);
+            });
+          };
+
+          appendTESection('Sales Cloud', 'Sales Cloud TEs', 'sales-te');
+          appendTESection('Service Cloud', 'Service Cloud TEs', 'service-te');
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      const bodyEl = document.querySelector('#cic-modal .modal-body');
+      if (bodyEl) {
+        bodyEl.innerHTML = `<div class="no-cases-message" style="background: linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%); border: 1.5px solid #fecaca; animation: fadeUp 300ms ease;">
+            <h4 class="no-cases-title" style="color:#dc2626;">Error</h4>
+            <p class="no-cases-text" style="color:#dc2626;">Failed parsing sheet response.</p>
+          </div>`;
+      }
+    }
+  }, (err) => {
+    const bodyEl = document.querySelector('#cic-modal .modal-body');
+    if (bodyEl) {
+      bodyEl.innerHTML = `<div class="no-cases-message" style="background: linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%); border: 1.5px solid #fecaca; animation: fadeUp 300ms ease;">
+          <h4 class="no-cases-title" style="color:#dc2626;">Error Loading</h4>
+          <p class="no-cases-text" style="color:#dc2626;">${(err && err.message) || 'Could not fetch Google Sheet.'}</p>
+        </div>`;
+    }
+  });
+}
+
+// Normalize names copied from multi-line cells to comma-separated values
+function normalizeNamesForCopy(namesCell) {
+  return (namesCell || '')
+    .replace(/[\r\n]+/g, ', ')
+    .replace(/\s*&\s*/g, ', ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/,\s*,+/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/,\s*$/, '')
+    .trim();
+}
+
+// Render helper: visually show each name on its own line (affects display only, not copy)
+function formatNamesToMultiline(text) {
+  if (!text) return '';
+  const parts = String(text)
+    .split(/\n|,|&/g)
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return '';
+  const escapeHtml = (s) => s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return parts.map(p => `<div>${escapeHtml(p)}</div>`).join('');
 }
 
 // Function to check if there are snoozed cases and update button visibility
@@ -1888,38 +2174,7 @@ function clearSnoozedCases() {
 }
 
 // Function to update status indicator based on case status
-function updateStatusIndicator(hasUnactionedCases, totalCases, actionedCases) {
-  const statusDot = document.querySelector('.status-dot');
-  const statusText = document.querySelector('.status-text');
-
-  if (!statusDot || !statusText) return;
-
-  // Get persistent case count from background
-  chrome.runtime.sendMessage({ action: 'getPersistentCaseCount' }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('Error getting persistent case count:', chrome.runtime.lastError);
-      return;
-    }
-
-    let persistentCaseText = '';
-    if (response && response.count > 0) {
-      persistentCaseText = ` | ${response.count} cases being tracked`;
-      console.log(persistentCaseText);
-
-    }
-
-    if (totalCases === 0) {
-      statusDot.style.backgroundColor = '#22c55e';
-      statusText.textContent = `No Cases - All Clear${persistentCaseText}`;
-    } else if (hasUnactionedCases) {
-      statusDot.style.backgroundColor = '#ef4444';
-      statusText.textContent = `${totalCases - actionedCases} Cases Need Action${persistentCaseText}`;
-    } else {
-      statusDot.style.backgroundColor = '#22c55e';
-      statusText.textContent = `All Cases Actioned${persistentCaseText}`;
-    }
-  });
-}
+// Status indicator removed
 
 // GHO Functions
 function checkGHOStatus() {
@@ -1934,10 +2189,17 @@ function checkGHOStatus() {
 
   // Show modal and loading state
   modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('modal-show'));
   container.innerHTML = `
     <div class="loading-message" style="animation: fadeUp 300ms ease;">
-      <h4>Loading GHO cases...</h4>
+      <div class="spinner"></div>
+      <h4 style="margin-bottom:8px">Loading GHO cases...</h4>
       <p>Please wait while we fetch the latest GHO cases.</p>
+      <div class="skeleton-list">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
     </div>
   `;
 
@@ -2375,20 +2637,15 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
                 <span class="checkmark">✓</span>
                 <span>${caseRecord.Severity_Level__c}</span>
               </div>
-              <div class="case-info-item">
-                <span class="checkmark">✓</span>
-                <span style="color: ${statusColor}; font-weight: bold;">${caseRecord.SE_Initial_Response_Status__c}${isMVP ? ' - MVP CASE' : ''}</span>
-              </div>
               ${hasGHOTriage ? '<div class="case-info-item"><span class="checkmark" style="color: #059669;">✓</span><span style="color: #059669; font-weight: bold;">QB has been mentioned (#GHOTriage found in comments)</span></div>' : ''}
               ${routingLogHtml}
               ${ghoTransferHtml}
             </div>
             
             <div class="case-actions">
-              <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
-                 class="preview-btn gho-preview-btn" 
-                 data-case-id="${caseId}"
-                 style="margin-top:20px;position:absolute;top:60px;right:20px">
+          <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
+            class="preview-btn gho-preview-btn" 
+            data-case-id="${caseId}">
                 View Case Record
               </a>
             </div>
@@ -2483,7 +2740,6 @@ function clearGHOAlertFlags() {
     }
   });
 
-  // Also clear any old tracking keys that might be lingering
   const allKeys = Object.keys(localStorage);
   const ghoKeys = allKeys.filter(key => key.startsWith('gho_alert_') || key.startsWith('gho_tracked_'));
 
