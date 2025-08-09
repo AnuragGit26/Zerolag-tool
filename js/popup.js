@@ -407,10 +407,10 @@ function getCaseDetails() {
                     }
 
                     const mvpCaseHtml = `
-                      <div class="case-card mvp-warning-case" style="border: 3px solid #ef4444; background-color: #fef2f2;">
+                      <div class="case-card mvp-warning-case">
                         <div class="case-header">
                           <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="background-color: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP URGENT</span>
+                            <span class="badge-soft badge-soft--danger">MVP URGENT</span>
                             <h3 class="case-title">${caseRecord.Subject}</h3>
                           </div>
                           <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)} (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
@@ -583,11 +583,11 @@ function getCaseDetails() {
                     }
 
                     const newHtml = `
-                      <div class="case-card ${caseData.isMVP ? 'mvp-case' : ''}" ${caseData.isMVP ? 'style="border-left: 4px solid #9333ea;"' : ''}>
+                      <div class="case-card ${caseData.isMVP ? 'mvp-case card-accent-purple' : ''}">
                         <div class="case-header">
                           <div style="display: flex; align-items: center; gap: 8px;">
-                            ${caseData.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP</span>' : ''}
-                            ${caseData.isSLAM ? '<span style="background-color: #d9534f; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">SLAM</span>' : ''}
+                            ${caseData.isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : ''}
+                            ${caseData.isSLAM ? '<span class="badge-soft badge-soft--danger">SLAM</span>' : ''}
                             <h3 class="case-title">${filteredRecords[x].Subject}</h3>
                           </div>
                           <div class="case-timestamp">${formatDateWithDayOfWeek(filteredRecords[x].CreatedDate)} (${timeElapsed(new Date(filteredRecords[x].CreatedDate))})</div>
@@ -708,7 +708,7 @@ function getCaseDetails() {
                     const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
                       caseDetail.severity.includes('Level 2') ? 'SEV2' :
                         caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
-                    const mvpBadge = caseDetail.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 8px;">MVP</span>' : '';
+                    const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
                     let statusColor = '';
                     if (caseDetail.initialResponseStatus === 'Met') {
                       statusColor = 'green';
@@ -717,22 +717,22 @@ function getCaseDetails() {
                     }
 
                     pendingCasesHtml += `
-                      <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1;">
-                          <div style="font-weight: 600; color: #1d4ed8; font-size: 14px;">
+                      <div class="pending-item">
+                        <div class="pending-left">
+                          <div class="pending-title">
                             ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
                           </div>
-                          <div style="color: #374151; font-size: 12px; margin-top: 2px;">
+                          <div class="pending-sub">
                             ${caseDetail.account}
                           </div>
-                          <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
+                          <div class="pending-meta">
                             Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
                           </div>
                           <div style="color: ${statusColor}; font-size: 11px; margin-top: 2px; font-weight: bold;">
                             ${caseDetail.initialResponseStatus}
                           </div>
                         </div>
-                        <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
+                        <div class="pending-right">
                           ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
                         </div>
                       </div>
@@ -799,7 +799,7 @@ function getCaseDetails() {
                     const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
                       caseDetail.severity.includes('Level 2') ? 'SEV2' :
                         caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
-                    const mvpBadge = caseDetail.isMVP ? '<span style="background-color: #9333ea; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 8px;">MVP</span>' : '';
+                    const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
                     let statusColor = '';
                     if (caseDetail.initialResponseStatus === 'Met') {
                       statusColor = 'green';
@@ -808,22 +808,22 @@ function getCaseDetails() {
                     }
 
                     pendingCasesHtml += `
-                      <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1;">
-                          <div style="font-weight: 600; color: #1d4ed8; font-size: 14px;">
+                      <div class="pending-item">
+                        <div class="pending-left">
+                          <div class="pending-title">
                             ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
                           </div>
-                          <div style="color: #374151; font-size: 12px; margin-top: 2px;">
+                          <div class="pending-sub">
                             ${caseDetail.account}
                           </div>
-                          <div style="color: #6b7280; font-size: 11px; margin-top: 2px;">
+                          <div class="pending-meta">
                             Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
                           </div>
                           <div style="color: ${statusColor}; font-size: 11px; margin-top: 2px; font-weight: bold;">
                             ${caseDetail.initialResponseStatus}
                           </div>
                         </div>
-                        <div style="text-align: right; color: #1d4ed8; font-weight: 600; font-size: 12px;">
+                        <div class="pending-right">
                           ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
                         </div>
                       </div>
@@ -1935,7 +1935,7 @@ function checkGHOStatus() {
   // Show modal and loading state
   modal.style.display = 'flex';
   container.innerHTML = `
-    <div class="loading-message">
+    <div class="loading-message" style="animation: fadeUp 300ms ease;">
       <h4>Loading GHO cases...</h4>
       <p>Please wait while we fetch the latest GHO cases.</p>
     </div>
@@ -1958,7 +1958,7 @@ function checkGHOStatus() {
     if (err) {
       console.error('GHO Query Error:', err);
       container.innerHTML = `
-        <div class="no-cases-message" style="background-color: #fef2f2; border: 2px solid #ef4444;">
+        <div class="no-cases-message" style="background: linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%); border: 1.5px solid #fecaca; animation: fadeUp 300ms ease;">
           <h4 class="no-cases-title" style="color: #dc2626;">Error Loading GHO Cases</h4>
           <p class="no-cases-text" style="color: #dc2626;">Failed to fetch GHO cases. Please check your connection and try again.</p>
           <p style="color: #6b7280; font-size: 12px; margin-top: 8px;">Error: ${err.message}</p>
@@ -2076,7 +2076,7 @@ function showGHOStatusModal(ghoRecords, conn) {
 
   if (!ghoRecords || ghoRecords.length === 0) {
     container.innerHTML = `
-      <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6;">
+      <div class="no-cases-message" style="animation: fadeUp 320ms ease;">
         <h4 class="no-cases-title" style="color: #1d4ed8;">No GHO Cases Found</h4>
         <p class="no-cases-text">No cases matching GHO criteria were found for <strong>${currentShift}</strong> shift. Great work!</p>
         <p class="mode-switch-hint">✅ All GHO cases are up to date for current shift.</p>
@@ -2106,7 +2106,7 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
 
   if (filteredRecords.length === 0) {
     container.innerHTML = `
-      <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6;">
+      <div class="no-cases-message" style="animation: fadeUp 320ms ease;">
         <h4 class="no-cases-title" style="color: #1d4ed8;">No ${filterValue === 'All' ? '' : filterValue + ' '}GHO Cases Found</h4>
         <p class="no-cases-text">No cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} were found for <strong>${currentShift}</strong> shift.</p>
         <p class="mode-switch-hint">✅ All ${filterValue === 'All' ? 'GHO' : filterValue} cases are up to date for current shift.</p>
@@ -2194,11 +2194,11 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
     const qbMentionedCount = Array.from(ghoTriageCommentCases).length;
 
     let ghoHtml = `
-      <div style="margin-bottom: 16px;">
-        <h4 style="color: #374151; font-size: 18px; margin-bottom: 8px;">Found ${filteredRecords.length} ${filterValue === 'All' ? '' : filterValue + ' '}GHO Case${filteredRecords.length === 1 ? '' : 's'}</h4>
-        <p style="color: #6b7280; font-size: 14px;">Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift</p>
-        ${qbMentionedCount > 0 ? `<p style="color: #059669; font-size: 14px; margin-top: 4px;"><strong>${qbMentionedCount}</strong> case${qbMentionedCount === 1 ? ' has' : 's have'} QB mentioned (#GHOTriage)</p>` : ''}
-        <div style="margin-top: 8px; padding: 8px 12px; background-color: #f3f4f6; border-radius: 6px; font-size: 12px; color: #374151;">
+      <div class="gho-summary" style="animation: fadeUp 260ms ease;">
+        <h4>Found ${filteredRecords.length} ${filterValue === 'All' ? '' : filterValue + ' '}GHO Case${filteredRecords.length === 1 ? '' : 's'}</h4>
+        <p>Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift</p>
+        ${qbMentionedCount > 0 ? `<p><span class="badge-soft badge-soft--success">${qbMentionedCount}</span> case${qbMentionedCount === 1 ? ' has' : 's have'} QB mentioned (#GHOTriage)</p>` : ''}
+        <div class="gho-summary-meta">
           <strong>Current Shift:</strong> ${currentShift} | 
           <strong>Time:</strong> ${new Date().toLocaleTimeString()} |
           <strong>Shifts:</strong> APAC (5:30AM-2:30PM), EMEA (12:30PM-9:30PM), AMER (8:30PM-5:30AM)
@@ -2268,16 +2268,16 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
               const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
 
               nestedListHtml += `
-                <div style="margin: 4px 0; padding: 8px 12px; background-color: #fef3c7; border-radius: 6px; border-left: 3px solid #f59e0b;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <span style="font-weight: 600; color: #92400e; font-size: 13px;">${userName}</span>
-                    <span style="font-size: 11px; color: #78350f;">${formatDateWithDayOfWeek(transferTime)}</span>
+                <div class="gho-transfer-item gho-transfer-item--current">
+                  <div class="gho-transfer-title">
+                    <span class="name" style="color:#92400e;">${userName}</span>
+                    <span class="time" style="color:#78350f;">${formatDateWithDayOfWeek(transferTime)}</span>
                   </div>
-                  <div style="display: flex; gap: 16px; font-size: 11px; color: #78350f;">
+                  <div class="gho-transfer-fields" style="color:#78350f;">
                     <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
                     <span><strong>GHO TO:</strong> ${ghoTo}</span>
                   </div>
-                  <div style="font-size: 10px; color: #a3a3a3; margin-top: 2px;">${timeElapsed(transferTime)} ago</div>
+                  <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
                 </div>
               `;
             });
@@ -2287,8 +2287,7 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
           if (otherTransfers.length > 0) {
             nestedListHtml += `
               <div style="margin: 8px 0;">
-                <button class="gho-toggle-btn" data-case-id="${caseUniqueId}"
-                        style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #475569; cursor: pointer; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);">
+                <button class="gho-toggle-btn" data-case-id="${caseUniqueId}">
                   <i class="fa fa-chevron-down" aria-hidden="true" style="font-size: 10px; color: #64748b; transition: transform 0.2s ease;"></i>
                   <span id="${caseUniqueId}-toggle-text" style="font-weight: 500;">Show ${otherTransfers.length} more GHO transfer${otherTransfers.length > 1 ? 's' : ''}</span>
                 </button>
@@ -2303,16 +2302,16 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
               const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
 
               nestedListHtml += `
-                <div style="margin: 4px 0; padding: 8px 12px; background-color: #f9fafb; border-radius: 6px; border-left: 3px solid #9ca3af;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <span style="font-weight: 600; color: #4b5563; font-size: 13px;">${userName}</span>
-                    <span style="font-size: 11px; color: #6b7280;">${formatDateWithDayOfWeek(transferTime)}</span>
+                <div class="gho-transfer-item gho-transfer-item--other">
+                  <div class="gho-transfer-title">
+                    <span class="name">${userName}</span>
+                    <span class="time">${formatDateWithDayOfWeek(transferTime)}</span>
                   </div>
-                  <div style="display: flex; gap: 16px; font-size: 11px; color: #6b7280;">
+                  <div class="gho-transfer-fields">
                     <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
                     <span><strong>GHO TO:</strong> ${ghoTo}</span>
                   </div>
-                  <div style="font-size: 10px; color: #a3a3a3; margin-top: 2px;">${timeElapsed(transferTime)} ago</div>
+                  <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
                 </div>
               `;
             });
@@ -2322,11 +2321,11 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
 
           ghoTransferHtml = `
             <div class="case-info-item" style="flex-direction: column; align-items: flex-start;">
-              <div style="display: flex; align-items: center; margin-bottom: 8px;">
+              <div class="gho-transfer-heading">
                 <span class="checkmark">✓</span>
-                <span style="color: #f59e0b; font-weight: bold;">GHO Transfer History (${allGhoTransfers.length} transfer${allGhoTransfers.length > 1 ? 's' : ''}):</span>
+                <span>GHO Transfer History (${allGhoTransfers.length} transfer${allGhoTransfers.length > 1 ? 's' : ''}):</span>
               </div>
-              <div style="width: 100%; margin-left: 20px;">
+              <div class="gho-transfer-section">
                 ${nestedListHtml}
               </div>
             </div>
@@ -2335,19 +2334,19 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
           ghoTransferHtml = `
             <div class="case-info-item">
               <span class="checkmark">✓</span>
-              <span style="color: #6b7280; font-style: italic;">No GHO transfers found</span>
+              <span class="gho-empty-transfer">No GHO transfers found</span>
             </div>
           `;
         }
       }
 
       const caseHtml = `
-        <div class="case-card ${isMVP ? 'mvp-case' : ''}" style="margin-bottom: 16px; ${isMVP ? 'border-left: 4px solid #9333ea;' : ''}">
+    <div class="case-card ${isMVP ? 'mvp-case card-accent-purple' : ''}" style="margin-bottom: 16px;">
           <div class="case-header">
             <div style="display: flex; align-items: center; gap: 8px;">
-              ${isMVP ? '<span style="background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">MVP</span>' : ''}
-              <span style="background-color: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">GHO</span>
-              ${hasGHOTriage ? '<span style="background-color: #059669; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">QB Mentioned</span>' : ''}
+      ${isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : ''}
+      <span class="badge-soft badge-soft--amber">GHO</span>
+      ${hasGHOTriage ? '<span class="badge-soft badge-soft--success">QB Mentioned</span>' : ''}
               <h3 class="case-title">${caseRecord.Subject}</h3>
             </div>
             <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)}<br/>
