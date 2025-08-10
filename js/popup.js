@@ -332,8 +332,8 @@ function getCaseDetails() {
               function isWeekend() {
                 return isCurrentlyWeekend();
               }
-              var minSev1 = isWeekend() ? 1 : 5;
-              var minSev2 = isWeekend() ? 1 : 20;
+              var minSev1 = isWeekend() ? 0 : 5;
+              var minSev2 = isWeekend() ? 0 : 20;
               if (result.records.length > 0) {
                 isData = true;
 
@@ -665,6 +665,7 @@ function getCaseDetails() {
                       createdDate: new Date(filteredRecords[x].CreatedDate),
                       minutesSinceCreation: minutesSinceCreation,
                       remainingMinutes: Math.max(0, remainingMinutes),
+                      totalRequiredMinutes: Math.max(0, Math.round(requiredMinutes)),
                       isMVP: filteredRecords[x].Contact && filteredRecords[x].Contact.Is_MVP__c === true,
                       initialResponseStatus: filteredRecords[x].SE_Initial_Response_Status__c
                     });
@@ -688,51 +689,67 @@ function getCaseDetails() {
                 }
 
                 if (pendingCasesCount > 0) {
-                  let pendingCasesHtml = '';
+                  let pendingGridHtml = '';
                   pendingCasesDetails.forEach(caseDetail => {
-                    const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
-                      caseDetail.severity.includes('Level 2') ? 'SEV2' :
-                        caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
+                    const sevClass = caseDetail.severity.includes('Level 1') ? 'sev1' : caseDetail.severity.includes('Level 2') ? 'sev2' : caseDetail.severity.includes('Level 3') ? 'sev3' : 'sev4';
+                    const sevShort = caseDetail.severity.includes('Level 1') ? 'SEV1' : caseDetail.severity.includes('Level 2') ? 'SEV2' : caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
+                    const total = Math.max(0, Number(caseDetail.totalRequiredMinutes || 0));
+                    const elapsed = Math.max(0, Number(caseDetail.minutesSinceCreation || 0));
+                    const remaining = Math.max(0, total - elapsed);
+                    const totalDisplay = elapsed + remaining; // enforce sum to avoid rounding mismatches
+                    const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
+                    const dueNow = remaining <= 0;
                     const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
-                    pendingCasesHtml += `
-                      <div class="pending-item">
-                        <div class="pending-left">
-                          <div class="pending-title">
-                            ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
-                          </div>
-                          <div class="pending-sub">
-                            ${caseDetail.account}
-                          </div>
-                          <div class="pending-meta">
-                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
-                          </div>
+
+                    pendingGridHtml += `
+                      <div class="pending-card ${sevClass}" data-created="${new Date(caseDetail.createdDate).toISOString()}" data-total="${totalDisplay}">
+                        <div class="pending-card-top">
+                          <div class="pending-id">${caseDetail.caseNumber}</div>
+                          <span class="severity-badge ${sevClass}">${sevShort}</span>
                         </div>
-                        <div class="pending-right">
-                          ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
+                        <div class="pending-body">
+                          <div class="pending-account">${caseDetail.account} ${mvpBadge}</div>
+                          <div class="pending-meta">Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (<span class="js-elapsed">${elapsed}m</span> ago)</div>
                         </div>
-                      </div>
-                    `;
+                        <div class="pending-progress">
+                          <div class="pending-progress-bar" style="width: ${progressPct}%;"></div>
+                          <div class="pending-progress-label"><span class="js-progress-remaining">${remaining}</span>m / <span class="js-progress-total">${totalDisplay}</span>m</div>
+                        </div>
+                        <div class="pending-footer">
+                          <span class="remaining-badge ${dueNow ? 'due' : ''}">${dueNow ? 'Due now' : `<span class=\"js-remaining\">${remaining}</span>m remaining`}</span>
+                        </div>
+                      </div>`;
                   });
 
-                  const pendingCasesBanner = `
-                    <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6; margin-top: 20px;">
-                      <h4 class="no-cases-title" style="color: #1d4ed8;">Cases Monitoring - No Action Required Yet</h4>
-                      <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
-                      <div style="margin-top: 16px;">
-                        <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 8px; font-size: 14px;">Pending Cases:</div>
-                        ${pendingCasesHtml}
-                      </div>
-                      <p class="mode-switch-hint" style="margin-top: 16px;">⏱️ These cases will appear in the action section when they exceed SLA thresholds.</p>
-                    </div>
-                  `;
+                  const isWeekendSLA_banner = (minSev1 === 0 && minSev2 === 0);
+                  const subTitleText = isWeekendSLA_banner
+                    ? `${pendingCasesCount} case${pendingCasesCount === 1 ? '' : 's'} being monitored`
+                    : `${pendingCasesCount} pending within SLA · SEV1: ${minSev1}m · SEV2: ${minSev2}m`;
 
-                  finalHtml = finalHtml + pendingCasesBanner;
+                  const pendingSection = `
+                    <section class="pending-section">
+                      <div class="pending-header">
+                        <div class="pending-title-wrap">
+                          <h4 class="pending-title">Pending cases</h4>
+                          <span class="pending-count-badge">${pendingCasesCount}</span>
+                        </div>
+                        <div class="pending-subtitle">${subTitleText}</div>
+                      </div>
+                      <div class="pending-grid">
+                        ${pendingGridHtml}
+                      </div>
+                    </section>`;
+
+                  finalHtml = finalHtml + pendingSection;
                 }
 
                 const container = document.getElementById("parentSigSev2");
                 container.classList.remove('is-loading');
                 container.innerHTML = finalHtml; // replace loading tile entirely
                 container.classList.add('content-enter');
+
+                // Start live updater for pending cards
+                startPendingLiveUpdater();
 
                 const savedFilter = localStorage.getItem('caseFilter');
                 if (savedFilter) {
@@ -766,43 +783,56 @@ function getCaseDetails() {
                 let noCasesHtml;
 
                 if (pendingCasesCount > 0) {
-                  let pendingCasesHtml = '';
+                  let pendingGridHtml = '';
                   pendingCasesDetails.forEach(caseDetail => {
-                    const severityShort = caseDetail.severity.includes('Level 1') ? 'SEV1' :
-                      caseDetail.severity.includes('Level 2') ? 'SEV2' :
-                        caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
+                    const sevClass = caseDetail.severity.includes('Level 1') ? 'sev1' : caseDetail.severity.includes('Level 2') ? 'sev2' : caseDetail.severity.includes('Level 3') ? 'sev3' : 'sev4';
+                    const sevShort = caseDetail.severity.includes('Level 1') ? 'SEV1' : caseDetail.severity.includes('Level 2') ? 'SEV2' : caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
+                    const total = Math.max(0, Number(caseDetail.totalRequiredMinutes || 0));
+                    const elapsed = Math.max(0, Number(caseDetail.minutesSinceCreation || 0));
+                    const remaining = Math.max(0, total - elapsed);
+                    const totalDisplay = elapsed + remaining;
+                    const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
+                    const dueNow = remaining <= 0;
                     const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
-                    pendingCasesHtml += `
-                      <div class="pending-item">
-                        <div class="pending-left">
-                          <div class="pending-title">
-                            ${caseDetail.caseNumber} - ${severityShort}${mvpBadge}
-                          </div>
-                          <div class="pending-sub">
-                            ${caseDetail.account}
-                          </div>
-                          <div class="pending-meta">
-                            Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (${caseDetail.minutesSinceCreation}m ago)
-                          </div>
+
+                    pendingGridHtml += `
+                      <div class="pending-card ${sevClass}" data-created="${new Date(caseDetail.createdDate).toISOString()}" data-total="${totalDisplay}">
+                        <div class="pending-card-top">
+                          <div class="pending-id">${caseDetail.caseNumber}</div>
+                          <span class="severity-badge ${sevClass}">${sevShort}</span>
                         </div>
-                        <div class="pending-right">
-                          ${caseDetail.remainingMinutes > 0 ? `${caseDetail.remainingMinutes}m remaining` : 'Due now'}
+                        <div class="pending-body">
+                          <div class="pending-account">${caseDetail.account} ${mvpBadge}</div>
+                          <div class="pending-meta">Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (<span class="js-elapsed">${elapsed}m</span> ago)</div>
                         </div>
-                      </div>
-                    `;
+                        <div class="pending-progress">
+                          <div class="pending-progress-bar" style="width: ${progressPct}%;"></div>
+                          <div class="pending-progress-label"><span class="js-progress-remaining">${remaining}</span>m / <span class="js-progress-total">${totalDisplay}</span>m</div>
+                        </div>
+                        <div class="pending-footer">
+                          <span class="remaining-badge ${dueNow ? 'due' : ''}">${dueNow ? 'Due now' : `<span class=\"js-remaining\">${remaining}</span>m remaining`}</span>
+                        </div>
+                      </div>`;
                   });
 
+                  const isWeekendSLA_nc = (minSev1 === 0 && minSev2 === 0);
+                  const subTitleText_nc = isWeekendSLA_nc
+                    ? `${pendingCasesCount} case${pendingCasesCount === 1 ? '' : 's'} being monitored`
+                    : `${pendingCasesCount} pending within SLA · SEV1: ${minSev1}m · SEV2: ${minSev2}m`;
+
                   noCasesHtml = `
-                    <div class="no-cases-message" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #3b82f6;">
-                      <h4 class="no-cases-title" style="color: #1d4ed8;">No Action Required</h4>
-                      <p class="no-cases-text">${pendingCasesCount} case${pendingCasesCount === 1 ? ' is' : 's are'} within SLA window (SEV1: ${minSev1}min, SEV2: ${minSev2}min). Monitoring in progress...</p>
-                      <div style="margin-top: 16px;">
-                        <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 8px; font-size: 14px;">Pending Cases:</div>
-                        ${pendingCasesHtml}
+                    <section class="pending-section">
+                      <div class="pending-header">
+                        <div class="pending-title-wrap">
+                          <h4 class="pending-title">No Action Required</h4>
+                          <span class="pending-count-badge">${pendingCasesCount}</span>
+                        </div>
+                        <div class="pending-subtitle">${subTitleText_nc}</div>
                       </div>
-                      <p class="mode-switch-hint" style="margin-top: 16px;">⏱️ Cases will appear here when they exceed SLA thresholds.</p>
-                    </div>
-                  `;
+                      <div class="pending-grid">
+                        ${pendingGridHtml}
+                      </div>
+                    </section>`;
                 } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
                   noCasesHtml = `
                     <div class="no-cases-message">
@@ -825,6 +855,8 @@ function getCaseDetails() {
                 container.classList.remove('is-loading');
                 container.innerHTML = noCasesHtml; // replace loading tile entirely
                 container.classList.add('content-enter');
+                // Start live updater for pending cards (no actionable cases view)
+                startPendingLiveUpdater();
                 var data = 'openTabSilent';
                 chrome.runtime.sendMessage(data, function (response) {
                   if (chrome.runtime.lastError) {
@@ -2727,3 +2759,67 @@ function clearGHOAlertFlags() {
 window.debugPersistentCases = debugPersistentCases;
 window.debugPersistentCasesSimple = debugPersistentCasesSimple;
 window.clearGHOAlertFlags = clearGHOAlertFlags;
+
+// Live updater for Pending cards section
+let pendingUpdaterInterval = null;
+function startPendingLiveUpdater() {
+  try {
+    const section = document.querySelector('.pending-section');
+    if (!section) {
+      if (pendingUpdaterInterval) {
+        clearInterval(pendingUpdaterInterval);
+        pendingUpdaterInterval = null;
+      }
+      return;
+    }
+
+    const updateOnce = () => {
+      const cards = document.querySelectorAll('.pending-card');
+      const now = new Date();
+      cards.forEach(card => {
+        const createdIso = card.getAttribute('data-created');
+        const totalStr = card.getAttribute('data-total');
+        if (!createdIso) return;
+        const created = new Date(createdIso);
+        let total = Math.max(0, Number(totalStr || 0));
+        const elapsedMin = Math.max(0, Math.floor((now - created) / (1000 * 60)));
+        let remaining = Math.max(0, total - elapsedMin);
+        const totalDisplay = elapsedMin + remaining; // recompute displayed total to avoid drift
+        const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
+
+        const elapsedEl = card.querySelector('.js-elapsed');
+        if (elapsedEl) elapsedEl.textContent = `${elapsedMin}m`;
+
+        const remainingEl = card.querySelector('.js-remaining');
+        const badge = card.querySelector('.remaining-badge');
+        if (badge) {
+          if (remaining <= 0) {
+            badge.classList.add('due');
+            if (remainingEl) remainingEl.textContent = '0';
+            badge.textContent = 'Due now';
+          } else {
+            badge.classList.remove('due');
+            if (remainingEl) remainingEl.textContent = `${remaining}`;
+            else badge.innerHTML = `<span class="js-remaining">${remaining}</span>m remaining`;
+          }
+        }
+
+        const bar = card.querySelector('.pending-progress-bar');
+        if (bar) {
+          bar.style.width = `${progressPct}%`;
+        }
+
+        const prRemain = card.querySelector('.js-progress-remaining');
+        if (prRemain) prRemain.textContent = `${remaining}`;
+        const prTotal = card.querySelector('.js-progress-total');
+        if (prTotal) prTotal.textContent = `${totalDisplay}`;
+      });
+    };
+
+    updateOnce();
+    if (pendingUpdaterInterval) clearInterval(pendingUpdaterInterval);
+    pendingUpdaterInterval = setInterval(updateOnce, 60000);
+  } catch (e) {
+    console.error('Failed starting pending live updater:', e);
+  }
+}

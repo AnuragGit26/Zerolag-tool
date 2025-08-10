@@ -909,7 +909,7 @@
 			border: 1px solid rgba(59, 130, 246, 0.3);
 			border-radius: 8px;
 			padding: 12px;
-			margin: 8px 0;
+			margin: 8px 4px;
 			display: flex;
 			justify-content: space-between;
 			align-items: center;
@@ -943,6 +943,261 @@
 			color: #1d4ed8;
 			font-weight: 600;
 			font-size: 12px;
+		}
+
+		/* Modern Pending Section */
+		.pending-section {
+			background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+			border: 1.5px solid #bfdbfe;
+			border-radius: 16px;
+			padding: 16px 16px 10px 16px;
+			box-shadow: 0 10px 24px rgba(59, 130, 246, 0.12);
+			animation: fadeUp 260ms ease;
+			max-width: 960px;
+			margin: 12px auto;
+		}
+
+		.pending-section:has(.pending-grid > .pending-card:only-child) {
+			padding: 12px 14px;
+			max-width: 840px;
+		}
+
+		.pending-section:has(.pending-grid > .pending-card:only-child) .pending-header {
+			margin-bottom: 8px;
+		}
+
+		.pending-section:has(.pending-grid > .pending-card:only-child) .pending-grid {
+			gap: 8px;
+		}
+
+		.pending-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			margin-bottom: 12px;
+		}
+
+		.pending-title-wrap {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			color: #1d4ed8;
+		}
+
+		.pending-title {
+			font-size: 16px;
+			font-weight: 700;
+			margin: 0;
+		}
+
+		.pending-subtitle {
+			font-size: 12px;
+			color: #374151;
+		}
+
+		.pending-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 10px;
+		}
+
+		/* Center a single pending card */
+		.pending-grid>.pending-card:only-child {
+			grid-column: 1 / -1;
+			width: 100%;
+			max-width: 720px;
+			margin-left: auto;
+			margin-right: auto;
+		}
+
+		@media (max-width: 900px) {
+			.pending-grid {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		.pending-card {
+			background: white;
+			border: 1px solid #e5e7eb;
+			border-radius: 12px;
+			padding: 16px 16px 12px 16px;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			text-align: center;
+			gap: 8px;
+			box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+			animation: fadeUp 260ms ease;
+			transition: transform 160ms ease, box-shadow 200ms ease;
+		}
+
+		.pending-card:hover {
+			transform: translateY(-1px);
+			box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+		}
+
+		/* Sections inside pending card */
+		.pending-card-top {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			width: 100%;
+		}
+
+		.pending-id {
+			font-weight: 700;
+			color: #111827;
+			letter-spacing: 0.2px;
+		}
+
+		.pending-body {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 4px;
+			width: 100%;
+		}
+
+		.pending-footer {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			width: 100%;
+		}
+
+		.pending-card .left {
+			display: flex;
+			flex-direction: column;
+			gap: 4px;
+		}
+
+		.pending-topline {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			font-weight: 600;
+			color: #111827;
+		}
+
+		.severity-badge {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			padding: 2px 8px;
+			border-radius: 9999px;
+			font-size: 11px;
+			font-weight: 700;
+			border: 1px solid transparent;
+		}
+
+		.severity-badge.sev1 {
+			background: #fee2e2;
+			color: #991b1b;
+			border-color: #fecaca;
+		}
+
+		.severity-badge.sev2 {
+			background: #ffedd5;
+			color: #9a3412;
+			border-color: #fed7aa;
+		}
+
+		.severity-badge.sev3 {
+			background: #fef9c3;
+			color: #854d0e;
+			border-color: #fde68a;
+		}
+
+		.severity-badge.sev4 {
+			background: #dcfce7;
+			color: #166534;
+			border-color: #bbf7d0;
+		}
+
+		.pending-account,
+		.pending-created {
+			font-size: 12px;
+			color: #6b7280;
+		}
+
+		.pending-progress {
+			position: relative;
+			height: 8px;
+			background: #f1f5f9;
+			border-radius: 9999px;
+			overflow: hidden;
+			margin-top: 6px;
+			border: 1px solid #e2e8f0;
+			width: 85%;
+			margin-left: auto;
+			margin-right: auto;
+		}
+
+		.pending-progress-label {
+			position: absolute;
+			left: 50%;
+			transform: translateX(-50%) translateY(-130%);
+			background: #e0f2fe;
+			border: 1px solid #bae6fd;
+			color: #075985;
+			font-weight: 700;
+			font-size: 11px;
+			padding: 3px 8px;
+			border-radius: 9999px;
+			white-space: nowrap;
+		}
+
+		.pending-progress-bar {
+			height: 100%;
+			width: 0%;
+			background: linear-gradient(90deg, #60a5fa, #2563eb);
+			transition: width 600ms ease;
+		}
+
+		.pending-card.sev1 .pending-progress-bar {
+			background: linear-gradient(90deg, #fca5a5, #ef4444);
+		}
+
+		.pending-card.sev2 .pending-progress-bar {
+			background: linear-gradient(90deg, #fdba74, #f59e0b);
+		}
+
+		.pending-card.sev3 .pending-progress-bar {
+			background: linear-gradient(90deg, #fde68a, #f59e0b);
+		}
+
+		.pending-card.sev4 .pending-progress-bar {
+			background: linear-gradient(90deg, #86efac, #16a34a);
+		}
+
+		.pending-rightcol {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-end;
+			gap: 8px;
+		}
+
+		.remaining-badge {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			padding: 4px 10px;
+			border-radius: 9999px;
+			background: #e0f2fe;
+			color: #075985;
+			font-weight: 700;
+			font-size: 12px;
+			border: 1px solid #bae6fd;
+		}
+
+		.remaining-badge.due {
+			background: #fee2e2;
+			color: #991b1b;
+			border-color: #fecaca;
+			animation: pulseGlow 1800ms ease-in-out infinite alternate;
 		}
 
 		.gho-summary {
