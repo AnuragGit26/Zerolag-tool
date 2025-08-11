@@ -155,6 +155,23 @@ function getCaseDetails() {
                 console.error('Runtime error syncing persistent cases:', chrome.runtime.lastError.message);
               } else if (response && response.success) {
                 console.log(`Synced persistent cases for mode ${currentMode}. Removed: ${response.removed}. Now tracking: ${response.count}`);
+                // If cases were removed due to refresh (not in current query), try to track any last-moment assignments
+                try {
+                  const removedCases = Array.isArray(response.removedCases) ? response.removedCases : [];
+                  if (removedCases.length > 0) {
+                    const removedIds = removedCases.map(rc => rc.id);
+                    trackNewCaseFromHistory(conn, {
+                      caseIds: removedIds,
+                      currentUserId,
+                      currentUserName,
+                      currentMode,
+                      strategy: 'latestByUser',
+                      removeFromPersistent: false
+                    });
+                  }
+                } catch (e) {
+                  console.warn('Error while post-processing removed persistent cases:', e);
+                }
               }
             });
 
@@ -175,61 +192,13 @@ function getCaseDetails() {
             });
 
 
-            const caseMap = new Map(result.records.map(record => [record.Id, record]));
-
-            const historyQuery2 = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND (Field = 'Routing_Status__c' OR Field = 'Owner') AND CreatedById = '${currentUserId}' ORDER BY CreatedDate ASC LIMIT 2`;
-            conn.query(historyQuery2, function (historyErr, historyResult) {
-              if (historyErr) {
-                return console.error('Error fetching case history:', historyErr);
-              }
-
-              if (!historyResult.records || historyResult.records.length === 0) {
-                return;
-              }
-
-              const manuallyAssignedHistories = historyResult.records.filter(
-                history => history.NewValue && typeof history.NewValue === 'string' && history.NewValue.startsWith('Manually Assigned')
-              );
-
-              const firstAssignments = new Map();
-              for (const history of manuallyAssignedHistories) {
-                if (!firstAssignments.has(history.CaseId)) {
-                  firstAssignments.set(history.CaseId, history);
-                }
-              }
-
-              if (firstAssignments.size > 0) {
-                for (const [caseId, history] of firstAssignments.entries()) {
-                  if (history.CreatedById === currentUserId) {
-                    const trackingKey = `tracked_${currentMode}_assignment_${caseId}`;
-                    if (!localStorage.getItem(trackingKey)) {
-                      const caseRecord = caseMap.get(caseId);
-                      if (caseRecord) {
-                        trackAction(
-                          history.CreatedDate,
-                          caseRecord.CaseNumber,
-                          caseRecord.Severity_Level__c,
-                          'New Case',
-                          caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0],
-                          currentMode,
-                          currentUserName,
-                          history.NewValue
-                        );
-                        localStorage.setItem(trackingKey, 'true');
-
-                        chrome.runtime.sendMessage({
-                          action: 'removeCaseFromPersistentSet',
-                          caseId: caseId
-                        }, function (response) {
-                          if (chrome.runtime.lastError) {
-                            console.error('Runtime error removing case from persistent set:', chrome.runtime.lastError.message);
-                          }
-                        });
-                      }
-                    }
-                  }
-                }
-              }
+            trackNewCaseFromHistory(conn, {
+              caseIds,
+              currentUserId,
+              currentUserName,
+              currentMode,
+              strategy: 'firstManualByUser',
+              removeFromPersistent: true
             });
 
             const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
@@ -699,16 +668,17 @@ function getCaseDetails() {
                     const totalDisplay = elapsed + remaining; // enforce sum to avoid rounding mismatches
                     const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
                     const dueNow = remaining <= 0;
-                    const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
+                    const mvpBadgeTop = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : '';
 
                     pendingGridHtml += `
                       <div class="pending-card ${sevClass}" data-created="${new Date(caseDetail.createdDate).toISOString()}" data-total="${totalDisplay}">
                         <div class="pending-card-top">
                           <div class="pending-id">${caseDetail.caseNumber}</div>
                           <span class="severity-badge ${sevClass}">${sevShort}</span>
+                          ${mvpBadgeTop}
                         </div>
                         <div class="pending-body">
-                          <div class="pending-account">${caseDetail.account} ${mvpBadge}</div>
+                          <div class="pending-account">${caseDetail.account}</div>
                           <div class="pending-meta">Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (<span class="js-elapsed">${elapsed}m</span> ago)</div>
                         </div>
                         <div class="pending-progress">
@@ -793,16 +763,17 @@ function getCaseDetails() {
                     const totalDisplay = elapsed + remaining;
                     const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
                     const dueNow = remaining <= 0;
-                    const mvpBadge = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple" style="padding:1px 6px; font-size:10px; margin-left:8px;">MVP</span>' : '';
+                    const mvpBadgeTop = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : '';
 
                     pendingGridHtml += `
                       <div class="pending-card ${sevClass}" data-created="${new Date(caseDetail.createdDate).toISOString()}" data-total="${totalDisplay}">
                         <div class="pending-card-top">
                           <div class="pending-id">${caseDetail.caseNumber}</div>
                           <span class="severity-badge ${sevClass}">${sevShort}</span>
+                          ${mvpBadgeTop}
                         </div>
                         <div class="pending-body">
-                          <div class="pending-account">${caseDetail.account} ${mvpBadge}</div>
+                          <div class="pending-account">${caseDetail.account}</div>
                           <div class="pending-meta">Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (<span class="js-elapsed">${elapsed}m</span> ago)</div>
                         </div>
                         <div class="pending-progress">
@@ -1331,7 +1302,6 @@ document.addEventListener('keydown', function (e) {
       case 'a':
         e.preventDefault();
         document.getElementById("search-input").value = "";
-        document.getElementById("search-button").disabled = true;
         document.getElementById("action-filter").value = "all";
         localStorage.setItem('caseFilter', 'all');
         clearTimeout(searchTimeout);
@@ -1461,14 +1431,12 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById('action-filter').value = savedFilter;
   }
 
-  // Search input validation - enable/disable search button based on input
+  // Search input validation (search is automatic; button removed)
   function validateSearchInput() {
     const searchInput = document.getElementById("search-input");
-    const searchButton = document.getElementById("search-button");
     const inputValue = searchInput.value.trim();
-
-    // Enable only when 4+ characters
-    searchButton.disabled = !(inputValue.length >= 4);
+    // No button to enable/disable; keep for compatibility
+    void inputValue;
   }
 
   // Debounced search function for real-time filtering
@@ -1500,24 +1468,13 @@ document.addEventListener("DOMContentLoaded", function () {
   // Add Enter key support for search
   document.getElementById("search-input").addEventListener("keydown", function (event) {
     if (event.key === "Enter") {
-      const searchButton = document.getElementById("search-button");
       const searchValue = this.value.trim();
-      if (!searchButton.disabled && searchValue.length >= 4) {
+      if (searchValue.length >= 4) {
         event.preventDefault();
         clearTimeout(searchTimeout);
         applySearch(searchValue);
       }
     }
-  });
-
-  document.getElementById("search-button").addEventListener("click", function () {
-    // Safety check - prevent execution if button is disabled
-    if (this.disabled) {
-      return;
-    }
-
-    let searchValue = document.getElementById("search-input").value.trim();
-    applySearch(searchValue);
   });
 
   document.getElementById("action-filter").addEventListener("change", function () {
@@ -1543,7 +1500,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Clear search and filter when changing modes
     document.getElementById("search-input").value = "";
-    document.getElementById("search-button").disabled = true;
     document.getElementById("action-filter").value = "all";
     localStorage.setItem('caseFilter', 'all');
     clearTimeout(searchTimeout);
@@ -1673,7 +1629,7 @@ document.addEventListener("DOMContentLoaded", function () {
 //clear search input and reset filters
 document.getElementById("clear-button").addEventListener("click", function () {
   document.getElementById("search-input").value = "";
-  document.getElementById("search-button").disabled = true;
+  // search button removed
 
   document.getElementById("action-filter").value = "all";
   localStorage.setItem('caseFilter', 'all');
@@ -1694,6 +1650,57 @@ document.getElementById("refresh-button").addEventListener("click", function () 
 document.getElementById("clear-snoozed-button").addEventListener("click", function () {
   clearSnoozedCases();
 });
+
+// Manual track by Case Number UI wiring
+try {
+  const trackInput = document.getElementById('track-case-input');
+  const trackBtn = document.getElementById('track-case-btn');
+  if (trackInput && trackBtn) {
+    const setTrackLoading = (loading) => {
+      try {
+        if (loading) {
+          if (!trackBtn.dataset.origLabel) trackBtn.dataset.origLabel = trackBtn.innerHTML;
+          trackBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Tracking...';
+          trackBtn.disabled = true;
+          trackInput.disabled = true;
+        } else {
+          trackBtn.innerHTML = trackBtn.dataset.origLabel || 'Track Case';
+          trackBtn.disabled = false;
+          trackInput.disabled = false;
+        }
+      } catch (e) { /* noop */ }
+    };
+
+    const doTrack = async () => {
+      const isHidden = trackInput.classList.contains('hidden');
+      if (isHidden) {
+        trackInput.classList.remove('hidden');
+        trackInput.focus();
+        return;
+      }
+      const num = (trackInput.value || '').trim();
+      if (!num) { trackInput.classList.add('hidden'); return; }
+      setTrackLoading(true);
+      try {
+        const res = await window.forceProcessCase(num);
+        if (res && res.success) {
+          showToast(res.actions && res.actions.length ? `Tracked ${res.actions.join(', ')}` : 'No actions (by you)');
+        } else {
+          showToast(res && res.message ? res.message : 'Failed to track');
+        }
+      } catch (err) {
+        console.warn('Manual track failed:', err);
+        showToast('Failed to track');
+      } finally {
+        setTrackLoading(false);
+        trackInput.value = '';
+        trackInput.classList.add('hidden');
+      }
+    };
+    trackBtn.addEventListener('click', doTrack);
+    trackInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') doTrack(); });
+  }
+} catch (e) { console.warn('Manual track wiring failed:', e); }
 
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
   if (e.target && e.target.classList.contains("preview-record-btn")) {
@@ -2338,12 +2345,25 @@ function showGHOStatusModal(ghoRecords, conn) {
 
   if (!ghoRecords || ghoRecords.length === 0) {
     container.innerHTML = `
-      <div class="no-cases-message" style="animation: fadeUp 320ms ease;">
-        <h4 class="no-cases-title" style="color: #1d4ed8;">No GHO Cases Found</h4>
-        <p class="no-cases-text">No cases matching GHO criteria were found for <strong>${currentShift}</strong> shift. Great work!</p>
-        <p class="mode-switch-hint">✅ All GHO cases are up to date for current shift.</p>
+      <div class="gho-empty-card" style="background: linear-gradient(135deg, #ecfeff 0%, #e0f2fe 100%); border: 1.5px solid #bae6fd; border-radius: 16px; padding: 28px; text-align: center; animation: fadeUp 320ms ease; box-shadow: 0 6px 20px rgba(2,132,199,0.08);">
+        <div style="font-size: 28px; margin-bottom: 8px;">🛰️</div>
+        <h4 style="margin: 0 0 6px; font-size: 18px; color: #075985;">No GHO cases for now</h4>
+        <p style="margin: 0; color: #0c4a6e; font-size: 14px;">All good for <strong>${currentShift}</strong> shift. Great work!</p>
+        <div style="display:flex; justify-content:center; gap:8px; margin-top:12px; flex-wrap: wrap;">
+          <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Shift: ${currentShift}</span>
+          <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Filter: All</span>
+        </div>
+        <div style="margin-top:14px; display:flex; justify-content:center; gap:10px;">
+          <button id="gho-empty-refresh" class="preview-btn" style="background:#0ea5e9; padding:10px 16px;">Refresh</button>
+        </div>
       </div>
     `;
+    const refreshBtn = document.getElementById('gho-empty-refresh');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        checkGHOStatus();
+      });
+    }
     return;
   }
 
@@ -2360,20 +2380,54 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
   // Filter records based on CaseRoutingTaxonomy__r.Name
   let filteredRecords = ghoRecords;
   if (filterValue !== 'All') {
+    const aliases = {
+      'data': ['data cloud', 'data'],
+      'sales': ['sales'],
+      'service': ['service'],
+      'industry': ['industry']
+    };
+    const selected = (filterValue || '').toLowerCase();
+    const targets = aliases[selected] || [selected];
+
     filteredRecords = ghoRecords.filter(record => {
-      const taxonomyName = record.CaseRoutingTaxonomy__r?.Name || '';
-      return taxonomyName.toLowerCase().startsWith(filterValue.toLowerCase() + '-');
+      const rawName = (record.CaseRoutingTaxonomy__r?.Name || '').toLowerCase().trim();
+      const group = rawName.split(/[\-–—]/)[0].trim();
+      return targets.includes(group);
     });
   }
 
   if (filteredRecords.length === 0) {
+    const displayFilter = filterValue === 'Data' ? 'Data Cloud' : filterValue;
+    const isAll = filterValue === 'All';
     container.innerHTML = `
-      <div class="no-cases-message" style="animation: fadeUp 320ms ease;">
-        <h4 class="no-cases-title" style="color: #1d4ed8;">No ${filterValue === 'All' ? '' : filterValue + ' '}GHO Cases Found</h4>
-        <p class="no-cases-text">No cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} were found for <strong>${currentShift}</strong> shift.</p>
-        <p class="mode-switch-hint">✅ All ${filterValue === 'All' ? 'GHO' : filterValue} cases are up to date for current shift.</p>
+      <div class="gho-empty-card" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 1.5px solid #bae6fd; border-radius: 16px; padding: 24px; text-align: center; animation: fadeUp 320ms ease; box-shadow: 0 6px 20px rgba(2,132,199,0.06);">
+        <div style="font-size: 26px; margin-bottom: 8px;">🧭</div>
+        <h4 style="margin: 0 0 6px; font-size: 17px; color: #075985;">No ${isAll ? '' : displayFilter + ' '}GHO cases</h4>
+        <p style="margin: 0; color: #0c4a6e; font-size: 14px;">No cases matching ${isAll ? 'GHO criteria' : displayFilter + ' taxonomy'} for <strong>${currentShift}</strong> shift.</p>
+        <div style="display:flex; justify-content:center; gap:8px; margin-top:12px; flex-wrap: wrap;">
+          <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Shift: ${currentShift}</span>
+          <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Filter: ${isAll ? 'All' : displayFilter}</span>
+        </div>
+        <div style="margin-top:14px; display:flex; justify-content:center; gap:10px; flex-wrap: wrap;">
+          ${isAll ? '' : '<button id="gho-empty-showall" class="preview-btn" style="background:#10b981; padding:8px 14px;">Show All</button>'}
+          <button id="gho-empty-refresh" class="preview-btn" style="background:#0ea5e9; padding:8px 14px;">Refresh</button>
+        </div>
       </div>
     `;
+    const refreshBtn = document.getElementById('gho-empty-refresh');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        checkGHOStatus();
+      });
+    }
+    const showAllBtn = document.getElementById('gho-empty-showall');
+    if (showAllBtn) {
+      showAllBtn.addEventListener('click', () => {
+        const dd = document.getElementById('gho-taxonomy-filter');
+        if (dd) dd.value = 'All';
+        renderFilteredGHOCases(ghoRecords, conn, 'All');
+      });
+    }
     return;
   }
 
@@ -2755,12 +2809,326 @@ function clearGHOAlertFlags() {
   console.log('💡 Remember: Alerts will only be marked as "shown" when you click the DISMISS button, not just close or check buttons.');
 
   return { clearedAlertFlags: clearedCount, totalGHOKeys: ghoKeys.length };
-}// Add debug functions to global scope for console access
+}
 window.debugPersistentCases = debugPersistentCases;
 window.debugPersistentCasesSimple = debugPersistentCasesSimple;
 window.clearGHOAlertFlags = clearGHOAlertFlags;
 
-// Live updater for Pending cards section
+// Helper Fn: process CaseHistory and track 'New Case'
+
+async function trackNewCaseFromHistory(conn, params) {
+  const { caseIds, currentUserId, currentUserName, currentMode, strategy, removeFromPersistent } = params || {};
+  try {
+    if (!Array.isArray(caseIds) || caseIds.length === 0) return { processed: [] };
+
+    // Fetch required case details including Owner
+    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, CaseRoutingTaxonomy__r.Name, Owner.Name FROM Case WHERE Id IN ('${caseIds.join("','")}')`);
+    const caseMap = new Map((caseRes.records || []).map(r => [r.Id, r]));
+
+    const orderDir = strategy === 'firstManualByUser' ? 'ASC' : 'DESC';
+    const histRes = await conn.query(`SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND CreatedById='${currentUserId}' AND (Field='Routing_Status__c' OR Field='Owner') ORDER BY CreatedDate ${orderDir}`);
+    const records = histRes.records || [];
+
+    // Group by CaseId
+    const byCase = new Map();
+    for (const h of records) {
+      if (!byCase.has(h.CaseId)) byCase.set(h.CaseId, []);
+      byCase.get(h.CaseId).push(h);
+    }
+
+    const processed = [];
+    for (const caseId of caseIds) {
+      const hist = byCase.get(caseId) || [];
+      // Choose candidate per strategy
+      let candidate = null;
+      for (const h of hist) {
+        const isManualAssign = (h.Field === 'Routing_Status__c' && typeof h.NewValue === 'string' && h.NewValue.startsWith('Manually Assigned'));
+        const isOwnerChange = (h.Field === 'Owner');
+        if (strategy === 'firstManualByUser') {
+          if (isManualAssign && h.CreatedById === currentUserId) { candidate = h; break; }
+        } else {
+          if ((isManualAssign || isOwnerChange) && h.CreatedById === currentUserId) { candidate = h; break; }
+        }
+      }
+      if (!candidate) continue;
+
+      const cRec = caseMap.get(caseId);
+      if (!cRec) continue;
+
+      const trackingKey = `tracked_${currentMode}_assignment_${caseId}`;
+      if (localStorage.getItem(trackingKey)) continue;
+
+      const cloud = (cRec.CaseRoutingTaxonomy__r && cRec.CaseRoutingTaxonomy__r.Name) ? cRec.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
+      // Prefer latest Owner change with a human-readable name over IDs
+      const isSfUserId = (v) => typeof v === 'string' && /^005[\w]{12,15}$/.test(v);
+      const scanArr = strategy === 'firstManualByUser' ? hist.slice().reverse() : hist;
+      let ownerNameFromHist = '';
+      for (const oh of scanArr) {
+        if (oh.Field === 'Owner' && oh.NewValue && !isSfUserId(oh.NewValue)) { ownerNameFromHist = oh.NewValue; break; }
+      }
+      const assignedTo = ownerNameFromHist || ((cRec.Owner && cRec.Owner.Name) ? cRec.Owner.Name : (candidate.NewValue || ''));
+
+      trackAction(
+        candidate.CreatedDate,
+        cRec.CaseNumber,
+        cRec.Severity_Level__c,
+        'New Case',
+        cloud,
+        currentMode,
+        currentUserName,
+        assignedTo
+      );
+      localStorage.setItem(trackingKey, 'true');
+
+      if (removeFromPersistent) {
+        try { chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId }, () => { }); } catch { }
+      }
+
+      processed.push({ caseId, action: 'New Case (history)', assignedTo });
+    }
+    return { processed };
+  } catch (e) {
+    console.warn('trackNewCaseFromHistory failed:', e);
+    return { processed: [], error: e.message };
+  }
+}
+
+// Force-process a single case by Case Number: checks manual assignments, QB mentions, and GHO triage
+async function forceProcessCase(caseNumber) {
+  try {
+    if (!caseNumber || typeof caseNumber !== 'string') {
+      showToast('Provide a valid Case Number');
+      return { success: false, message: 'Invalid Case Number' };
+    }
+    if (!SESSION_ID) {
+      showToast('Session not ready. Try again after data loads.');
+      return { success: false, message: 'Missing SESSION_ID' };
+    }
+
+    const conn = new jsforce.Connection({
+      serverUrl: 'https://orgcs.my.salesforce.com',
+      sessionId: SESSION_ID,
+    });
+
+    // Resolve current user id
+    let userId = null;
+    try {
+      const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
+      if (ures.records && ures.records.length > 0) userId = ures.records[0].Id;
+    } catch (e) {
+      console.warn('Failed fetching user id:', e);
+    }
+    if (!userId) {
+      showToast('Could not resolve current user');
+      return { success: false, message: 'Missing user id' };
+    }
+
+    // Fetch the case by number
+    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE CaseNumber='${caseNumber}' LIMIT 1`);
+    if (!caseRes.records || caseRes.records.length === 0) {
+      showToast(`Case ${caseNumber} not found`);
+      return { success: false, message: 'Case not found' };
+    }
+    const caseRec = caseRes.records[0];
+    const caseId = caseRec.Id;
+
+    const cloud = (caseRec.CaseRoutingTaxonomy__r && caseRec.CaseRoutingTaxonomy__r.Name) ? caseRec.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
+
+    let actions = [];
+
+    // History-based tracking via helper
+    try {
+      const res = await trackNewCaseFromHistory(conn, {
+        caseIds: [caseId],
+        currentUserId: userId,
+        currentUserName,
+        currentMode,
+        strategy: 'latestByUser',
+        removeFromPersistent: false
+      });
+      if (res && res.processed && res.processed.length > 0) actions.push('New Case (history)');
+    } catch (e) { console.warn('History helper failed in forceProcessCase:', e); }
+
+    // Check CaseFeed comments for #SigQBmention and #GHOTriage
+    try {
+      const cRes = await conn.query(`SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility='InternalUsers' AND ParentId='${caseId}' AND Type='TextPost' ORDER BY CreatedDate DESC LIMIT 20`);
+      const comments = cRes.records || [];
+      for (const c of comments) {
+        if (c.Body && c.Body.includes('#SigQBmention') && c.CreatedById === userId) {
+          const trackingKey = `tracked_${caseId}`;
+          if (!localStorage.getItem(trackingKey)) {
+            trackAction(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
+            localStorage.setItem(trackingKey, 'true');
+            actions.push('New Case (QB mention)');
+          }
+          break;
+        }
+      }
+      // GHO triage (only if signature mode makes sense, but keep generic)
+      for (const c of comments) {
+        if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === userId) {
+          const commentDate = c.LastModifiedDate || c.CreatedDate;
+          if (isToday(commentDate) && getShiftForDate(commentDate) === getCurrentShift()) {
+            const ghoKey = `gho_tracked_${caseId}`;
+            if (!localStorage.getItem(ghoKey)) {
+              trackAction(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
+              localStorage.setItem(ghoKey, 'true');
+              actions.push('GHO (#GHOTriage)');
+            }
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn('Comments query failed in forceProcessCase:', e);
+    }
+
+    // Optionally, remove from persistent set if present
+    try {
+      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId }, () => { /* noop */ });
+    } catch { }
+
+    if (actions.length === 0) {
+      showToast(`No actions tracked for ${caseNumber}`);
+      return { success: true, message: 'No actions', caseId, actions };
+    } else {
+      showToast(`Processed ${actions.length} action(s) for ${caseNumber}`);
+      return { success: true, message: 'Processed', caseId, actions };
+    }
+  } catch (e) {
+    console.error('forceProcessCase failed:', e);
+    showToast('Force process failed (see console)');
+    return { success: false, message: e.message };
+  }
+}
+window.forceProcessCase = forceProcessCase;
+
+// Force-process by Case Id (15/18-char, typically starts with 500)
+async function forceProcessCaseById(caseId) {
+  try {
+    if (!caseId || typeof caseId !== 'string') {
+      showToast('Provide a valid Case Id');
+      return { success: false, message: 'Invalid Case Id' };
+    }
+    if (!SESSION_ID) {
+      showToast('Session not ready. Try again after data loads.');
+      return { success: false, message: 'Missing SESSION_ID' };
+    }
+
+    const conn = new jsforce.Connection({
+      serverUrl: 'https://orgcs.my.salesforce.com',
+      sessionId: SESSION_ID,
+    });
+
+    let userId = null;
+    try {
+      const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
+      if (ures.records && ures.records.length > 0) userId = ures.records[0].Id;
+    } catch (e) {
+      console.warn('Failed fetching user id:', e);
+    }
+    if (!userId) {
+      showToast('Could not resolve current user');
+      return { success: false, message: 'Missing user id' };
+    }
+
+    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE Id='${caseId}' LIMIT 1`);
+    if (!caseRes.records || caseRes.records.length === 0) {
+      showToast(`Case ${caseId} not found`);
+      return { success: false, message: 'Case not found' };
+    }
+    const caseRec = caseRes.records[0];
+    const cloud = (caseRec.CaseRoutingTaxonomy__r && caseRec.CaseRoutingTaxonomy__r.Name) ? caseRec.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
+
+    let actions = [];
+
+    // History-based tracking via helper
+    try {
+      const res = await trackNewCaseFromHistory(conn, {
+        caseIds: [caseRec.Id],
+        currentUserId: userId,
+        currentUserName,
+        currentMode,
+        strategy: 'latestByUser',
+        removeFromPersistent: false
+      });
+      if (res && res.processed && res.processed.length > 0) actions.push('New Case (history)');
+    } catch (e) { console.warn('History helper failed in forceProcessCaseById:', e); }
+
+    // Comments-based tracking
+    try {
+      const cRes = await conn.query(`SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility='InternalUsers' AND ParentId='${caseRec.Id}' AND Type='TextPost' ORDER BY CreatedDate DESC LIMIT 20`);
+      const comments = cRes.records || [];
+      for (const c of comments) {
+        if (c.Body && c.Body.includes('#SigQBmention') && c.CreatedById === userId) {
+          const trackingKey = `tracked_${caseRec.Id}`;
+          if (!localStorage.getItem(trackingKey)) {
+            trackAction(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
+            localStorage.setItem(trackingKey, 'true');
+            actions.push('New Case (QB mention)');
+          }
+          break;
+        }
+      }
+      for (const c of comments) {
+        if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === userId) {
+          const commentDate = c.LastModifiedDate || c.CreatedDate;
+          if (isToday(commentDate) && getShiftForDate(commentDate) === getCurrentShift()) {
+            const ghoKey = `gho_tracked_${caseRec.Id}`;
+            if (!localStorage.getItem(ghoKey)) {
+              trackAction(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
+              localStorage.setItem(ghoKey, 'true');
+              actions.push('GHO (#GHOTriage)');
+            }
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn('Comments query failed in forceProcessCaseById:', e);
+    }
+
+    try {
+      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId: caseRec.Id }, () => { /* noop */ });
+    } catch { }
+
+    if (actions.length === 0) {
+      showToast(`No actions tracked for ${caseRec.CaseNumber}`);
+      return { success: true, message: 'No actions', caseId: caseRec.Id, actions };
+    } else {
+      showToast(`Processed ${actions.length} action(s) for ${caseRec.CaseNumber}`);
+      return { success: true, message: 'Processed', caseId: caseRec.Id, actions };
+    }
+  } catch (e) {
+    console.error('forceProcessCaseById failed:', e);
+    showToast('Force process by Id failed (see console)');
+    return { success: false, message: e.message };
+  }
+}
+window.forceProcessCaseById = forceProcessCaseById;
+
+async function forceProcess(input) {
+  const s = String(input || '').trim();
+  if (!s) {
+    showToast('Provide a Case Number, Id, or URL');
+    return { success: false, message: 'No input' };
+  }
+  // Try to extract a Case Id from URL or raw Id
+  let idMatch = null;
+  const m1 = s.match(/Case\/([a-zA-Z0-9]{15,18})/);
+  const m2 = s.match(/(500[\w]{12,15})/);
+  if (m1 && m1[1]) idMatch = m1[1];
+  else if (m2 && m2[1]) idMatch = m2[1];
+
+  if (idMatch) {
+    return await forceProcessCaseById(idMatch);
+  }
+  return await forceProcessCase(s);
+}
+window.forceProcess = forceProcess;
+window.fp = forceProcessCase;
+window.fpid = forceProcessCaseById;
+
 let pendingUpdaterInterval = null;
 function startPendingLiveUpdater() {
   try {
@@ -2774,6 +3142,13 @@ function startPendingLiveUpdater() {
     }
 
     const updateOnce = () => {
+      if (!document.querySelector('.pending-section')) {
+        if (pendingUpdaterInterval) {
+          clearInterval(pendingUpdaterInterval);
+          pendingUpdaterInterval = null;
+        }
+        return;
+      }
       const cards = document.querySelectorAll('.pending-card');
       const now = new Date();
       cards.forEach(card => {
@@ -2784,7 +3159,7 @@ function startPendingLiveUpdater() {
         let total = Math.max(0, Number(totalStr || 0));
         const elapsedMin = Math.max(0, Math.floor((now - created) / (1000 * 60)));
         let remaining = Math.max(0, total - elapsedMin);
-        const totalDisplay = elapsedMin + remaining; // recompute displayed total to avoid drift
+        const totalDisplay = total;
         const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
 
         const elapsedEl = card.querySelector('.js-elapsed');
@@ -2818,7 +3193,18 @@ function startPendingLiveUpdater() {
 
     updateOnce();
     if (pendingUpdaterInterval) clearInterval(pendingUpdaterInterval);
-    pendingUpdaterInterval = setInterval(updateOnce, 60000);
+    // Update roughly every 30s so the minute counter feels live without being noisy
+    pendingUpdaterInterval = setInterval(updateOnce, 30000);
+
+    // Refresh immediately when tab/popup becomes visible again
+    if (!window._pendingVisHandlerAdded) {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          updateOnce();
+        }
+      });
+      window._pendingVisHandlerAdded = true;
+    }
   } catch (e) {
     console.error('Failed starting pending live updater:', e);
   }

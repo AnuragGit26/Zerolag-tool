@@ -176,13 +176,15 @@ chrome.runtime.onMessage.addListener(
 						return true;
 					}
 					let removed = 0;
+					const removedCases = [];
 					for (const [caseId, data] of persistentCases.entries()) {
 						if (data.mode === mode && !ids.has(caseId)) {
+							removedCases.push({ id: caseId, data });
 							persistentCases.delete(caseId);
 							removed++;
 						}
 					}
-					sendResponse({ success: true, removed, count: persistentCases.size });
+					sendResponse({ success: true, removed, count: persistentCases.size, removedCases });
 				} catch (error) {
 					console.error('Error syncing persistent cases:', error);
 					sendResponse({ success: false, message: error.message });
