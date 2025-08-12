@@ -11,6 +11,33 @@ let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70iXfT-MVfhPs';
 
+const GHO_CACHE_TTL = 80000;
+window.__ghoCache = window.__ghoCache || { signature: null, premier: null };
+window.__ghoListState = window.__ghoListState || null;
+const GHO_PAGE_SIZE = 10;
+const GHO_USERMAP_CACHE_KEY = 'gho_user_map_cache_v2';
+const GHO_USERMAP_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
+
+function loadUserMapCache() {
+  try {
+    const raw = localStorage.getItem(GHO_USERMAP_CACHE_KEY);
+    if (!raw) return { userMap: {}, fetchedAt: 0 };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { userMap: {}, fetchedAt: 0 };
+    const age = Date.now() - (parsed.fetchedAt || 0);
+    if (age > GHO_USERMAP_CACHE_TTL) return { userMap: {}, fetchedAt: 0 };
+    return { userMap: parsed.userMap || {}, fetchedAt: parsed.fetchedAt || 0 };
+  } catch {
+    return { userMap: {}, fetchedAt: 0 };
+  }
+}
+function saveUserMapCache(userMap) {
+  try {
+    const payload = { userMap: userMap || {}, fetchedAt: Date.now() };
+    localStorage.setItem(GHO_USERMAP_CACHE_KEY, JSON.stringify(payload));
+  } catch { /* noop */ }
+}
+
 let mouseActivityTimer;
 const MOUSE_ACTIVITY_TIMEOUT = 60000;
 
@@ -700,7 +727,7 @@ function getCaseDetails() {
                     <section class="pending-section">
                       <div class="pending-header">
                         <div class="pending-title-wrap">
-                          <h4 class="pending-title">Pending cases</h4>
+                          <h4 class="pending-title">Cases in Queue</h4>
                           <span class="pending-count-badge">${pendingCasesCount}</span>
                         </div>
                         <div class="pending-subtitle">${subTitleText}</div>
@@ -1219,8 +1246,11 @@ function showGHOAlert(region, ghoRecords, alertKey) {
 function updateGHOButtonVisibility() {
   const ghoButton = document.getElementById("check-gho-button");
   if (ghoButton) {
-    if (currentMode === 'signature') {
+    if (currentMode === 'signature' || currentMode === 'premier') {
       ghoButton.style.display = 'inline-block';
+      const modeLabel = currentMode === 'signature' ? 'Signature' : 'Premier';
+      const iconHtml = ghoButton.querySelector('i') ? ghoButton.querySelector('i').outerHTML + '\n\t\t' : '';
+      ghoButton.innerHTML = `${iconHtml}${modeLabel} GHO Cases`;
     } else {
       ghoButton.style.display = 'none';
     }
@@ -1494,6 +1524,18 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     localStorage.setItem('caseTriageMode', currentMode);
 
+    try {
+      const ghoHeader = document.querySelector('#gho-modal .modal-header h3');
+      if (ghoHeader) {
+        const modeLabel = currentMode === 'premier' ? 'Premier' : 'Signature';
+        let badge = ghoHeader.querySelector('.gho-mode-badge');
+        if (badge) {
+          badge.textContent = modeLabel + ' Mode';
+          badge.style.background = currentMode === 'premier' ? '#065f46' : '#1e3a8a';
+        }
+      }
+    } catch (e) { /* silent */ }
+
     // Update GHO button visibility based on mode
     updateGHOButtonVisibility();
     updateCICButtonVisibility();
@@ -1569,7 +1611,10 @@ document.addEventListener("DOMContentLoaded", function () {
   document.getElementById("gho-taxonomy-filter").addEventListener("change", function () {
     const filterValue = this.value;
     if (ghoRecordsGlobal.length > 0 && ghoConnectionGlobal) {
-      renderFilteredGHOCases(ghoRecordsGlobal, ghoConnectionGlobal, filterValue);
+      // Reset pagination state on filter change
+      window.__ghoListState = null;
+      const modeCache = window.__ghoCache && window.__ghoCache[currentMode];
+      renderFilteredGHOCases(ghoRecordsGlobal, ghoConnectionGlobal, filterValue, modeCache ? { triageCaseIds: modeCache.triageCaseIds } : undefined);
     }
   });
 
@@ -2210,18 +2255,38 @@ function checkGHOStatus() {
     </div>
   `;
 
-  // Get connection and execute GHO query
+  // Use cached results if within TTL and for same shift to avoid repeated network & comment queries
+  const nowTs = Date.now();
+  const currentShiftLive = getCurrentShift();
+  const modeCache = window.__ghoCache[currentMode];
+  if (modeCache && (nowTs - modeCache.fetchedAt < GHO_CACHE_TTL) && modeCache.shift === currentShiftLive) {
+    try {
+      ghoRecordsGlobal = modeCache.records;
+      ghoConnectionGlobal = modeCache.conn;
+      // Re-render with cached comment/user resolution
+      renderFilteredGHOCases(modeCache.records, modeCache.conn, 'All', {
+        triageCaseIds: modeCache.triageCaseIds,
+        userMap: modeCache.userMap,
+        fromCache: true
+      });
+      return;
+    } catch (e) { console.warn('Failed using GHO cache, falling back to fresh query', e); }
+  }
+
+  // Get connection and execute fresh GHO query
   let ghoConn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
   });
 
   // Get current shift dynamically and use in GHO query
-  const currentShift = getCurrentShift();
-  const preferredShiftValues = getPreferredShiftValues(currentShift);
+  const currentShift = currentShiftLive;
+  const preferredShiftValues = getPreferredShiftValues(currentShiftLive);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const signatureGHOQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND (Case_Support_level__c IN ('Premier Priority','Signature','Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const premierGHOQuery = `SELECT Case__c, Transfer_Reason__c, Case__r.Case_Support_level__c, Case__r.IsClosed, Case__r.Account_Support_SBR_Category__c, Case__r.Severity_Level__c, Case__r.OrgCS_Owner__c, Case__r.Contact.Is_MVP__c, Case__r.GHO__c, Case__r.Out_of_Impact_Service_Restored__c, Case__r.AX_Product_Name__c, Case__r.CaseRoutingTaxonomy__r.Name FROM Case_Routing_Log__c WHERE Transfer_Reason__c = 'GHO' AND Case__r.Case_Support_level__c In ('Partner Premier', 'Premier', 'Premier+', 'Premium','Standard','') AND Case__r.IsClosed = false AND Case__r.Account_Support_SBR_Category__c != 'JP' AND Case__r.Severity_Level__c IN ('Level 1 - Critical' ,'Level 2 - Urgent') AND Case__r.OrgCS_Owner__c LIKE '%Queue%' AND Case__r.Contact.Is_MVP__c = false AND Case__r.GHO__c = true AND Case__r.Out_of_Impact_Service_Restored__c = false AND (Case__r.AX_Product_Name__c = 'Sales' OR Case__r.AX_Product_Name__c = 'Service'  OR Case__r.AX_Product_Name__c = 'Industry' ) AND Case__r.CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce','Service-Agent for setup','Service-AgentforEmail','Service-Field Service Agentforce','Service-Agentforce for Dev','Sales-Agentforce','Sales -Agentforce for Dev','Sales-Agent for Setup','Sales-Prompt Builder','Data Cloud-Admin','Permissions','Flows','Reports & Dashboards','Data Cloud-Model Builder','Data Cloud-Connectors & Data Streams','Data Cloud-Developer','Calculated Insights & Consumption','Data Cloud-Segments','Activations & Identity Resolution')`;
+  const ghoQuery = currentMode === 'premier' ? premierGHOQuery : signatureGHOQuery;
 
   ghoConn.query(ghoQuery, function (err, result) {
     if (err) {
@@ -2236,112 +2301,160 @@ function checkGHOStatus() {
       return;
     }
 
-    // Check for and track any GHO triage actions before showing the modal
-    if (result.records && result.records.length > 0) {
-      const caseIds = result.records.map(record => record.Id);
-      const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
-
-      ghoConn.query(commentQuery, function (commentErr, commentResult) {
-        if (!commentErr && commentResult.records) {
-          // Get current user ID for tracking
-          ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, function (userErr, userResult) {
-            let currentUserId = null;
-            if (!userErr && userResult.records.length > 0) {
-              currentUserId = userResult.records[0].Id;
-            }
-
-            if (currentUserId) {
-              commentResult.records.forEach(comment => {
-                if (comment.Body && comment.Body.includes('#GHOTriage') && comment.CreatedById === currentUserId) {
-                  // Check if comment is from today and same GEO
-                  const commentDate = comment.LastModifiedDate || comment.CreatedDate;
-                  const isCommentFromToday = isToday(commentDate);
-                  const commentShift = getShiftForDate(commentDate);
-                  const currentShift = getCurrentShift();
-                  const isSameGeo = commentShift === currentShift;
-
-                  console.log('GHO Status Check - #GHOTriage comment analysis:', {
-                    caseId: comment.ParentId,
-                    commentDate,
-                    isFromToday: isCommentFromToday,
-                    commentShift,
-                    currentShift,
-                    isSameGeo
-                  });
-
-                  // Only process if comment is from today and same GEO
-                  if (isCommentFromToday && isSameGeo) {
-                    const caseRecord = result.records.find(c => c.Id === comment.ParentId);
-                    if (caseRecord) {
-                      const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
-                      if (!localStorage.getItem(ghoTrackingKey)) {
-                        trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
-                        localStorage.setItem(ghoTrackingKey, 'true');
-                        console.log('GHO status check - GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
-                      }
-                    }
-                  } else {
-                    console.log('GHO Status Check - #GHOTriage comment ignored - not from today/same GEO:', {
-                      caseId: comment.ParentId,
-                      isFromToday: isCommentFromToday,
-                      isSameGeo: isSameGeo,
-                      commentDate,
-                      commentShift,
-                      currentShift
-                    });
-                  }
-                }
-              });
-            }
-
-            // Show modal with results
-            showGHOStatusModal(result.records, ghoConn);
-          });
-        } else {
-          // Show modal even if comment query fails
-          showGHOStatusModal(result.records, ghoConn);
+    // For Premier (log-based) flow: hydrate full Case records before continuing existing pipeline logic.
+    if (currentMode === 'premier' && result && Array.isArray(result.records)) {
+      const caseIds = Array.from(new Set(result.records.map(r => r.Case__c))).filter(Boolean);
+      if (caseIds.length === 0) {
+        // No qualifying cases
+        showGHOStatusModal([], ghoConn);
+        return;
+      }
+      const detailQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE Id IN ('${caseIds.join("','")}')`;
+      return ghoConn.query(detailQuery, (detailErr, detailRes) => {
+        if (detailErr) {
+          console.error('Premier detail fetch error:', detailErr);
+          container.innerHTML = `<div class=\"no-cases-message\" style=\"background:linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%); border:1.5px solid #fecaca; padding:20px;\"><h4 style=\"color:#dc2626; margin:0 0 8px;\">Error Hydrating Premier GHO Cases</h4><p style=\"margin:0; font-size:14px; color:#6b7280;\">${detailErr.message}</p></div>`;
+          return;
         }
+        result.records = (detailRes && detailRes.records) ? detailRes.records : [];
+        proceedWithGHOCaseProcessing(result);
       });
-    } else {
-      // Show modal with empty results
-      showGHOStatusModal(result.records, ghoConn);
     }
+
+    // If Signature continue directly
+    proceedWithGHOCaseProcessing(result);
   });
+
+  //Premier GHO processing
+  function proceedWithGHOCaseProcessing(result) {
+    if (!result) { showGHOStatusModal([], ghoConn); return; }
+    if (result.records.length === 0) {
+      showGHOStatusModal(result.records || [], ghoConn);
+      return;
+    }
+    const caseIds = result.records.map(r => r.Id);
+    const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+    Promise.all([
+      new Promise(res => ghoConn.query(commentQuery, (e, r) => res({ e, r }))),
+      new Promise(res => ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, (e, r) => res({ e, r })))
+    ]).then(([commentResp, userResp]) => {
+      let triageCaseIds = new Set();
+      let currentUserId = null;
+      if (!userResp.e && userResp.r.records && userResp.r.records.length > 0) currentUserId = userResp.r.records[0].Id;
+      if (!commentResp.e && commentResp.r.records && currentUserId) {
+        commentResp.r.records.forEach(c => {
+          if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === currentUserId) {
+            const cDate = c.LastModifiedDate || c.CreatedDate;
+            if (isToday(cDate) && getShiftForDate(cDate) === currentShiftLive) {
+              const caseRecord = result.records.find(rec => rec.Id === c.ParentId);
+              if (caseRecord) {
+                const gKey = `gho_tracked_${caseRecord.Id}`;
+                if (!localStorage.getItem(gKey)) {
+                  trackAction(c.LastModifiedDate || c.CreatedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                  localStorage.setItem(gKey, 'true');
+                }
+              }
+              triageCaseIds.add(c.ParentId);
+            }
+          }
+        });
+      }
+
+      window.__ghoCache[currentMode] = {
+        records: result.records,
+        triageCaseIds,
+        userMap: {},
+        fetchedAt: Date.now(),
+        shift: currentShiftLive,
+        conn: ghoConn
+      };
+      showGHOStatusModal(result.records, ghoConn, { triageCaseIds, fromCache: false });
+    }).catch(errAll => {
+      console.warn('Parallel GHO enrichment failed, rendering basic list', errAll);
+      showGHOStatusModal(result.records, ghoConn);
+    });
+  }
+
 }
 
 // Helper function to get user names from User IDs
 function getUserNames(userIds, conn, callback) {
-  if (!userIds || userIds.length === 0) {
-    callback({});
-    return;
-  }
+  try {
+    const ids = Array.from(new Set(userIds || [])).filter(Boolean);
+    if (ids.length === 0) { callback({}); return; }
 
-  const userQuery = `SELECT Id, Name FROM User WHERE Id IN ('${userIds.join("','")}') AND Username LIKE '%orgcs.com'`;
+    // Load persisted cache and determine missing
+    const cached = loadUserMapCache();
+    const cacheMap = cached.userMap || {};
+    const missing = ids.filter(id => !cacheMap[id]);
 
-  conn.query(userQuery, function (err, result) {
-    if (err) {
-      console.error('Error fetching user names:', err);
-      callback({});
+    // If nothing missing, return cache directly
+    if (missing.length === 0) {
+      callback({ ...cacheMap });
       return;
     }
 
-    const userMap = {};
-    if (result.records) {
-      result.records.forEach(user => {
-        userMap[user.Id] = user.Name;
+    // Query missing ids in chunks to avoid SOQL limits
+    const CHUNK = 100;
+    const chunks = [];
+    for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
+
+    const resultsMap = { ...cacheMap };
+    let idx = 0;
+    const runNext = () => {
+      if (idx >= chunks.length) {
+        // Save merged map back to localStorage and return
+        saveUserMapCache(resultsMap);
+        callback(resultsMap);
+        return;
+      }
+      const subset = chunks[idx++];
+      const q = `SELECT Id, Name FROM User WHERE Id IN ('${subset.join("','")}') AND Username LIKE '%orgcs.com'`;
+      conn.query(q, (err, res) => {
+        if (err) {
+          console.warn('User query failed for chunk, continuing:', err);
+        } else if (res && res.records) {
+          res.records.forEach(u => { if (u && u.Id) resultsMap[u.Id] = u.Name; });
+        }
+        runNext();
       });
-    }
-    callback(userMap);
-  });
+    };
+    runNext();
+  } catch (e) {
+    console.error('getUserNames failed, returning empty map', e);
+    callback({});
+  }
 }
 
-function showGHOStatusModal(ghoRecords, conn) {
+function showGHOStatusModal(ghoRecords, conn, opts) {
   // Store globally for filtering
   ghoRecordsGlobal = ghoRecords;
   ghoConnectionGlobal = conn;
+  const pre = opts || {};
 
   const container = document.getElementById('gho-cases-container');
   const currentShift = getCurrentShift();
+  try {
+    const modalBody = document.querySelector('#gho-modal .modal-body');
+    if (modalBody && !modalBody.classList.contains('gho-modern-enabled')) {
+      modalBody.classList.add('gho-modern-enabled');
+    }
+  } catch (e) { }
+  const modeLabel = currentMode === 'premier' ? 'Premier' : 'Signature';
+  try {
+    const header = document.querySelector('#gho-modal .modal-header h3');
+    if (header) {
+      let badge = header.querySelector('.gho-mode-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'gho-mode-badge';
+        badge.style.cssText = 'margin-left:8px;font-size:11px; letter-spacing:.5px; background:#1e3a8a; color:#fff; padding:3px 8px; border-radius:999px; text-transform:uppercase; box-shadow:0 2px 4px rgba(0,0,0,0.15);';
+        header.appendChild(badge);
+      }
+      badge.textContent = modeLabel + ' Mode';
+      badge.style.background = currentMode === 'premier' ? '#065f46' : '#1e3a8a';
+    }
+  } catch (e) { }
 
   if (!ghoRecords || ghoRecords.length === 0) {
     container.innerHTML = `
@@ -2352,6 +2465,7 @@ function showGHOStatusModal(ghoRecords, conn) {
         <div style="display:flex; justify-content:center; gap:8px; margin-top:12px; flex-wrap: wrap;">
           <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Shift: ${currentShift}</span>
           <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Filter: All</span>
+          <span style="background:${currentMode === 'premier' ? '#d1fae5' : '#e0e7ff'}; color:${currentMode === 'premier' ? '#065f46' : '#3730a3'}; border:1px solid ${currentMode === 'premier' ? '#6ee7b7' : '#c7d2fe'}; padding:4px 10px; border-radius:999px; font-size:12px;">Mode: ${modeLabel}</span>
         </div>
         <div style="margin-top:14px; display:flex; justify-content:center; gap:10px;">
           <button id="gho-empty-refresh" class="preview-btn" style="background:#0ea5e9; padding:10px 16px;">Refresh</button>
@@ -2369,11 +2483,11 @@ function showGHOStatusModal(ghoRecords, conn) {
 
   // Render with current filter
   const filterValue = document.getElementById('gho-taxonomy-filter').value;
-  renderFilteredGHOCases(ghoRecords, conn, filterValue);
+  renderFilteredGHOCases(ghoRecords, conn, filterValue, pre);
 }
 
 // Function to filter and render GHO cases based on CaseRoutingTaxonomy__r.Name
-function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
+function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {}) {
   const container = document.getElementById('gho-cases-container');
   const currentShift = getCurrentShift();
 
@@ -2407,6 +2521,7 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
         <div style="display:flex; justify-content:center; gap:8px; margin-top:12px; flex-wrap: wrap;">
           <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Shift: ${currentShift}</span>
           <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Filter: ${isAll ? 'All' : displayFilter}</span>
+          <span style="background:${currentMode === 'premier' ? '#d1fae5' : '#e0e7ff'}; color:${currentMode === 'premier' ? '#065f46' : '#3730a3'}; border:1px solid ${currentMode === 'premier' ? '#6ee7b7' : '#c7d2fe'}; padding:4px 10px; border-radius:999px; font-size:12px;">Mode: ${currentMode === 'premier' ? 'Premier' : 'Signature'}</span>
         </div>
         <div style="margin-top:14px; display:flex; justify-content:center; gap:10px; flex-wrap: wrap;">
           ${isAll ? '' : '<button id="gho-empty-showall" class="preview-btn" style="background:#10b981; padding:8px 14px;">Show All</button>'}
@@ -2431,59 +2546,36 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All') {
     return;
   }
 
-  // Query comments for all filtered cases to check for #GHOTriage
-  const caseIds = filteredRecords.map(record => record.Id);
-  const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+  // If we have precomputed triage ids (from cache or upstream), re-use; else perform a comment query
+  if (pre && pre.triageCaseIds instanceof Set) {
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, pre.triageCaseIds);
+    return;
+  }
 
+  const caseIds = filteredRecords.map(record => record.Id);
+  if (caseIds.length === 0) {
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set());
+    return;
+  }
+  const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
   conn.query(commentQuery, function (commentErr, commentResult) {
     if (commentErr) {
       console.error('Error querying GHO comments:', commentErr);
-      // Continue rendering without comment info
       renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set());
       return;
     }
-
-    // Check which cases have #GHOTriage comments
     const ghoTriageCommentCases = new Set();
     if (commentResult.records) {
       commentResult.records.forEach(comment => {
         if (comment.Body && comment.Body.includes('#GHOTriage')) {
-          // Check if comment is from today and same GEO
           const commentDate = comment.LastModifiedDate || comment.CreatedDate;
           const isCommentFromToday = isToday(commentDate);
           const commentShift = getShiftForDate(commentDate);
           const isSameGeo = commentShift === currentShift;
-
-          console.log('GHO Render - #GHOTriage comment analysis:', {
-            caseId: comment.ParentId,
-            commentDate,
-            isFromToday: isCommentFromToday,
-            commentShift,
-            currentShift,
-            isSameGeo
-          });
-
-          // Only consider #GHOTriage comments from today and same GEO
-          if (isCommentFromToday && isSameGeo) {
-            ghoTriageCommentCases.add(comment.ParentId);
-            console.log('GHO Render - Found valid #GHOTriage comment for case:', comment.ParentId, 'Date:', commentDate, 'Shift:', commentShift);
-          } else {
-            console.log('GHO Render - #GHOTriage comment ignored - not from today/same GEO:', {
-              caseId: comment.ParentId,
-              isFromToday: isCommentFromToday,
-              isSameGeo: isSameGeo,
-              commentDate,
-              commentShift,
-              currentShift
-            });
-          }
+          if (isCommentFromToday && isSameGeo) ghoTriageCommentCases.add(comment.ParentId);
         }
       });
     }
-
-    console.log('GHO Cases with #GHOTriage comments:', Array.from(ghoTriageCommentCases));
-
-    // Render cases with comment information
     renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases);
   });
 }
@@ -2504,12 +2596,26 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
     }
   });
 
-  // Get user names for all user IDs
-  getUserNames(Array.from(allUserIds), conn, function (userMap) {
+  // If cache already holds userMap for same shift reuse it to skip User query
+  const perModeCache = window.__ghoCache[currentMode];
+  const tryCacheUserMap = (perModeCache && perModeCache.shift === currentShift && perModeCache.userMap && Object.keys(perModeCache.userMap).length > 0)
+    ? perModeCache.userMap : null;
+
+  const proceed = (userMap) => {
+    // persist userMap into cache for future renders
+    try {
+      if (window.__ghoCache[currentMode] && window.__ghoCache[currentMode].shift === currentShift) {
+        window.__ghoCache[currentMode].userMap = userMap;
+      }
+      // also persist to localStorage day-cache
+      const existing = loadUserMapCache();
+      saveUserMapCache({ ...(existing.userMap || {}), ...(userMap || {}) });
+    } catch (e) { /* noop */ }
+
     // Count cases with QB mentions
     const qbMentionedCount = Array.from(ghoTriageCommentCases).length;
 
-    let ghoHtml = `
+    const headerHtml = `
       <div class="gho-summary" style="animation: fadeUp 260ms ease;">
         <h4>Found ${filteredRecords.length} ${filterValue === 'All' ? '' : filterValue + ' '}GHO Case${filteredRecords.length === 1 ? '' : 's'}</h4>
         <p>Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift</p>
@@ -2520,198 +2626,238 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
           <strong>Shifts:</strong> APAC (5:30AM-2:30PM), EMEA (12:30PM-9:30PM), AMER (8:30PM-5:30AM)
         </div>
       </div>
+      <div id="gho-items"></div>
     `;
 
-    filteredRecords.forEach(caseRecord => {
-      const caseId = caseRecord.Id;
-      const isMVP = caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true;
-      const hasGHOTriage = ghoTriageCommentCases.has(caseId);
+    container.innerHTML = headerHtml;
 
-      // Determine status color
-      let statusColor = '';
-      if (caseRecord.SE_Initial_Response_Status__c === 'Met') {
-        statusColor = 'green';
-      } else if (caseRecord.SE_Initial_Response_Status__c === 'In Warning' || caseRecord.SE_Initial_Response_Status__c === 'Warning') {
-        statusColor = 'red';
+    // Initialize list state for lazy loading
+    window.__ghoListState = {
+      allRecords: filteredRecords.slice(),
+      renderedCount: 0,
+      total: filteredRecords.length,
+      userMap,
+      triageCaseIds: ghoTriageCommentCases,
+      currentShift,
+      filterValue,
+      conn
+    };
+
+    const ensureFillViewport = () => {
+      // If content doesn't fill, load more until it does or items exhausted
+      let safety = 0;
+      while (safety < 5 && window.__ghoListState.renderedCount < window.__ghoListState.total) {
+        const loaded = loadMoreGhoCases();
+        safety++;
+        const items = document.getElementById('gho-items');
+        if (!items || !container) break;
+        if (container.scrollHeight > container.clientHeight + 200) break;
+        if (!loaded) break;
+      }
+    };
+
+    // Render first page and set up scroll
+    loadMoreGhoCases();
+    setupGhoInfiniteScroll();
+    // Try to fill viewport for small datasets
+    ensureFillViewport();
+  };
+
+  if (tryCacheUserMap) {
+    proceed(tryCacheUserMap);
+  } else {
+    getUserNames(Array.from(allUserIds), conn, proceed);
+  }
+}
+
+function setupGhoInfiniteScroll() {
+  try {
+    const modalBody = document.querySelector('#gho-modal .modal-body');
+    if (!modalBody) return;
+    // Cleanup prior listener
+    if (modalBody.__ghoScrollHandler) {
+      modalBody.removeEventListener('scroll', modalBody.__ghoScrollHandler);
+    }
+    const handler = () => {
+      const nearBottom = modalBody.scrollTop + modalBody.clientHeight >= modalBody.scrollHeight - 200;
+      if (nearBottom) loadMoreGhoCases();
+    };
+    modalBody.__ghoScrollHandler = handler;
+    modalBody.addEventListener('scroll', handler, { passive: true });
+  } catch (e) { console.warn('setupGhoInfiniteScroll failed', e); }
+}
+
+function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, currentShift) {
+  const caseId = caseRecord.Id;
+  const isMVP = caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true;
+  const hasGHOTriage = ghoTriageCommentCases.has(caseId);
+
+  // Build routing log HTML and GHO transfer information
+  let routingLogHtml = '';
+  let ghoTransferHtml = '';
+  const routingLogs = caseRecord.Case_Routing_Logs__r;
+
+  if (routingLogs && routingLogs.totalSize > 0) {
+    const lastLog = routingLogs.records[0];
+    if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
+      let logText = lastLog.Transfer_Reason__c;
+      if (lastLog.Severity_Old_Value__c && lastLog.Severity_New_Value__c) {
+        logText += ` | Severity Changed: ${lastLog.Severity_Old_Value__c} → ${lastLog.Severity_New_Value__c}`;
+      }
+      routingLogHtml = `
+        <div class="case-info-item">
+          <span class="checkmark">✓</span>
+          <span style="color: #9F2B68;">${logText} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
+        </div>
+      `;
+    }
+
+    const allGhoTransfers = routingLogs.records.filter(log =>
+      log.Transfer_Reason__c === 'GHO'
+    ).sort((a, b) => new Date(b.CreatedDate) - new Date(a.CreatedDate));
+
+    if (allGhoTransfers.length > 0) {
+      const currentShiftTransfers = allGhoTransfers.filter(transfer =>
+        transfer.Preferred_Shift_Old_Value__c === currentShift
+      );
+      const otherTransfers = allGhoTransfers.filter(transfer =>
+        transfer.Preferred_Shift_Old_Value__c !== currentShift
+      );
+
+      const caseUniqueId = `gho-${caseRecord.Id}`;
+      let nestedListHtml = '';
+
+      if (currentShiftTransfers.length > 0) {
+        currentShiftTransfers.forEach((transfer) => {
+          const userName = userMap[transfer.CreatedById] || 'Unknown User';
+          const transferTime = new Date(transfer.CreatedDate);
+          const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
+          const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
+
+          nestedListHtml += `
+            <div class="gho-transfer-item gho-transfer-item--current">
+              <div class="gho-transfer-title">
+                <span class="name" style="color:#92400e;">${userName}</span>
+                <span class="time" style="color:#78350f;">${formatDateWithDayOfWeek(transferTime)}</span>
+              </div>
+              <div class="gho-transfer-fields" style="color:#78350f;">
+                <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
+                <span><strong>GHO TO:</strong> ${ghoTo}</span>
+              </div>
+              <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
+            </div>
+          `;
+        });
       }
 
-      // Build routing log HTML and GHO transfer information
-      let routingLogHtml = '';
-      let ghoTransferHtml = '';
-      const routingLogs = caseRecord.Case_Routing_Logs__r;
-
-      if (routingLogs && routingLogs.totalSize > 0) {
-        const lastLog = routingLogs.records[0];
-        if (lastLog.Transfer_Reason__c && lastLog.Transfer_Reason__c !== 'New') {
-          let logText = lastLog.Transfer_Reason__c;
-
-          // Check for severity change
-          if (lastLog.Severity_Old_Value__c && lastLog.Severity_New_Value__c) {
-            logText += ` | Severity Changed: ${lastLog.Severity_Old_Value__c} → ${lastLog.Severity_New_Value__c}`;
-          }
-
-          routingLogHtml = `
-            <div class="case-info-item">
-              <span class="checkmark">✓</span>
-              <span style="color: #9F2B68;">${logText} (${timeElapsed(new Date(lastLog.CreatedDate))})</span>
-            </div>
-          `;
-        }
-
-        // Process GHO transfers and create nested list
-        const allGhoTransfers = routingLogs.records.filter(log =>
-          log.Transfer_Reason__c === 'GHO'
-        ).sort((a, b) => new Date(b.CreatedDate) - new Date(a.CreatedDate)); // Sort by CreatedDate DESC
-
-        if (allGhoTransfers.length > 0) {
-          // Separate transfers by current shift and others
-          const currentShiftTransfers = allGhoTransfers.filter(transfer =>
-            transfer.Preferred_Shift_Old_Value__c === currentShift
-          );
-          const otherTransfers = allGhoTransfers.filter(transfer =>
-            transfer.Preferred_Shift_Old_Value__c !== currentShift
-          );
-
-          const caseUniqueId = `gho-${caseRecord.Id}`;
-          let nestedListHtml = '';
-
-          // Default view: Current shift transfers
-          if (currentShiftTransfers.length > 0) {
-            currentShiftTransfers.forEach((transfer) => {
-              const userName = userMap[transfer.CreatedById] || 'Unknown User';
-              const transferTime = new Date(transfer.CreatedDate);
-              const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
-              const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
-
-              nestedListHtml += `
-                <div class="gho-transfer-item gho-transfer-item--current">
-                  <div class="gho-transfer-title">
-                    <span class="name" style="color:#92400e;">${userName}</span>
-                    <span class="time" style="color:#78350f;">${formatDateWithDayOfWeek(transferTime)}</span>
-                  </div>
-                  <div class="gho-transfer-fields" style="color:#78350f;">
-                    <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
-                    <span><strong>GHO TO:</strong> ${ghoTo}</span>
-                  </div>
-                  <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
-                </div>
-              `;
-            });
-          }
-
-          // Add expansion button if there are other transfers
-          if (otherTransfers.length > 0) {
-            nestedListHtml += `
-              <div style="margin: 8px 0;">
-                <button class="gho-toggle-btn" data-case-id="${caseUniqueId}">
-                  <i class="fa fa-chevron-down" aria-hidden="true" style="font-size: 10px; color: #64748b; transition: transform 0.2s ease;"></i>
-                  <span id="${caseUniqueId}-toggle-text" style="font-weight: 500;">Show ${otherTransfers.length} more GHO transfer${otherTransfers.length > 1 ? 's' : ''}</span>
-                </button>
-              </div>
-              <div id="${caseUniqueId}-expanded" style="display: none;">
-            `;
-
-            otherTransfers.forEach(transfer => {
-              const userName = userMap[transfer.CreatedById] || 'Unknown User';
-              const transferTime = new Date(transfer.CreatedDate);
-              const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
-              const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
-
-              nestedListHtml += `
-                <div class="gho-transfer-item gho-transfer-item--other">
-                  <div class="gho-transfer-title">
-                    <span class="name">${userName}</span>
-                    <span class="time">${formatDateWithDayOfWeek(transferTime)}</span>
-                  </div>
-                  <div class="gho-transfer-fields">
-                    <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
-                    <span><strong>GHO TO:</strong> ${ghoTo}</span>
-                  </div>
-                  <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
-                </div>
-              `;
-            });
-
-            nestedListHtml += `</div>`;
-          }
-
-          ghoTransferHtml = `
-            <div class="case-info-item" style="flex-direction: column; align-items: flex-start;">
-              <div class="gho-transfer-heading">
-                <span class="checkmark">✓</span>
-                <span>GHO Transfer History (${allGhoTransfers.length} transfer${allGhoTransfers.length > 1 ? 's' : ''}):</span>
-              </div>
-              <div class="gho-transfer-section">
-                ${nestedListHtml}
-              </div>
-            </div>
-          `;
-        } else {
-          ghoTransferHtml = `
-            <div class="case-info-item">
-              <span class="checkmark">✓</span>
-              <span class="gho-empty-transfer">No GHO transfers found</span>
-            </div>
-          `;
-        }
-      }
-
-      const caseHtml = `
-    <div class="case-card ${isMVP ? 'mvp-case card-accent-purple' : ''}" style="margin-bottom: 16px;">
-          <div class="case-header">
-            <div style="display: flex; align-items: center; gap: 8px;">
-      ${isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : ''}
-      <span class="badge-soft badge-soft--amber">GHO</span>
-      ${hasGHOTriage ? '<span class="badge-soft badge-soft--success">QB Mentioned</span>' : ''}
-              <h3 class="case-title">${caseRecord.Subject}</h3>
-            </div>
-            <div class="case-timestamp">${formatDateWithDayOfWeek(caseRecord.CreatedDate)}<br/>
-             (${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
+      if (otherTransfers.length > 0) {
+        nestedListHtml += `
+          <div style="margin: 8px 0;">
+            <button class="gho-toggle-btn" data-case-id="${caseUniqueId}">
+              <i class="fa fa-chevron-down" aria-hidden="true" style="font-size: 10px; color: #64748b; transition: transform 0.2s ease;"></i>
+              <span id="${caseUniqueId}-toggle-text" style="font-weight: 500;">Show ${otherTransfers.length} more GHO transfer${otherTransfers.length > 1 ? 's' : ''}</span>
+            </button>
           </div>
-          
-          <div class="case-details">
-            <div class="case-info">
-              <div class="case-info-item">
-                <span class="checkmark">✓</span>
-                <span>${caseRecord.Account.Name}</span>
+          <div id="${caseUniqueId}-expanded" style="display: none;">
+        `;
+
+        otherTransfers.forEach(transfer => {
+          const userName = userMap[transfer.CreatedById] || 'Unknown User';
+          const transferTime = new Date(transfer.CreatedDate);
+          const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
+          const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
+
+          nestedListHtml += `
+            <div class="gho-transfer-item gho-transfer-item--other">
+              <div class="gho-transfer-title">
+                <span class="name">${userName}</span>
+                <span class="time">${formatDateWithDayOfWeek(transferTime)}</span>
               </div>
-              <div class="case-info-item">
-                <span class="checkmark">✓</span>
-                <span>${caseRecord.Owner.Name}</span>
+              <div class="gho-transfer-fields">
+                <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
+                <span><strong>GHO TO:</strong> ${ghoTo}</span>
               </div>
-              <div class="case-info-item">
-                <span class="checkmark">✓</span>
-                <span>${caseRecord.CaseRoutingTaxonomy__r.Name}</span>
-              </div>
-              <div class="case-info-item">
-                <span class="checkmark">✓</span>
-                <span>${caseRecord.CaseNumber}</span>
-              </div>
-              <div class="case-info-item">
-                <span class="checkmark">✓</span>
-                <span>${caseRecord.Severity_Level__c}</span>
-              </div>
-              ${hasGHOTriage ? '<div class="case-info-item"><span class="checkmark" style="color: #059669;">✓</span><span style="color: #059669; font-weight: bold;">QB has been mentioned (#GHOTriage found in comments)</span></div>' : ''}
-              ${routingLogHtml}
-              ${ghoTransferHtml}
+              <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
             </div>
-            
-            <div class="case-actions">
-          <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" 
-            class="preview-btn gho-preview-btn" 
-            data-case-id="${caseId}">
-                View Case Record
-              </a>
-            </div>
+          `;
+        });
+
+        nestedListHtml += `</div>`;
+      }
+
+      ghoTransferHtml = `
+        <div class="case-info-item" style="flex-direction: column; align-items: flex-start;">
+          <div class="gho-transfer-heading">
+            <span class="checkmark">✓</span>
+            <span>GHO Transfer History (${allGhoTransfers.length} transfer${allGhoTransfers.length > 1 ? 's' : ''}):</span>
+          </div>
+          <div class="gho-transfer-section">
+            ${nestedListHtml}
           </div>
         </div>
       `;
+    } else {
+      ghoTransferHtml = `
+        <div class="case-info-item">
+          <span class="checkmark">✓</span>
+          <span class="gho-empty-transfer">No GHO transfers found</span>
+        </div>
+      `;
+    }
+  }
 
-      ghoHtml += caseHtml;
-    });
 
-    container.innerHTML = ghoHtml;
-  });
+  return `
+    <div class="case-card gho-case-card ${isMVP ? 'mvp-case card-accent-purple' : ''}" data-case-id="${caseId}" style="margin-bottom:16px;">
+      <div class="gho-card-header">
+        <div class="gho-card-header-main">
+          <div class="gho-card-badges">
+            <span class="badge-soft badge-soft--amber">GHO</span>
+            ${isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : ''}
+            ${hasGHOTriage ? '<span class="badge-soft badge-soft--success">QB Mentioned</span>' : ''}
+          </div>
+          <h3 class="gho-card-subject">${caseRecord.Subject}</h3>
+        </div>
+        <div class="gho-card-created">${formatDateWithDayOfWeek(caseRecord.CreatedDate)}<br>(${timeElapsed(new Date(caseRecord.CreatedDate))})</div>
+      </div>
+      <div class="gho-meta-grid">
+      <div class="gho-meta-item"><span class="gho-meta-label">Case #</span><span class="gho-meta-value">${caseRecord.CaseNumber}</span></div>
+        <div class="gho-meta-item"><span class="gho-meta-label">Account</span><span class="gho-meta-value">${caseRecord.Account.Name}</span></div>
+        <div class="gho-meta-item"><span class="gho-meta-label">Owner</span><span class="gho-meta-value">${caseRecord.Owner.Name}</span></div>
+        <div class="gho-meta-item"><span class="gho-meta-label">Cloud</span><span class="gho-meta-value">${caseRecord.CaseRoutingTaxonomy__r.Name}</span></div>
+        <div class="gho-meta-item--severity-row">
+          <div class="gho-severity-wrap">
+            <span class="gho-meta-label">Severity</span>
+            <span class="gho-meta-value">${caseRecord.Severity_Level__c}</span>
+          </div>
+          <a target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseId}/view" class="preview-btn gho-preview-btn" data-case-id="${caseId}">View Case Record</a>
+        </div>
+      </div>
+      ${routingLogHtml ? `<div class="gho-routing-log">${routingLogHtml}</div>` : ''}
+      <div class="gho-transfer-block">${ghoTransferHtml}</div>
+    </div>`;
+}
+
+function loadMoreGhoCases() {
+  try {
+    const state = window.__ghoListState;
+    if (!state) return false;
+    if (state.renderedCount >= state.total) return false;
+    const listEl = document.getElementById('gho-items');
+    if (!listEl) return false;
+
+    const nextEnd = Math.min(state.renderedCount + GHO_PAGE_SIZE, state.total);
+    let buf = '';
+    for (let i = state.renderedCount; i < nextEnd; i++) {
+      buf += renderSingleGhoCaseHTML(state.allRecords[i], state.userMap, state.triageCaseIds, state.currentShift);
+    }
+    listEl.insertAdjacentHTML('beforeend', buf);
+    state.renderedCount = nextEnd;
+    return true;
+  } catch (e) {
+    console.warn('loadMoreGhoCases failed', e);
+    return false;
+  }
 }
 
 // Function to toggle GHO transfer expansion

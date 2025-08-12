@@ -821,7 +821,8 @@
 
 		#gho-modal .modal-header h3 {
 			font-size: 18px;
-			line-height: 1.25;
+			line-height: 0.25;
+			padding: 0.8rem;
 			margin: 0;
 			min-width: 0;
 			overflow: hidden;
@@ -1128,7 +1129,8 @@
 
 		.pending-account,
 		.pending-created {
-			font-size: 12px;
+			font-size: 14px;
+			font-weight: 700;
 			color: #6b7280;
 		}
 
@@ -1392,6 +1394,55 @@
 			}
 		}
 
+		.gho-modern-enabled #gho-items {
+			gap: 16px
+		}
+
+		.gho-modern-enabled .case-card {
+			border-radius: 20px;
+			border: 1px solid #e2e8f0;
+			background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04)
+		}
+
+		.gho-modern-enabled .case-card .case-header h3.case-title {
+			font-size: 18px;
+			color: #0f172a
+		}
+
+		.gho-modern-enabled .case-card .case-info-item {
+			font-size: 13px;
+			color: #475569
+		}
+
+		.gho-modern-enabled .case-card .case-timestamp {
+			font-size: 12px;
+			color: #dc2626;
+			font-weight: 600
+		}
+
+		.gho-modern-enabled .gho-transfer-section {
+			width: 100%
+		}
+
+		.gho-modern-enabled .gho-transfer-item {
+			border-radius: 12px
+		}
+
+		.gho-modern-enabled .gho-transfer-item--current {
+			background: #fefce8;
+			border-color: #fde68a
+		}
+
+		.gho-modern-enabled .gho-transfer-item--other {
+			background: #ffffff
+		}
+
+		.gho-modern-enabled .gho-summary {
+			border-radius: 20px
+		}
+
+
 
 		@media (prefers-reduced-motion: reduce) {
 			* {
@@ -1399,7 +1450,288 @@
 				transition: none !important;
 			}
 		}
+
+		.gho-case-card.case-card {
+			position: relative;
+			overflow: hidden;
+			border: 1px solid #e2e8f0;
+			background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+			border-radius: 20px;
+			padding: 22px 24px 20px;
+		}
+
+		.gho-case-card:before {
+			content: "";
+			position: absolute;
+			inset: 0;
+			background: radial-gradient(circle at 85% 15%, rgba(251, 191, 36, 0.18), transparent 55%),
+				radial-gradient(circle at 10% 90%, rgba(96, 165, 250, 0.12), transparent 60%);
+			pointer-events: none;
+		}
+
+		.gho-card-header {
+			display: flex;
+			align-items: flex-start;
+			gap: 14px;
+			margin-bottom: 14px;
+		}
+
+		.gho-card-header-main {
+			flex: 1;
+			min-width: 0;
+		}
+
+		.gho-card-badges {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px;
+			margin-bottom: 6px;
+		}
+
+		.gho-card-subject {
+			font-size: 18px;
+			font-weight: 600;
+			color: #0f172a;
+			margin: 0;
+			line-height: 1.25;
+			letter-spacing: .2px;
+			overflow-wrap: anywhere;
+		}
+
+		.gho-card-created {
+			text-align: right;
+			font-size: 12px;
+			font-weight: 600;
+			color: #b45309;
+			white-space: nowrap;
+		}
+
+		.badge-soft {
+			backdrop-filter: blur(2px);
+		}
+
+		.badge-soft--amber {
+			background: #fff7ed;
+			color: #92400e;
+			border-color: #fed7aa;
+		}
+
+		.gho-meta-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+			gap: 10px 18px;
+			margin-bottom: 12px;
+		}
+
+		.gho-meta-item {
+			display: flex;
+			flex-direction: column;
+			gap: 2px;
+			font-size: 12px;
+		}
+
+		.gho-meta-label {
+			font-size: 11px;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: .5px;
+			color: #64748b;
+		}
+
+		.gho-meta-value {
+			font-size: 13px;
+			font-weight: 600;
+			color: #334155;
+			letter-spacing: .2px;
+		}
+
+		.gho-routing-log {
+			margin: 4px 0 14px;
+			padding: 10px 14px;
+			border: 1px solid #fcd34d;
+			background: #fffbeb;
+			border-radius: 12px;
+			font-size: 12px;
+			line-height: 1.3;
+			display: flex;
+			gap: 8px;
+			align-items: flex-start;
+		}
+
+		.gho-routing-log:before {
+			content: "";
+			width: 6px;
+			height: 6px;
+			background: #f59e0b;
+			border-radius: 50%;
+			margin-top: 5px;
+			box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.25);
+		}
+
+		.gho-transfer-block {
+			margin-top: 4px;
+		}
+
+		.gho-transfer-heading-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			margin-bottom: 6px;
+		}
+
+		.gho-transfer-heading-row span.title {
+			font-size: 12px;
+			font-weight: 700;
+			color: #92400e;
+			display: flex;
+			align-items: center;
+			gap: 6px;
+		}
+
+		.gho-transfer-list {
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+		}
+
+		.gho-transfer-item-modern {
+			position: relative;
+			padding: 10px 14px 10px 16px;
+			border: 1px solid #fcd34d;
+			background: #fff7ed;
+			border-radius: 14px;
+			display: flex;
+			flex-direction: column;
+			gap: 4px;
+			animation: fadeUp 260ms ease;
+		}
+
+		.gho-transfer-item-modern.other {
+			background: #f1f5f9;
+			border-color: #e2e8f0;
+		}
+
+		.gho-transfer-item-modern .top {
+			display: flex;
+			justify-content: space-between;
+			font-size: 12px;
+			font-weight: 600;
+			color: #78350f;
+		}
+
+		.gho-transfer-item-modern.other .top {
+			color: #475569;
+		}
+
+		.gho-transfer-item-modern .fields {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 12px;
+			font-size: 11px;
+			color: #92400e;
+		}
+
+		.gho-transfer-item-modern.other .fields {
+			color: #475569;
+		}
+
+		.gho-transfer-item-modern .meta {
+			font-size: 10px;
+			font-weight: 600;
+			letter-spacing: .5px;
+			color: #b45309;
+		}
+
+		.gho-transfer-item-modern.other .meta {
+			color: #64748b;
+		}
+
+		.gho-toggle-btn {
+			font-size: 11px;
+			font-weight: 600;
+			letter-spacing: .3px;
+		}
+
+		.gho-actions {
+			display: flex;
+			justify-content: flex-end;
+			margin-top: 4px;
+		}
+
+		.gho-actions .preview-btn {
+			background: linear-gradient(90deg, #f59e0b, #d97706);
+			box-shadow: 0 4px 14px rgba(245, 158, 11, .35);
+		}
+
+		.gho-actions .preview-btn:hover {
+			box-shadow: 0 6px 16px rgba(245, 158, 11, .5);
+		}
+
+		.gho-meta-item--severity-row {
+			grid-column: 1 / -1;
+			display: flex;
+			align-items: stretch;
+			gap: 16px;
+			justify-content: space-between;
+			padding: 10px 14px;
+			background: #f8fafc;
+			border: 1px solid #e2e8f0;
+			border-radius: 14px;
+		}
+
+		.gho-meta-item--severity-row .gho-severity-wrap {
+			display: flex;
+			flex-direction: column;
+			gap: 2px;
+		}
+
+		.gho-meta-item--severity-row .gho-meta-label {
+			font-size: 11px;
+			font-weight: 600;
+			letter-spacing: .5px;
+			color: #64748b;
+		}
+
+		.gho-meta-item--severity-row .gho-meta-value {
+			font-size: 14px;
+			font-weight: 700;
+			color: #334155;
+		}
+
+		.gho-meta-item--severity-row .preview-btn {
+			margin-left: auto;
+			background: linear-gradient(90deg, #6366f1, #4f46e5);
+			box-shadow: 0 4px 12px rgba(99, 102, 241, .3);
+			white-space: nowrap;
+			padding: 10px 18px;
+		}
+
+		.gho-meta-item--severity-row .preview-btn:hover {
+			box-shadow: 0 6px 14px rgba(99, 102, 241, .45);
+		}
+
+		@media (max-width:640px) {
+			.gho-meta-item--severity-row {
+				flex-direction: column;
+				align-items: flex-start;
+			}
+
+			.gho-meta-item--severity-row .preview-btn {
+				width: 100%;
+			}
+		}
+
+		@media (max-width: 860px) {
+			.gho-meta-grid {
+				grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+			}
+
+			.gho-card-created {
+				font-size: 11px;
+			}
+		}
 	</style>
+
 </head>
 
 <body>
@@ -1453,7 +1785,7 @@
 				<!-- Manual track controls -->
 				<input type="text" class="search-input hidden" id="track-case-input"
 					placeholder="Case Number to track..." style="max-width: 220px;">
-				<button class="btn-secondary" id="track-case-btn" title="Track case by number"> Track Case</button>
+				<button class="btn-secondary" id="track-case-btn" title="Track case by number">Log Case</button>
 			</div>
 		</div>
 
