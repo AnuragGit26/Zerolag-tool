@@ -600,6 +600,10 @@ function getCaseDetails() {
                               <span class="checkmark">✓</span>
                               <span>${filteredRecords[x].Severity_Level__c}</span>
                             </div>
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span>${filteredRecords[x].SE_Initial_Response_Status__c}</span>
+                            </div>
                             ${routingLogHtml}
                           </div>
                           
