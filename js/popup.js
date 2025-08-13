@@ -1,6 +1,13 @@
 import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js';
 import { applyFilter, applySearch, updateWeekendModeIndicator } from './utils/dom.js';
-import { trackAction } from './utils/api.js';
+import { trackAction, logUsageDaily } from './utils/api.js';
+import { formatDateWithDayOfWeek, getShiftForDate, isToday, getCurrentShift, getPreferredShiftValues, buildPreferredShiftCondition, getWeekendSignatureTemplate, getGHOTemplate } from './modules/shift.js';
+import { showToast } from './modules/toast.js';
+import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.js';
+import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
+import { logger } from './utils/logging.js';
+
+try { logger.installConsoleBeautifier(); } catch { /* noop */ }
 
 let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
@@ -41,12 +48,151 @@ function saveUserMapCache(userMap) {
 let mouseActivityTimer;
 const MOUSE_ACTIVITY_TIMEOUT = 60000;
 
+const USAGE_STATE_KEY = 'usage_state_v1';
+let usageState = (function loadUsageState() {
+  try {
+    const raw = localStorage.getItem(USAGE_STATE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) || {};
+  } catch { return {}; }
+})();
+
+const IST_OFFSET_MINUTES = 330;
+
+function getISTNow() {
+  const nowUtc = Date.now();
+  return new Date(nowUtc + IST_OFFSET_MINUTES * 60 * 1000);
+}
+
+function formatDateYMD(d) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysIST(dateLike, delta) {
+  return new Date(dateLike.getTime() + delta * 24 * 60 * 60 * 1000);
+}
+
+function getISTBusinessDayKey() {
+  const istNow = getISTNow();
+  const hours = istNow.getUTCHours(); // since we artificially shifted the date into IST, UTC hours on shifted date == IST hours
+  const minutes = istNow.getUTCMinutes();
+  // If before 05:30 IST, assign to previous calendar date (IST)
+  if (hours < 5 || (hours === 5 && minutes < 30)) {
+    const prev = addDaysIST(istNow, -1);
+    return formatDateYMD(prev);
+  }
+  return formatDateYMD(istNow);
+}
+
+function sheetDisplayDateFromBusinessKey(key) {
+  const [y, m, d] = key.split('-');
+  return `${m}/${d}/${y}`;
+}
+
+let activeSessionStart = null;
+let lastActivityTs = Date.now();
+let usageTickInterval = null;
+
+let currentBusinessDayKey = getISTBusinessDayKey();
+
+function cleanupOldUsageData(oldKey, newKey) {
+  try {
+    if (oldKey && usageState[oldKey] && oldKey !== newKey) {
+      delete usageState[oldKey];
+    }
+    const formattedOld = sheetDisplayDateFromBusinessKey(oldKey);
+    const prefixes = [`usage_logged_${formattedOld}_`, `usage_logged_${oldKey}_`];
+    const toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && prefixes.some(p => k.startsWith(p))) {
+        toRemove.push(k);
+      }
+    }
+    toRemove.forEach(k => localStorage.removeItem(k));
+    persistUsageState();
+    if (toRemove.length) logger.debug('usage.purge', { oldKey, removed: toRemove.length });
+  } catch (e) { console.warn('cleanupOldUsageData failed', e); }
+}
+
+function ensureUserUsageBucket(userName) {
+  const newKey = getISTBusinessDayKey();
+  if (newKey !== currentBusinessDayKey) {
+    // Day rollover at 05:30 IST - start fresh bucket (prior day retained in usageState for reference until reload)
+    currentBusinessDayKey = newKey;
+    cleanupOldUsageData(oldKey, newKey);
+  }
+  usageState[currentBusinessDayKey] = usageState[currentBusinessDayKey] || {};
+  usageState[currentBusinessDayKey][userName] = usageState[currentBusinessDayKey][userName] || { activeSeconds: 0, lastActiveISO: null, actionedCases: 0 };
+  return { dayKey: currentBusinessDayKey, bucket: usageState[currentBusinessDayKey][userName] };
+}
+
+function persistUsageState() {
+  try { localStorage.setItem(USAGE_STATE_KEY, JSON.stringify(usageState)); } catch { /* noop */ }
+}
+
+function startUsageTicking() {
+  if (usageTickInterval) return;
+  usageTickInterval = setInterval(() => {
+    if (!currentUserName) return;
+    const now = Date.now();
+    if (now - lastActivityTs <= MOUSE_ACTIVITY_TIMEOUT) {
+      if (!activeSessionStart) activeSessionStart = new Date();
+      const { dayKey, bucket } = ensureUserUsageBucket(currentUserName);
+      bucket.activeSeconds += 60;
+      bucket.lastActiveISO = new Date().toISOString();
+      persistUsageState();
+      if (bucket.activeSeconds % (5 * 60) === 0 || bucket.activeSeconds <= 600 && bucket.activeSeconds % 300 === 0) {
+        logUsageDaily({
+          dateLocalString: sheetDisplayDateFromBusinessKey(dayKey),
+          userName: currentUserName,
+          totalActiveMinutes: Math.round(bucket.activeSeconds / 60),
+          lastActiveISO: bucket.lastActiveISO,
+          actionedCases: bucket.actionedCases || 0
+        });
+      }
+    } else {
+      activeSessionStart = null;
+    }
+    // Force evaluation of business day key to trigger rollover if needed
+    getISTBusinessDayKey();
+  }, 60000);
+}
+
+function recordImmediateUsageFlush() {
+  try {
+    if (!currentUserName) return;
+    const { dayKey, bucket } = ensureUserUsageBucket(currentUserName);
+    if (bucket.activeSeconds > 0) {
+      logUsageDaily({
+        dateLocalString: sheetDisplayDateFromBusinessKey(dayKey),
+        userName: currentUserName,
+        totalActiveMinutes: Math.round(bucket.activeSeconds / 60),
+        lastActiveISO: bucket.lastActiveISO || new Date().toISOString(),
+        actionedCases: bucket.actionedCases || 0
+      });
+    }
+  } catch (e) { console.warn('Immediate usage flush error', e); }
+}
+
+['focus', 'mousemove', 'keydown', 'click', 'scroll'].forEach(evt => {
+  window.addEventListener(evt, () => { lastActivityTs = Date.now(); }, true);
+});
+
+window.addEventListener('beforeunload', () => {
+  recordImmediateUsageFlush();
+});
+startUsageTicking();
+
 function resetMouseActivityTimer() {
   if (mouseActivityTimer) {
     clearTimeout(mouseActivityTimer);
   }
   mouseActivityTimer = setTimeout(() => {
-    console.log('No mouse activity for 60 seconds, refreshing window...');
+    logger.info('ui.inactive.refresh', { reason: 'mouse inactivity', timeoutMs: MOUSE_ACTIVITY_TIMEOUT });
     window.location.reload();
   }, MOUSE_ACTIVITY_TIMEOUT);
 }
@@ -58,7 +204,7 @@ function initMouseActivityTracking() {
     document.addEventListener(eventType, resetMouseActivityTimer, true);
   });
   resetMouseActivityTimer();
-  console.log('Mouse activity tracking initialized - auto-refresh after 60 seconds of inactivity');
+  logger.debug('ui.mouseTracking.init', { timeoutMs: MOUSE_ACTIVITY_TIMEOUT });
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -96,7 +242,7 @@ function getCookies(domain, name, callback) {
 }
 
 function getCaseDetails() {
-  console.log('SESSION_ID>>>', SESSION_ID);
+  logger.debug('sf.session.set', { hasSession: !!SESSION_ID });
   let conn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
@@ -119,6 +265,11 @@ function getCaseDetails() {
       return console.error('error---' + err);
     } else {
       currentUserName = res.display_name;
+      try {
+        ensureUserUsageBucket(currentUserName);
+        lastActivityTs = Date.now();
+        recordImmediateUsageFlush();
+      } catch (e) { console.warn('Usage init after identity failed', e); }
       let displayedCaseCount = 0;
       let actionTakenCount = 0;
       let currentUserId;
@@ -130,14 +281,8 @@ function getCaseDetails() {
         if (userResult.records.length > 0) {
           currentUserId = userResult.records[0].Id;
         }
-
         let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
-
         let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
-
-        const currentShift = getCurrentShift();
-        const preferredShiftValues = getPreferredShiftValues(currentShift);
-        const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
         let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
@@ -153,7 +298,7 @@ function getCaseDetails() {
                 <div class="no-cases-message">
                   <h4 class="no-cases-title">No Cases to Action</h4>
                   <p class="no-cases-text">All cases are up to date. Great work!</p>
-                  <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
+                  <p class="mode-switch-hint">💡 Meanwhile you can switch between Signature and Premier modes to see different case types.</p>
                 </div>
               `;
               const container = document.getElementById("parentSigSev2");
@@ -181,7 +326,7 @@ function getCaseDetails() {
               if (chrome.runtime.lastError) {
                 console.error('Runtime error syncing persistent cases:', chrome.runtime.lastError.message);
               } else if (response && response.success) {
-                console.log(`Synced persistent cases for mode ${currentMode}. Removed: ${response.removed}. Now tracking: ${response.count}`);
+                logger.info('cases.persistent.synced', { mode: currentMode, removed: response.removed, tracking: response.count });
                 // If cases were removed due to refresh (not in current query), try to track any last-moment assignments
                 try {
                   const removedCases = Array.isArray(response.removedCases) ? response.removedCases : [];
@@ -214,7 +359,7 @@ function getCaseDetails() {
                 return;
               }
               if (response && response.success) {
-                console.log(response.message);
+                logger.debug('cases.persistent.added', { message: response.message });
               }
             });
 
@@ -231,7 +376,7 @@ function getCaseDetails() {
             const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
 
             conn.query(commentQuery, function (commentErr, commentResult) {
-              console.log("Case Comments:", commentResult);
+              logger.debug('cases.comments.fetched', { total: commentResult.records ? commentResult.records.length : 0 });
 
               if (commentErr) {
                 return console.error(commentErr);
@@ -241,11 +386,11 @@ function getCaseDetails() {
               if (commentResult.records) {
                 commentResult.records.forEach(record => {
                   if (record.Body && record.Body.includes('#SigQBmention')) {
-                    console.log('Actioned case found:', record.ParentId);
+                    logger.debug('cases.actioned.detected', { caseId: record.ParentId });
                     actionedCaseIds.add(record.ParentId);
                     if (record.CreatedById === currentUserId) {
                       const caseRecord = result.records.find(c => c.Id === record.ParentId);
-                      console.log('Case record for actioned comment:', caseRecord);
+                      logger.trace && logger.trace('cases.actioned.caseRecord', { caseId: caseRecord.Id });
                       if (caseRecord) {
                         const trackingKey = `tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(trackingKey)) {
@@ -267,7 +412,7 @@ function getCaseDetails() {
                   }
 
                   if (record.Body && record.Body.includes('#GHOTriage')) {
-                    console.log('GHO Triage action found:', record.ParentId);
+                    logger.debug('gho.triage.comment.detected', { caseId: record.ParentId });
 
                     const commentDate = record.LastModifiedDate || record.CreatedDate;
                     const isCommentFromToday = isToday(commentDate);
@@ -275,7 +420,7 @@ function getCaseDetails() {
                     const currentShift = getCurrentShift();
                     const isSameGeo = commentShift === currentShift;
 
-                    console.log('GHO Triage comment analysis:', {
+                    logger.trace && logger.trace('gho.triage.comment.analysis', {
                       commentDate,
                       isFromToday: isCommentFromToday,
                       commentShift,
@@ -285,13 +430,13 @@ function getCaseDetails() {
 
                     if (isCommentFromToday && isSameGeo && record.CreatedById === currentUserId) {
                       const caseRecord = result.records.find(c => c.Id === record.ParentId);
-                      console.log('Case record for GHO triage comment:', caseRecord);
+                      logger.trace && logger.trace('gho.triage.caseRecord', { caseId: caseRecord.Id });
                       if (caseRecord) {
                         const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(ghoTrackingKey)) {
                           trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                           localStorage.setItem(ghoTrackingKey, 'true');
-                          console.log('GHO triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
+                          logger.info('gho.triage.tracked', { caseNumber: caseRecord.CaseNumber, date: commentDate, shift: commentShift });
 
                           chrome.runtime.sendMessage({
                             action: 'removeCaseFromPersistentSet',
@@ -304,7 +449,7 @@ function getCaseDetails() {
                         }
                       }
                     } else {
-                      console.log('GHO Triage comment ignored - not from today/same GEO:', {
+                      logger.debug('gho.triage.comment.ignored', {
                         isFromToday: isCommentFromToday,
                         isSameGeo: isSameGeo,
                         commentDate,
@@ -320,34 +465,29 @@ function getCaseDetails() {
               var mvpWarningHtml = '';
               var isData = false;
               var today = new Date();
-              var totalCasesCount = 0; // Track total cases before filtering
-              var pendingCasesCount = 0; // Track cases that exist but haven't met alert criteria
-              var pendingCasesDetails = []; // Store details of pending cases
-
-
-              function isWeekend() {
-                return isCurrentlyWeekend();
-              }
-              var minSev1 = isWeekend() ? 0 : 5;
-              var minSev2 = isWeekend() ? 0 : 20;
+              var totalCasesCount = 0;
+              var pendingCasesCount = 0;
+              var pendingCasesDetails = [];
+              // Weekend SLA thresholds
+              const isWeekendFlag = isCurrentlyWeekend();
+              var minSev1 = isWeekendFlag ? 0 : 5;
+              var minSev2 = isWeekendFlag ? 0 : 20;
               if (result.records.length > 0) {
                 isData = true;
 
-                console.log('All case records received:', result.records);
-                console.log('Total records:', result.records.length);
-                console.log(result.records.filter(x => x.Contact));
+                logger.info('cases.query.result', { total: result.records.length });
 
                 totalCasesCount = result.records.length;
 
                 const filteredRecords = result.records.filter(x => {
                   if (x.Contact && x.Contact.Is_MVP__c === true && x.SE_Initial_Response_Status__c === 'Met') {
-                    console.log(`Filtering out MVP case with Met status: ${x.CaseNumber} ${x.SE_Initial_Response_Status__c}`);
+                    logger.debug('cases.filter.mvp.met', { caseNumber: x.CaseNumber, status: x.SE_Initial_Response_Status__c });
                     return false;
                   }
                   return true;
                 });
 
-                console.log('Filtered records (after removing MVP Met cases):', filteredRecords.length, 'out of', result.records.length);
+                logger.info('cases.filter.summary', { filtered: filteredRecords.length, original: result.records.length });
 
                 for (var x in filteredRecords) {
                   const caseRecord = filteredRecords[x];
@@ -689,67 +829,24 @@ function getCaseDetails() {
                 }
 
                 if (pendingCasesCount > 0) {
-                  let pendingGridHtml = '';
-                  pendingCasesDetails.forEach(caseDetail => {
-                    const sevClass = caseDetail.severity.includes('Level 1') ? 'sev1' : caseDetail.severity.includes('Level 2') ? 'sev2' : caseDetail.severity.includes('Level 3') ? 'sev3' : 'sev4';
-                    const sevShort = caseDetail.severity.includes('Level 1') ? 'SEV1' : caseDetail.severity.includes('Level 2') ? 'SEV2' : caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
-                    const total = Math.max(0, Number(caseDetail.totalRequiredMinutes || 0));
-                    const elapsed = Math.max(0, Number(caseDetail.minutesSinceCreation || 0));
-                    const remaining = Math.max(0, total - elapsed);
-                    const totalDisplay = elapsed + remaining; // enforce sum to avoid rounding mismatches
-                    const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
-                    const dueNow = remaining <= 0;
-                    const mvpBadgeTop = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : '';
-
-                    pendingGridHtml += `
-                      <div class="pending-card ${sevClass}" data-created="${new Date(caseDetail.createdDate).toISOString()}" data-total="${totalDisplay}">
-                        <div class="pending-card-top">
-                          <div class="pending-id">${caseDetail.caseNumber}</div>
-                          <span class="severity-badge ${sevClass}">${sevShort}</span>
-                          ${mvpBadgeTop}
-                        </div>
-                        <div class="pending-body">
-                          <div class="pending-account">${caseDetail.account}</div>
-                          <div class="pending-meta">Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (<span class="js-elapsed">${elapsed}m</span> ago)</div>
-                        </div>
-                        <div class="pending-progress">
-                          <div class="pending-progress-bar" style="width: ${progressPct}%;"></div>
-                          <div class="pending-progress-label"><span class="js-progress-remaining">${remaining}</span>m / <span class="js-progress-total">${totalDisplay}</span>m</div>
-                        </div>
-                        <div class="pending-footer">
-                          <span class="remaining-badge ${dueNow ? 'due' : ''}">${dueNow ? 'Due now' : `<span class=\"js-remaining\">${remaining}</span>m remaining`}</span>
-                        </div>
-                      </div>`;
-                  });
-
+                  const pendingGridHtml = buildPendingCardsHtml(pendingCasesDetails);
                   const isWeekendSLA_banner = (minSev1 === 0 && minSev2 === 0);
                   const subTitleText = isWeekendSLA_banner
                     ? `${pendingCasesCount} case${pendingCasesCount === 1 ? '' : 's'} being monitored`
                     : `${pendingCasesCount} pending within SLA · SEV1: ${minSev1}m · SEV2: ${minSev2}m`;
-
-                  const pendingSection = `
-                    <section class="pending-section">
-                      <div class="pending-header">
-                        <div class="pending-title-wrap">
-                          <h4 class="pending-title">Cases in Queue</h4>
-                          <span class="pending-count-badge">${pendingCasesCount}</span>
-                        </div>
-                        <div class="pending-subtitle">${subTitleText}</div>
-                      </div>
-                      <div class="pending-grid">
-                        ${pendingGridHtml}
-                      </div>
-                    </section>`;
-
-                  finalHtml = finalHtml + pendingSection;
+                  finalHtml += getPendingSectionHtml({
+                    title: 'Cases in Queue',
+                    pendingCasesCount,
+                    subTitleText,
+                    pendingGridHtml
+                  });
                 }
 
                 const container = document.getElementById("parentSigSev2");
                 container.classList.remove('is-loading');
-                container.innerHTML = finalHtml; // replace loading tile entirely
+                container.innerHTML = finalHtml;
                 container.classList.add('content-enter');
 
-                // Start live updater for pending cards
                 startPendingLiveUpdater();
 
                 const savedFilter = localStorage.getItem('caseFilter');
@@ -784,57 +881,17 @@ function getCaseDetails() {
                 let noCasesHtml;
 
                 if (pendingCasesCount > 0) {
-                  let pendingGridHtml = '';
-                  pendingCasesDetails.forEach(caseDetail => {
-                    const sevClass = caseDetail.severity.includes('Level 1') ? 'sev1' : caseDetail.severity.includes('Level 2') ? 'sev2' : caseDetail.severity.includes('Level 3') ? 'sev3' : 'sev4';
-                    const sevShort = caseDetail.severity.includes('Level 1') ? 'SEV1' : caseDetail.severity.includes('Level 2') ? 'SEV2' : caseDetail.severity.includes('Level 3') ? 'SEV3' : 'SEV4';
-                    const total = Math.max(0, Number(caseDetail.totalRequiredMinutes || 0));
-                    const elapsed = Math.max(0, Number(caseDetail.minutesSinceCreation || 0));
-                    const remaining = Math.max(0, total - elapsed);
-                    const totalDisplay = elapsed + remaining;
-                    const progressPct = totalDisplay > 0 ? Math.max(0, Math.min(100, Math.round((remaining / totalDisplay) * 100))) : 0;
-                    const dueNow = remaining <= 0;
-                    const mvpBadgeTop = caseDetail.isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : '';
-
-                    pendingGridHtml += `
-                      <div class="pending-card ${sevClass}" data-created="${new Date(caseDetail.createdDate).toISOString()}" data-total="${totalDisplay}">
-                        <div class="pending-card-top">
-                          <div class="pending-id">${caseDetail.caseNumber}</div>
-                          <span class="severity-badge ${sevClass}">${sevShort}</span>
-                          ${mvpBadgeTop}
-                        </div>
-                        <div class="pending-body">
-                          <div class="pending-account">${caseDetail.account}</div>
-                          <div class="pending-meta">Created: ${formatDateWithDayOfWeek(caseDetail.createdDate)} (<span class="js-elapsed">${elapsed}m</span> ago)</div>
-                        </div>
-                        <div class="pending-progress">
-                          <div class="pending-progress-bar" style="width: ${progressPct}%;"></div>
-                          <div class="pending-progress-label"><span class="js-progress-remaining">${remaining}</span>m / <span class="js-progress-total">${totalDisplay}</span>m</div>
-                        </div>
-                        <div class="pending-footer">
-                          <span class="remaining-badge ${dueNow ? 'due' : ''}">${dueNow ? 'Due now' : `<span class=\"js-remaining\">${remaining}</span>m remaining`}</span>
-                        </div>
-                      </div>`;
-                  });
-
+                  const pendingGridHtml = buildPendingCardsHtml(pendingCasesDetails);
                   const isWeekendSLA_nc = (minSev1 === 0 && minSev2 === 0);
                   const subTitleText_nc = isWeekendSLA_nc
                     ? `${pendingCasesCount} case${pendingCasesCount === 1 ? '' : 's'} being monitored`
                     : `${pendingCasesCount} pending within SLA · SEV1: ${minSev1}m · SEV2: ${minSev2}m`;
-
-                  noCasesHtml = `
-                    <section class="pending-section">
-                      <div class="pending-header">
-                        <div class="pending-title-wrap">
-                          <h4 class="pending-title">No Action Required</h4>
-                          <span class="pending-count-badge">${pendingCasesCount}</span>
-                        </div>
-                        <div class="pending-subtitle">${subTitleText_nc}</div>
-                      </div>
-                      <div class="pending-grid">
-                        ${pendingGridHtml}
-                      </div>
-                    </section>`;
+                  noCasesHtml = getPendingSectionHtml({
+                    title: 'No Action Required',
+                    pendingCasesCount,
+                    subTitleText: subTitleText_nc,
+                    pendingGridHtml
+                  });
                 } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
                   noCasesHtml = `
                     <div class="no-cases-message">
@@ -855,9 +912,8 @@ function getCaseDetails() {
 
                 const container = document.getElementById("parentSigSev2");
                 container.classList.remove('is-loading');
-                container.innerHTML = noCasesHtml; // replace loading tile entirely
+                container.innerHTML = noCasesHtml;
                 container.classList.add('content-enter');
-                // Start live updater for pending cards (no actionable cases view)
                 startPendingLiveUpdater();
                 var data = 'openTabSilent';
                 chrome.runtime.sendMessage(data, function (response) {
@@ -873,102 +929,6 @@ function getCaseDetails() {
       });
     }
   });
-}
-
-function getWeekendSignatureTemplate(caseSeverity = '') {
-  return `Hi @,
-New Sev${caseSeverity} case assigned to you & App is updated.
-Thank You`;
-}
-
-function getGHOTemplate() {
-  if (isCurrentlyWeekend()) {
-    return `Hi @,
-GHO (WOC) case assigned to you & App is updated.
-Thank You`;
-  }
-  else {
-    return `Hi @QB,
-Greetings for the day.!
-
-Kindly assist with GHO case assignment on this case.
-
-Thank You
-#GHOTriage`;
-  }
-}
-// Helper function to format date with day of the week
-function formatDateWithDayOfWeek(date) {
-  const dateObj = new Date(date);
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const dayOfWeek = dayNames[dateObj.getDay()];
-  return `${dayOfWeek}, ${dateObj.toLocaleString()}`;
-}
-
-// Function to determine shift based on a specific date/time
-function getShiftForDate(date) {
-  const dateObj = new Date(date);
-  const hours = dateObj.getHours();
-  const minutes = dateObj.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
-
-  const apacStart = 5 * 60 + 30;
-  const emeaStart = 12 * 60 + 30;
-  const apacEnd = 12 * 60 + 30;
-  const emeaEnd = 20 * 60;
-
-  if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
-    return 'APAC';
-  } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
-    return 'EMEA';
-  } else {
-    return 'AMER';
-  }
-}
-
-// Function to check if a date is today
-function isToday(date) {
-  const today = new Date();
-  const checkDate = new Date(date);
-  return today.toDateString() === checkDate.toDateString();
-}
-
-// Function to determine current shift based on time of day
-function getCurrentShift() {
-  const now = new Date();
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
-
-  const apacStart = 5 * 60 + 30;
-  const emeaStart = 12 * 60 + 30;
-  const apacEnd = 12 * 60 + 30;
-  const emeaEnd = 20 * 60;
-
-  if (totalMinutes >= apacStart && totalMinutes < apacEnd) {
-    return 'APAC';
-  } else if (totalMinutes >= emeaStart && totalMinutes < emeaEnd) {
-    return 'EMEA';
-  } else {
-    return 'AMER';
-  }
-}
-function getPreferredShiftValues(currentShift) {
-  if (currentShift === 'APAC') {
-    return ['APAC', 'IST'];
-  } else if (currentShift === 'EMEA') {
-    return ['EMEA', 'IST'];
-  } else {
-    return [currentShift];
-  }
-}
-
-function buildPreferredShiftCondition(shiftValues) {
-  if (shiftValues.length === 1) {
-    return `Preferred_Shift__c='${shiftValues[0]}'`;
-  } else {
-    return `Preferred_Shift__c IN ('${shiftValues.join("','")}')`;
-  }
 }
 
 
@@ -1246,7 +1206,6 @@ function showGHOAlert(region, ghoRecords, alertKey) {
   }
 }
 
-// Helper function to check if a case matches GHO criteria
 function updateGHOButtonVisibility() {
   const ghoButton = document.getElementById("check-gho-button");
   if (ghoButton) {
@@ -1408,6 +1367,10 @@ function showKeyboardShortcutsHelp() {
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + S</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Track Case (toggle / submit)</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + L</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Close Modals</span>
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">ESC</kbd>
             </div>
@@ -1465,7 +1428,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById('action-filter').value = savedFilter;
   }
 
-  // Search input validation (search is automatic; button removed)
+  // Search input validation (automatic)
   function validateSearchInput() {
     const searchInput = document.getElementById("search-input");
     const inputValue = searchInput.value.trim();
@@ -1639,21 +1602,10 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // Handle GHO preview record clicks - auto-copy GHO template
-    if (e.target && e.target.classList.contains("gho-preview-btn")) {
-      const templateText = getGHOTemplate();
-      navigator.clipboard.writeText(templateText).then(function () {
-        const toast = document.getElementById('toast');
-        toast.textContent = 'GHO template copied to clipboard!';
-        toast.style.display = 'block';
-        setTimeout(function () {
-          toast.style.display = 'none';
-        }, 2000);
-      }).catch(function (err) {
-        console.error('Failed to copy GHO template: ', err);
-        showToast('Failed to copy template to clipboard');
-      });
-    }
+    // (Handled via gho.js attachGhoPreviewTemplateCopy)
   });
+  // Attach delegated GHO template copying (idempotent)
+  attachGhoPreviewTemplateCopy();
 
   // Add hover effects for GHO toggle buttons using event delegation
   document.getElementById("gho-cases-container").addEventListener("mouseover", function (e) {
@@ -1675,7 +1627,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
-//clear search input and reset filters
+// Clear search input and reset filters
 document.getElementById("clear-button").addEventListener("click", function () {
   document.getElementById("search-input").value = "";
   // search button removed
@@ -1703,8 +1655,8 @@ document.getElementById("clear-snoozed-button").addEventListener("click", functi
 // Manual track by Case Number UI wiring
 try {
   const trackInput = document.getElementById('track-case-input');
-  const trackBtn = document.getElementById('track-case-btn');
-  if (trackInput && trackBtn) {
+  // Button removed; tracking now via Cmd+L
+  if (trackInput) {
     const setTrackLoading = (loading) => {
       try {
         if (loading) {
@@ -1746,8 +1698,45 @@ try {
         trackInput.classList.add('hidden');
       }
     };
-    trackBtn.addEventListener('click', doTrack);
     trackInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') doTrack(); });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const active = document.activeElement;
+      const isOtherInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active !== trackInput;
+      if (isOtherInput) return;
+      if (!trackInput.classList.contains('hidden')) {
+        const val = (trackInput.value || '').trim();
+        if (val) {
+          e.preventDefault();
+          doTrack();
+        }
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      const active = document.activeElement;
+      const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active !== trackInput;
+      if (isTyping) return;
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const metaPressed = isMac ? e.metaKey : e.ctrlKey;
+      if (metaPressed && !e.shiftKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        const isHidden = trackInput.classList.contains('hidden');
+        if (isHidden) {
+          trackInput.classList.remove('hidden');
+          trackInput.focus();
+          trackInput.select();
+        } else {
+          const val = (trackInput.value || '').trim();
+          if (val) {
+            doTrack();
+          } else {
+            trackInput.classList.add('hidden');
+          }
+        }
+      }
+    });
   }
 } catch (e) { console.warn('Manual track wiring failed:', e); }
 
@@ -1755,6 +1744,14 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
     const caseDiv = button.closest('.case-card');
+    try {
+      if (currentUserName) {
+        const { bucket } = ensureUserUsageBucket(currentUserName);
+        bucket.actionedCases = (bucket.actionedCases || 0) + 1;
+        bucket.lastActiveISO = new Date().toISOString();
+        persistUsageState();
+      }
+    } catch (err) { console.warn('Failed to increment actionedCases', err); }
 
     const severityInfoItems = caseDiv.querySelectorAll('.case-info-item');
     let severityText = '';
@@ -1836,15 +1833,6 @@ document.getElementById("parentSigSev2").addEventListener("change", function (e)
   }
 });
 
-// Function to show toast message
-function showToast(message) {
-  const toast = document.getElementById('toast');
-  toast.textContent = message;
-  toast.style.display = 'block';
-  setTimeout(() => {
-    toast.style.display = 'none';
-  }, 3000);
-}
 
 // Determine weekend target date based on shift rules
 function getWeekendLookupDateForShift(shift) {
@@ -2228,9 +2216,6 @@ function clearSnoozedCases() {
     window.location.reload();
   }, 1000);
 }
-
-// Function to update status indicator based on case status
-// Status indicator removed
 
 // GHO Functions
 function checkGHOStatus() {
@@ -3359,3 +3344,7 @@ function startPendingLiveUpdater() {
     console.error('Failed starting pending live updater:', e);
   }
 }
+
+// ================= Helper Rendering Functions (extracted for DRY) =================
+// (pending section builders moved to modules/pending.js)
+// ================================================================================

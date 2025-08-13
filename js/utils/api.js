@@ -1,5 +1,9 @@
 const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 
+let __usageLogsCache = { rows: null, fetchedAt: 0 };
+const USAGE_CACHE_TTL = 5 * 60 * 1000;
+let __usageFetchInFlight = false;
+
 
 function getAuthToken(callback) {
     chrome.identity.getAuthToken({ interactive: true }, function (token) {
@@ -108,4 +112,93 @@ export function trackAction(dateofAction, caseNumber, severity, actionType, clou
 
         send(token);
     });
+}
+
+// Logs daily usage metrics (total active minutes & last active timestamps) to the 'Logs' sheet
+// Params: { datePSTString: 'MM/DD/YYYY', userName: string, totalActiveMinutes: number, lastActiveISO: string }
+// Debounce / duplicate control should be handled by caller (we also add a lightweight localStorage guard)
+export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, lastActiveISO, actionedCases = 0 }) {
+    try {
+        if (!dateLocalString || !userName) return;
+        if (typeof totalActiveMinutes !== 'number' || totalActiveMinutes < 0) return;
+
+        const guardKey = `usage_logged_${dateLocalString}_${userName}`;
+        let lastLogged = null;
+        try { lastLogged = JSON.parse(localStorage.getItem(guardKey) || 'null'); } catch { }
+        if (lastLogged && typeof lastLogged.lastMinutes === 'number') {
+            if (totalActiveMinutes < lastLogged.lastMinutes) return; // don't regress
+            if (totalActiveMinutes - lastLogged.lastMinutes < 2) return; // throttle updates (<2 min delta)
+        }
+
+        getAuthToken(async function (token) {
+            if (!token) return;
+            const sheetName = 'Logs';
+            const lastActive = lastActiveISO ? new Date(lastActiveISO) : new Date();
+            const lastActivePST = lastActive.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+            const lastActiveIST = lastActive.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+            // Required columns: Date, Name, Active Time (Minutes), Last Active Time(PST), Last Active Time(IST), Actioned Cases
+            const rowValues = [dateLocalString, userName, totalActiveMinutes, lastActivePST, lastActiveIST, actionedCases];
+
+            const doUpdate = (rowNumber) => {
+                const range = `${sheetName}!A${rowNumber}:F${rowNumber}`;
+                return fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ values: [rowValues] })
+                }).then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.json(); })
+                    .then(d => console.log('Usage row updated', d))
+                    .catch(e => console.error('Usage update error', e));
+            };
+
+            const appendNew = () => {
+                return fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}:append?valueInputOption=USER_ENTERED`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ values: [rowValues] })
+                }).then(r => { if (!r.ok) return r.text().then(t => { throw new Error(t); }); return r.json(); })
+                    .then(d => console.log('Usage row appended', d))
+                    .catch(e => console.error('Usage append error', e));
+            };
+
+            const ensureCache = async () => {
+                const now = Date.now();
+                if (__usageLogsCache.rows && now - __usageLogsCache.fetchedAt < USAGE_CACHE_TTL) return;
+                if (__usageFetchInFlight) return;
+                __usageFetchInFlight = true;
+                try {
+                    const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A:F`, { headers: { 'Authorization': 'Bearer ' + token } });
+                    if (!resp.ok) { console.warn('Usage fetch rows failed', resp.status); return; }
+                    const data = await resp.json();
+                    __usageLogsCache.rows = data.values || [];
+                    __usageLogsCache.fetchedAt = Date.now();
+                } catch (e) { console.warn('Usage rows fetch error', e); }
+                finally { __usageFetchInFlight = false; }
+            };
+
+            await ensureCache();
+            let rows = __usageLogsCache.rows || [];
+            let startIndex = 0;
+            if (rows.length > 0) {
+                const first = rows[0].map(v => v.toLowerCase());
+                if (first.includes('date') && first.includes('name')) startIndex = 1;
+            }
+            let targetRowNumber = null;
+            for (let i = startIndex; i < rows.length; i++) {
+                const r = rows[i];
+                if (r[0] === dateLocalString && r[1] === userName) { targetRowNumber = i + 1; break; }
+            }
+
+            if (targetRowNumber) {
+                await doUpdate(targetRowNumber);
+                if (__usageLogsCache.rows) __usageLogsCache.rows[targetRowNumber - 1] = rowValues;
+            } else {
+                await appendNew();
+                __usageLogsCache.fetchedAt = 0; // invalidate
+            }
+
+            localStorage.setItem(guardKey, JSON.stringify({ lastMinutes: totalActiveMinutes, loggedAt: Date.now() }));
+        });
+    } catch (e) {
+        console.error('logUsageDaily upsert error', e);
+    }
 }

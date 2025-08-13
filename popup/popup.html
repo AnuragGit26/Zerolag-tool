@@ -187,7 +187,7 @@
 			padding: 12px 16px;
 			border: 2px solid #e1e5e9;
 			border-radius: 8px;
-			font-size: 16px;
+			font-size: 14px;
 			transition: border-color 0.3s ease;
 		}
 
@@ -533,6 +533,7 @@
 
 
 		#toast {
+			/* Legacy single-toast element (kept for backward compat). Hidden when enhanced system in use. */
 			position: fixed;
 			top: 20px;
 			right: 20px;
@@ -541,9 +542,150 @@
 			padding: 16px 24px;
 			border-radius: 8px;
 			font-weight: 600;
-			z-index: 1000;
+			z-index: 900;
 			box-shadow: 0 14px 30px rgba(16, 185, 129, 0.3);
 			animation: slideInRight 260ms ease-out;
+		}
+
+		/* Enhanced toast system */
+		#toast-container {
+			position: fixed;
+			top: 16px;
+			right: 16px;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			width: 320px;
+			max-width: calc(100vw - 32px);
+			z-index: 1100;
+			pointer-events: none;
+			/* Allow clicks through gaps */
+		}
+
+		.toast {
+			--bg: #1f2937;
+			--fg: #fff;
+			--accent: #6366f1;
+			background: linear-gradient(145deg, var(--bg) 0%, #111827 100%);
+			color: var(--fg);
+			padding: 14px 18px 14px 16px;
+			border-radius: 14px;
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18), 0 12px 28px -6px rgba(0, 0, 0, 0.28);
+			backdrop-filter: blur(6px) saturate(140%);
+			font-size: 14px;
+			font-weight: 500;
+			line-height: 1.3;
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+			position: relative;
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			pointer-events: auto;
+			opacity: 0;
+			transform: translateX(16px) translateY(6px) scale(.97);
+			animation: toastIn 320ms cubic-bezier(.32, .72, .33, 1.22) forwards;
+		}
+
+		.toast-leave {
+			animation: toastOut 260ms ease forwards;
+		}
+
+		.toast-content {
+			display: flex;
+			align-items: flex-start;
+			gap: 10px;
+		}
+
+		.toast-icon {
+			font-size: 18px;
+			line-height: 1;
+		}
+
+		.toast-message {
+			flex: 1;
+			word-break: break-word;
+		}
+
+		.toast-close {
+			background: none;
+			border: none;
+			color: var(--fg);
+			font-size: 18px;
+			cursor: pointer;
+			line-height: 1;
+			padding: 2px 6px;
+			border-radius: 6px;
+			position: absolute;
+			top: 6px;
+			right: 6px;
+			transition: background 150ms;
+		}
+
+		.toast-close:hover {
+			background: rgba(255, 255, 255, 0.08);
+		}
+
+		.toast-progress {
+			height: 3px;
+			background: rgba(255, 255, 255, 0.15);
+			border-radius: 2px;
+			overflow: hidden;
+		}
+
+		.toast-progress-bar {
+			height: 100%;
+			width: 100%;
+			background: var(--accent);
+			transform-origin: left center;
+			transform: scaleX(1);
+			transition: transform linear;
+		}
+
+		.toast--success {
+			--bg: #064e3b;
+			--accent: #10b981;
+		}
+
+		.toast--info {
+			--bg: #1e3a8a;
+			--accent: #3b82f6;
+		}
+
+		.toast--warning {
+			--bg: #92400e;
+			--accent: #f59e0b;
+		}
+
+		.toast--error {
+			--bg: #7f1d1d;
+			--accent: #ef4444;
+		}
+
+		@keyframes toastIn {
+			from {
+				opacity: 0;
+				transform: translateX(24px) translateY(8px) scale(.95);
+			}
+
+			to {
+				opacity: 1;
+				transform: translateX(0) translateY(0) scale(1);
+			}
+		}
+
+		@keyframes toastOut {
+			to {
+				opacity: 0;
+				transform: translateX(24px) translateY(0) scale(.92);
+			}
+		}
+
+		@media (max-width: 520px) {
+			#toast-container {
+				left: 12px;
+				right: 12px;
+				width: auto;
+			}
 		}
 
 
@@ -946,7 +1088,6 @@
 			font-size: 12px;
 		}
 
-		/* Modern Pending Section */
 		.pending-section {
 			background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
 			border: 1.5px solid #bfdbfe;
@@ -954,7 +1095,6 @@
 			padding: 16px 16px 10px 16px;
 			box-shadow: 0 10px 24px rgba(59, 130, 246, 0.12);
 			animation: fadeUp 260ms ease;
-			/* match content width like the main case cards */
 			max-width: 100%;
 			margin: 12px 0;
 		}
@@ -1004,7 +1144,6 @@
 			gap: 10px;
 		}
 
-		/* Make a single pending card span full width (like a case card) */
 		.pending-grid>.pending-card:only-child {
 			grid-column: 1 / -1;
 			width: 100%;
@@ -1024,7 +1163,6 @@
 			border: 1px solid #e5e7eb;
 			border-radius: 12px;
 			padding: 16px 20px 14px 20px;
-			/* Lay out like case card: left info, center body, right remaining */
 			display: grid;
 			grid-template-columns: auto 1fr auto;
 			grid-template-rows: auto auto;
@@ -1259,13 +1397,13 @@
 		}
 
 		.gho-transfer-item--current {
-			background: #fef3c7;
-			border-left-color: #f59e0b;
+			background: #fefce8;
+			border-color: #fde68a;
 		}
 
 		.gho-transfer-item--other {
 			background: #f9fafb;
-			border-left-color: #9ca3af;
+			border-color: #9ca3af;
 		}
 
 		.gho-transfer-title {
@@ -1785,7 +1923,7 @@
 				<!-- Manual track controls -->
 				<input type="text" class="search-input hidden" id="track-case-input"
 					placeholder="Case Number to track..." style="max-width: 220px;">
-				<button class="btn-secondary" id="track-case-btn" title="Track case by number">Log Case</button>
+				<!-- Log Case button removed: now triggered via Command+L shortcut -->
 			</div>
 		</div>
 
