@@ -2,6 +2,8 @@ import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js
 import { applyFilter, applySearch, updateWeekendModeIndicator } from './utils/dom.js';
 import { trackAction, logUsageDaily } from './utils/api.js';
 import { formatDateWithDayOfWeek, getShiftForDate, isToday, getCurrentShift, getPreferredShiftValues, buildPreferredShiftCondition, getWeekendSignatureTemplate, getGHOTemplate } from './modules/shift.js';
+import { SHEET_SERVICE_CLOUD, SHEET_SALES_CLOUD, SHEET_INDUSTRY_CLOUD, SHEET_DATA_CLOUD_AF, getCICColumnForShift, getTEColumnForShift, getSwarmLeadColumnForShift, getPremierSalesDevTEColumn, getPremierSalesNonDevTEColumn, getPremierSalesSwarmLeadColumn, getPremierIndustryTEColumn, getPremierIndustrySwarmLeadColumn, getPremierDataCloudColumn, getPremierAgentforceColumn } from './modules/rosterDetails.js';
+import { initPremierCounters, resetPremierCountersAll, parseRosterNames, renderPremierCounters } from './modules/premierCounters.js';
 import { showToast } from './modules/toast.js';
 import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.js';
 import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
@@ -18,12 +20,18 @@ let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70iXfT-MVfhPs';
 
+// DEV: Force show Weekend Roster button and allow access regardless of actual weekend window
+// Set to false to restore original behavior, or gate with a localStorage flag if preferred.
+const DEV_FORCE_SHOW_WEEKEND_ROSTER = true;
+
 const GHO_CACHE_TTL = 80000;
 window.__ghoCache = window.__ghoCache || { signature: null, premier: null };
 window.__ghoListState = window.__ghoListState || null;
 const GHO_PAGE_SIZE = 10;
 const GHO_USERMAP_CACHE_KEY = 'gho_user_map_cache_v2';
 const GHO_USERMAP_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
+const USER_EMAIL_CACHE_KEY = 'sf_user_email_cache_v1';
+const USER_EMAIL_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
 
 function loadUserMapCache() {
   try {
@@ -43,6 +51,68 @@ function saveUserMapCache(userMap) {
     const payload = { userMap: userMap || {}, fetchedAt: Date.now() };
     localStorage.setItem(GHO_USERMAP_CACHE_KEY, JSON.stringify(payload));
   } catch { /* noop */ }
+}
+
+function loadUserEmailCache() {
+  try {
+    const raw = localStorage.getItem(USER_EMAIL_CACHE_KEY);
+    if (!raw) return { map: {}, fetchedAt: 0 };
+    const parsed = JSON.parse(raw);
+    const age = Date.now() - (parsed.fetchedAt || 0);
+    if (age > USER_EMAIL_CACHE_TTL) return { map: {}, fetchedAt: 0 };
+    return { map: parsed.map || {}, fetchedAt: parsed.fetchedAt || 0 };
+  } catch { return { map: {}, fetchedAt: 0 }; }
+}
+function saveUserEmailCache(map) {
+  try { localStorage.setItem(USER_EMAIL_CACHE_KEY, JSON.stringify({ map: map || {}, fetchedAt: Date.now() })); } catch { }
+}
+function escapeSoqlString(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+function cleanRosterNameForQuery(name) {
+  let s = String(name || '').trim();
+  s = s.replace(/^\s*[^:]*:\s*/, '');
+  s = s.replace(/\([^)]*\)/g, '');
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  return s;
+}
+function getEmailsByNames(names) {
+  return new Promise((resolve) => {
+    try {
+      const unique = Array.from(new Set((names || []).map(n => String(n).trim()).filter(Boolean)));
+      if (unique.length === 0) return resolve({});
+      const pairs = unique.map(n => ({ original: n, cleaned: cleanRosterNameForQuery(n) })).filter(p => p.cleaned);
+      const cached = loadUserEmailCache();
+      const cache = cached.map || {};
+      const cleanedSet = Array.from(new Set(pairs.map(p => p.cleaned.toLowerCase())));
+      const missing = cleanedSet.filter(k => !cache[k]);
+      if (missing.length === 0) {
+        const out = {};
+        pairs.forEach(p => { const k = p.cleaned.toLowerCase(); const em = cache[k]; if (em) { out[k] = em; out[p.original.toLowerCase()] = em; } });
+        return resolve(out);
+      }
+      const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID });
+      const CHUNK = 70;
+      let idx = 0; const merged = { ...cache };
+      const runNext = () => {
+        if (idx >= missing.length) {
+          saveUserEmailCache(merged);
+          const out = {};
+          pairs.forEach(p => { const k = p.cleaned.toLowerCase(); const em = merged[k]; if (em) { out[k] = em; out[p.original.toLowerCase()] = em; } });
+          return resolve(out);
+        }
+        const slice = missing.slice(idx, idx += CHUNK);
+        const soql = `SELECT Name, Email FROM User WHERE IsActive = true AND Username LIKE '%orgcs.com' AND Email != null AND Name IN ('${slice.map(escapeSoqlString).join("','")}')`;
+        conn.query(soql, (err, res) => {
+          if (!err && res && res.records) {
+            res.records.forEach(u => { if (u && u.Name && u.Email) merged[String(u.Name).toLowerCase()] = u.Email; });
+          } else {
+            console.warn('Email query failed for names chunk', err);
+          }
+          runNext();
+        });
+      };
+      runNext();
+    } catch (e) { console.warn('getEmailsByNames failed', e); resolve({}); }
+  });
 }
 
 let mouseActivityTimer;
@@ -211,7 +281,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   try {
     if (request.action === 'trackActionFromBackground') {
       const { createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue } = request.data;
-      trackAction(createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue);
+      trackActionAndCount(createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue);
       sendResponse({ success: true });
       return true;
     }
@@ -221,6 +291,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   return false;
 });
+
+// Wrapper: increment per-day actioned cases and then forward to API logger
+function trackActionAndCount(dateofAction, caseNumber, severity, actionType, cloud, mode, userName, assignedTo = '') {
+  try {
+    const name = userName || currentUserName;
+    if (name) {
+      const { bucket } = ensureUserUsageBucket(name);
+      bucket.actionedCases = (bucket.actionedCases || 0) + 1;
+      bucket.lastActiveISO = new Date().toISOString();
+      persistUsageState();
+    }
+    trackAction(dateofAction, caseNumber, severity, actionType, cloud, mode || currentMode, name, assignedTo);
+  } catch (e) {
+    console.warn('trackActionAndCount failed', e);
+    // Fallback to original trackAction to avoid losing logs
+    try { trackAction(dateofAction, caseNumber, severity, actionType, cloud, mode || currentMode, userName || currentUserName, assignedTo); } catch { }
+  }
+}
 
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
@@ -394,7 +482,7 @@ function getCaseDetails() {
                       if (caseRecord) {
                         const trackingKey = `tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(trackingKey)) {
-                          trackAction(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                          trackActionAndCount(caseRecord.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'New Case', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                           localStorage.setItem(trackingKey, 'true');
 
                           // Remove from persistent set as it's been processed
@@ -434,7 +522,7 @@ function getCaseDetails() {
                       if (caseRecord) {
                         const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                         if (!localStorage.getItem(ghoTrackingKey)) {
-                          trackAction(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                          trackActionAndCount(record.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                           localStorage.setItem(ghoTrackingKey, 'true');
                           logger.info('gho.triage.tracked', { caseNumber: caseRecord.CaseNumber, date: commentDate, shift: commentShift });
 
@@ -1056,7 +1144,7 @@ function checkGHOAlert() {
                   if (caseRecord) {
                     const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                     if (!localStorage.getItem(ghoTrackingKey)) {
-                      trackAction(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                      trackActionAndCount(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                       localStorage.setItem(ghoTrackingKey, 'true');
                       console.log('GHO alert - triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
                     }
@@ -1223,7 +1311,7 @@ function updateGHOButtonVisibility() {
 function updateCICButtonVisibility() {
   const cicButton = document.getElementById("cic-button");
   if (cicButton) {
-    cicButton.style.display = isCurrentlyWeekend() ? 'inline-block' : 'none';
+    cicButton.style.display = (DEV_FORCE_SHOW_WEEKEND_ROSTER || isCurrentlyWeekend()) ? 'inline-block' : 'none';
   }
 }
 
@@ -1482,12 +1570,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("mode-switch").addEventListener("change", function () {
     const headerTitle = document.querySelector(".header-title");
+    const pill = document.getElementById('mode-pill');
     if (this.checked) {
       currentMode = 'premier';
       headerTitle.textContent = 'Zerolag Tool - Premier Mode';
+      if (pill) { pill.textContent = 'Premier'; pill.classList.add('flash'); setTimeout(() => pill.classList.remove('flash'), 600); }
     } else {
       currentMode = 'signature';
       headerTitle.textContent = 'Zerolag Tool - Signature Mode';
+      if (pill) { pill.textContent = 'Signature'; pill.classList.add('flash'); setTimeout(() => pill.classList.remove('flash'), 600); }
     }
     localStorage.setItem('caseTriageMode', currentMode);
 
@@ -1531,11 +1622,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const modeSwitch = document.getElementById("mode-switch");
   const headerTitle = document.querySelector(".header-title");
+  const headerContainer = document.querySelector('.header-container');
+  if (headerContainer) headerContainer.classList.add('animate-in');
+  const pill = document.getElementById('mode-pill');
   if (currentMode === 'premier') {
     modeSwitch.checked = true;
     headerTitle.textContent = 'Zerolag Tool - Premier Mode';
+    if (pill) pill.textContent = 'Premier';
   } else {
     headerTitle.textContent = 'Zerolag Tool - Signature Mode';
+    if (pill) pill.textContent = 'Signature';
   }
 
   // Set initial GHO button visibility
@@ -1560,7 +1656,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Weekend Roster Button Event Listener
   document.getElementById("cic-button").addEventListener("click", function () {
-    if (!isCurrentlyWeekend()) {
+    if (!DEV_FORCE_SHOW_WEEKEND_ROSTER && !isCurrentlyWeekend()) {
       showToast('Weekend Roster is for weekends only');
       return;
     }
@@ -1744,14 +1840,7 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
     const caseDiv = button.closest('.case-card');
-    try {
-      if (currentUserName) {
-        const { bucket } = ensureUserUsageBucket(currentUserName);
-        bucket.actionedCases = (bucket.actionedCases || 0) + 1;
-        bucket.lastActiveISO = new Date().toISOString();
-        persistUsageState();
-      }
-    } catch (err) { console.warn('Failed to increment actionedCases', err); }
+    // clicking preview no longer counts toward actioned cases; actions are counted when trackAction is invoked
 
     const severityInfoItems = caseDiv.querySelectorAll('.case-info-item');
     let severityText = '';
@@ -1883,18 +1972,6 @@ function getWeekendLookupDateForShift(shift) {
   return `${m}/${d}/${y}`;
 }
 
-function getCICColumnForShift(shift) {
-  if (shift === 'APAC') return 'B';
-  if (shift === 'EMEA') return 'J';
-  return 'S';
-}
-
-function getTEColumnForShift(shift) {
-  if (shift === 'APAC') return 'F';
-  if (shift === 'EMEA') return 'O';
-  return 'W';
-}
-
 function getCurrentShiftIST() {
   const now = new Date();
   const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
@@ -1929,34 +2006,85 @@ function googleSheetsGET(rangeA1, callback, onError) {
   });
 }
 
+async function getCellValueWithoutStrikethrough(sheetName, rowIndexZero, colLetter) {
+  return new Promise((resolve, reject) => {
+    try {
+      const a1 = `${colLetter}${rowIndexZero + 1}`;
+      chrome.identity.getAuthToken({ interactive: true }, function (token) {
+        if (chrome.runtime.lastError || !token) {
+          return reject(new Error('Auth token error'));
+        }
+        const url = `https://sheets.googleapis.com/v4/spreadsheets/${WEEKEND_ROSTER_SPREADSHEET_ID}?includeGridData=true&ranges=${encodeURIComponent(`${sheetName}!${a1}`)}`;
+        fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+          .then(r => r.json())
+          .then(j => {
+            try {
+              const sheets = j.sheets || [];
+              for (const sh of sheets) {
+                const data = (sh.data || []);
+                for (const block of data) {
+                  const rows = block.rowData || [];
+                  for (const row of rows) {
+                    const vals = row.values || [];
+                    for (const v of vals) {
+                      const text = (v.formattedValue) || (v.effectiveValue && v.effectiveValue.stringValue) || '';
+                      const runs = v.textFormatRuns || [];
+                      if (!runs || runs.length === 0) return resolve(String(text || ''));
+                      const ordered = runs.slice().sort((a, b) => (a.startIndex || 0) - (b.startIndex || 0));
+                      let out = '';
+                      for (let i = 0; i < ordered.length; i++) {
+                        const start = ordered[i].startIndex || 0;
+                        const end = (i + 1 < ordered.length) ? (ordered[i + 1].startIndex || text.length) : text.length;
+                        const seg = text.substring(start, end);
+                        const fmt = ordered[i].format || {};
+                        if (fmt.strikethrough) continue;
+                        out += seg;
+                      }
+                      return resolve(out.trim());
+                    }
+                  }
+                }
+              }
+              resolve('');
+            } catch (e) { reject(e); }
+          })
+          .catch(err => reject(err));
+      });
+    } catch (e) { reject(e); }
+  });
+}
+
 function showCICManagers() {
   const shift = getCurrentShiftIST();
   const weekendDateStr = getWeekendLookupDateForShift(shift);
   const column = getCICColumnForShift(shift);
 
-  const range = `'Service Cloud'!A:S`;
+  // Include up to column X to support AMER Swarm Lead column
+  const range = `'${SHEET_SERVICE_CLOUD}'!A:X`;
 
   const showLoading = () => {
     const loadingHtml = `
       <div id="cic-modal" class="modal-overlay" style="display:flex; z-index:1003;">
-        <div class="modal-content" style="max-width: 600px;">
-          <div class="modal-header" style="background: linear-gradient(135deg,#14b8a6 0%, #0ea5e9 100%); color: white;">
-            <h3 style="color:white; margin:0;">Weekend Roster</h3>
+        <div class="modal-content" style="max-width: 720px; border-radius:16px; box-shadow: 0 10px 30px rgba(2,132,199,0.15); overflow:hidden;">
+          <div class="modal-header" style="background: linear-gradient(135deg,#0ea5e9 0%, #0284c7 100%); color: white; display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <h3 style="color:white; margin:0;">Weekend Roster</h3>
+              <span style="background: rgba(255,255,255,0.2); color:#fff; padding:4px 10px; border-radius:999px; font-size:11px; letter-spacing:.4px;">${shift} · ${weekendDateStr}</span>
+            </div>
             <span class="modal-close" id="cic-modal-close" style="color:white; cursor:pointer; font-size:24px;">&times;</span>
           </div>
-          <div class="modal-body">
-            <div class="loading-message" style="animation: fadeUp 300ms ease;">
+          <div class="modal-body" style="background: #f8fafc;">
+            <div class="loading-message" style="animation: fadeUp 300ms ease; text-align:center; padding: 24px;">
               <div class="spinner"></div>
-              <h4 style="margin-bottom:8px">Loading Weekend Roster...</h4>
-              <p>${shift} · ${weekendDateStr}</p>
-              <div class="skeleton-list">
-                <div class="skeleton-card"></div>
-                <div class="skeleton-card"></div>
-                <div class="skeleton-card"></div>
+              <h4 style="margin:12px 0 6px; color:#0c4a6e;">Loading Weekend Roster...</h4>
+              <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
+                <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Shift: ${shift}</span>
+                <span style="background:#e0f2fe; color:#075985; border:1px solid #bae6fd; padding:4px 10px; border-radius:999px; font-size:12px;">Date: ${weekendDateStr}</span>
+                <span style="background:${currentMode === 'premier' ? '#d1fae5' : '#e0e7ff'}; color:${currentMode === 'premier' ? '#065f46' : '#3730a3'}; border:1px solid ${currentMode === 'premier' ? '#6ee7b7' : '#c7d2fe'}; padding:4px 10px; border-radius:999px; font-size:12px;">Mode: ${currentMode === 'premier' ? 'Premier' : 'Signature'}</span>
               </div>
             </div>
           </div>
-          <div class="modal-footer" style="padding:12px 16px; border-top:1px solid #e5e7eb; background:#f8fafc; color:#64748b; font-size:12px;">
+          <div class="modal-footer" style="padding:12px 16px; border-top:1px solid #e5e7eb; background:#ffffff; color:#64748b; font-size:12px;">
             Tip: Click any names area to copy all names as a comma-separated list.
           </div>
         </div>
@@ -1982,6 +2110,8 @@ function showCICManagers() {
   };
 
   showLoading();
+  // Initialize daily counters scope for Premier (per-shift with AMER Sunday 20:30 rule)
+  try { initPremierCounters(weekendDateStr, shift); } catch { }
 
   googleSheetsGET(range, (resp) => {
     try {
@@ -2041,12 +2171,28 @@ function showCICManagers() {
 
       bodyEl.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:12px;">
-          <div>
-            <div style="font-weight:700; color:#0f766e; margin-bottom:6px;">${prettyTitle}</div>
-    <div id="cic-names" title="Click to copy" style="padding:12px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">
-      ${formatNamesToMultiline(namesCell)}
+          <div class="cic-card" style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+              <div style="font-weight:700; color:#0f766e;">${prettyTitle}</div>
+              <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+            </div>
+            <div id="cic-names" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">
+              ${formatNamesToMultiline(namesCell)}
             </div>
           </div>
+      ${currentMode === 'premier' ? `
+          <div class="premier-toggle" style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <label for="premier-view" style="font-size:12px; color:#475569;">Premier view:</label>
+            <select id="premier-view" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:8px; background:#ffffff; color:#0f172a; font-size:13px;">
+        <option value="sales">Sales</option>
+        <option value="service">Service</option>
+              <option value="industry">Industry</option>
+              <option value="data">Data</option>
+            </select>
+            <button id="premier-reset" title="Reset all counters" style="margin-left:auto; padding:6px 10px; border:1px solid #ef4444; background:#fef2f2; color:#b91c1c; border-radius:8px; font-size:12px; cursor:pointer;">Reset Counts</button>
+          </div>
+          <div id="premier-sections" style="display:flex; flex-direction:column; gap:12px;"></div>
+          ` : ''}
         </div>`;
 
       const cell = document.getElementById('cic-names');
@@ -2055,6 +2201,48 @@ function showCICManagers() {
           showToast('Weekend Roster copied');
         }).catch(() => showToast('Copy failed'));
       });
+
+      if (currentMode === 'signature') {
+        const swarmCol = getSwarmLeadColumnForShift(shift);
+        const swarmIdx = swarmCol.charCodeAt(0) - 'A'.charCodeAt(0);
+        const swarmCellRaw = (foundRowIdx >= 0 && rows[foundRowIdx]) ? (rows[foundRowIdx][swarmIdx] || '') : '';
+        const swarmCell = String(swarmCellRaw || '').trim();
+        const swarmTitle = 'Signature Swarm Lead - ' + shift;
+        const bodyEl2 = document.querySelector('#cic-modal .modal-body');
+        if (bodyEl2) {
+          if (!swarmCell) {
+            bodyEl2.insertAdjacentHTML('beforeend', `
+              <div style="margin-top:12px;">
+                <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                  <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${swarmTitle}</div>
+                  <div style="font-size:14px; color:#64748b;">No Designated Name</div>
+                </div>
+              </div>
+            `);
+          } else {
+            const swarmCopy = normalizeNamesForCopy(swarmCell);
+            bodyEl2.insertAdjacentHTML('beforeend', `
+              <div style="margin-top:12px;">
+                <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                    <div style="font-weight:700; color:#0f766e;">${swarmTitle}</div>
+                    <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                  </div>
+                  <div id="sig-swarm-lead-names" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">
+                    ${formatNamesToMultiline(swarmCell)}
+                  </div>
+                </div>
+              </div>
+            `);
+            const swEl = document.getElementById('sig-swarm-lead-names');
+            if (swEl) {
+              swEl.addEventListener('click', () => {
+                navigator.clipboard.writeText(swarmCopy).then(() => showToast('Signature Swarm Lead copied')).catch(() => showToast('Copy failed'));
+              });
+            }
+          }
+        }
+      }
 
       // In Signature mode, also show Sales/Service Cloud TEs sections
       if (currentMode === 'signature') {
@@ -2095,9 +2283,11 @@ function showCICManagers() {
                 let sectionHtml = '';
                 if (!teNamesCell) {
                   sectionHtml = `
-                    <div class="no-cases-message" style="animation: fadeUp 260ms ease; margin-top:12px;">
-                      <h4 class="no-cases-title" style="color:#0f766e;">${sectionTitle}</h4>
-                      <p class="no-cases-text">No TEs found for ${shift} on ${weekendDateStr}.</p>
+                    <div style="margin-top:12px;">
+                      <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                        <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${sectionTitle}</div>
+                        <div style="font-size:14px; color:#64748b;">No TEs found for ${shift} on ${weekendDateStr}.</div>
+                      </div>
                     </div>`;
                   bodyEl2.insertAdjacentHTML('beforeend', sectionHtml);
                   return;
@@ -2105,10 +2295,13 @@ function showCICManagers() {
 
                 const teNamesComma = normalizeNamesForCopy(teNamesCell);
                 sectionHtml = `
-                  <div style="display:flex; flex-direction:column; gap:12px; margin-top:12px;">
-                    <div>
-                      <div style="font-weight:700; color:#0f766e; margin-bottom:6px;">${sectionTitle}</div>
-          <div id="${idSuffix}-names" title="Click to copy" style="padding:12px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(teNamesCell)}</div>
+                  <div style="margin-top:12px;">
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:700; color:#0f766e;">${sectionTitle}</div>
+                        <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                      </div>
+                      <div id="${idSuffix}-names" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(teNamesCell)}</div>
                     </div>
                   </div>`;
                 bodyEl2.insertAdjacentHTML('beforeend', sectionHtml);
@@ -2129,8 +2322,302 @@ function showCICManagers() {
             });
           };
 
-          appendTESection('Sales Cloud', 'Sales Cloud TEs', 'sales-te');
-          appendTESection('Service Cloud', 'Service Cloud TEs', 'service-te');
+          appendTESection(SHEET_SALES_CLOUD, 'Sales Cloud TEs', 'sales-te');
+          appendTESection(SHEET_SERVICE_CLOUD, 'Service Cloud TEs', 'service-te');
+        }
+      }
+
+      // Premier mode: add dropdown-driven sections
+      if (currentMode === 'premier') {
+        const container = document.getElementById('premier-sections');
+        const select = document.getElementById('premier-view');
+        const resetBtn = document.getElementById('premier-reset');
+        if (container && select) {
+          if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+              resetPremierCountersAll(weekendDateStr, shift); // re-render current view
+              const v = select.value; if (v === 'sales') return renderSales(); if (v === 'service') return renderService(); if (v === 'industry') return renderIndustry(); return renderData();
+            });
+          }
+          const renderSales = () => {
+            container.innerHTML = '';
+            // 3 cells from Sales Cloud sheet
+            const rangePS = `'${SHEET_SALES_CLOUD}'!A:Z`;
+            googleSheetsGET(rangePS, (r) => {
+              const rowsPS = r.values || [];
+              let rowIdx = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsPS.length; i++) {
+                const aVal = rowsPS[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdx = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdx = i; break; }
+                }
+              }
+              const getCell = (col) => {
+                if (rowIdx < 0) return '';
+                const idx = col.charCodeAt(0) - 'A'.charCodeAt(0);
+                return (rowsPS[rowIdx][idx] || '').toString();
+              };
+              const blocks = [
+                { title: `${shift} Dev TEs`, col: getPremierSalesDevTEColumn(shift), id: 'premier-sales-dev-tes' },
+                { title: `${shift} Non-Dev TEs`, col: getPremierSalesNonDevTEColumn(shift), id: 'premier-sales-nondev-tes' },
+                { title: `${shift} Swarm Lead`, col: getPremierSalesSwarmLeadColumn(shift), id: 'premier-sales-swarm' },
+              ];
+              blocks.forEach(async ({ title, col, id }) => {
+                let val = getCell(col).trim();
+                try { val = (await getCellValueWithoutStrikethrough(SHEET_SALES_CLOUD, rowIdx, col)) || val; } catch { }
+                const html = val
+                  ? `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:700; color:#0f766e;">${title}</div>
+                        <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                      </div>
+                      <div id="${id}" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(val)}</div>
+                      <div id="${id}-counters" style="margin-top:10px;"></div>
+                    </div>`
+                  : `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${title}</div>
+                      <div style="font-size:14px; color:#64748b;">No data for ${shift} on ${weekendDateStr}.</div>
+                    </div>`;
+                container.insertAdjacentHTML('beforeend', html);
+                if (val) {
+                  const copyEl = document.getElementById(id);
+                  if (copyEl) {
+                    const toCopy = normalizeNamesForCopy(val);
+                    copyEl.addEventListener('click', () => navigator.clipboard.writeText(toCopy).then(() => showToast(`${title} copied`)).catch(() => showToast('Copy failed')));
+                  }
+                  const countersEl = document.getElementById(`${id}-counters`);
+                  if (countersEl) {
+                    const names = parseRosterNames(val);
+                    let emailMap = {};
+                    try { emailMap = await getEmailsByNames(names); } catch { }
+                    renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                  }
+                }
+              });
+            }, (e) => console.error('Premier Sales read fail:', e));
+          };
+
+          const renderService = () => {
+            container.innerHTML = '';
+            // 3 cells from Service Cloud sheet
+            const rangePSe = `'${SHEET_SERVICE_CLOUD}'!A:Z`;
+            googleSheetsGET(rangePSe, (r) => {
+              const rowsPS = r.values || [];
+              let rowIdx = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsPS.length; i++) {
+                const aVal = rowsPS[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdx = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdx = i; break; }
+                }
+              }
+              const getCell = (col) => {
+                if (rowIdx < 0) return '';
+                const idx = col.charCodeAt(0) - 'A'.charCodeAt(0);
+                return (rowsPS[rowIdx][idx] || '').toString();
+              };
+              const blocks = [
+                { title: `${shift} Dev TEs`, col: getPremierSalesDevTEColumn(shift), id: 'premier-service-dev-tes' },
+                { title: `${shift} Non-Dev TEs`, col: getPremierSalesNonDevTEColumn(shift), id: 'premier-service-nondev-tes' },
+                { title: `${shift} Swarm Lead`, col: getPremierSalesSwarmLeadColumn(shift), id: 'premier-service-swarm' },
+              ];
+              blocks.forEach(async ({ title, col, id }) => {
+                let val = getCell(col).trim();
+                try { val = (await getCellValueWithoutStrikethrough(SHEET_SERVICE_CLOUD, rowIdx, col)) || val; } catch { }
+                const html = val
+                  ? `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:700; color:#0f766e;">${title}</div>
+                        <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                      </div>
+                      <div id="${id}" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(val)}</div>
+                      <div id="${id}-counters" style="margin-top:10px;"></div>
+                    </div>`
+                  : `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${title}</div>
+                      <div style="font-size:14px; color:#64748b;">No data for ${shift} on ${weekendDateStr}.</div>
+                    </div>`;
+                container.insertAdjacentHTML('beforeend', html);
+                if (val) {
+                  const copyEl = document.getElementById(id);
+                  if (copyEl) {
+                    const toCopy = normalizeNamesForCopy(val);
+                    copyEl.addEventListener('click', () => navigator.clipboard.writeText(toCopy).then(() => showToast(`${title} copied`)).catch(() => showToast('Copy failed')));
+                  }
+                  const countersEl = document.getElementById(`${id}-counters`);
+                  if (countersEl) {
+                    const names = parseRosterNames(val);
+                    let emailMap = {};
+                    try { emailMap = await getEmailsByNames(names); } catch { }
+                    renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                  }
+                }
+              });
+            }, (e) => console.error('Premier Service read fail:', e));
+          };
+
+          const renderIndustry = () => {
+            container.innerHTML = '';
+            // 2 cells: Industry TEs, Swarm Lead from Industry Cloud sheet
+            const rangePI = `'${SHEET_INDUSTRY_CLOUD}'!A:Z`;
+            googleSheetsGET(rangePI, (r) => {
+              const rowsPI = r.values || [];
+              let rowIdx = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsPI.length; i++) {
+                const aVal = rowsPI[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdx = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdx = i; break; }
+                }
+              }
+              const getCell = (col) => {
+                if (rowIdx < 0) return '';
+                const idx = col.charCodeAt(0) - 'A'.charCodeAt(0);
+                return (rowsPI[rowIdx][idx] || '').toString();
+              };
+              const blocks = [
+                { title: `${shift} Industry TEs`, col: getPremierIndustryTEColumn(shift), id: 'premier-industry-tes' },
+                { title: `${shift} Swarm Lead`, col: getPremierIndustrySwarmLeadColumn(shift), id: 'premier-industry-swarm' },
+              ];
+              blocks.forEach(async ({ title, col, id }) => {
+                let val = getCell(col).trim();
+                try { val = (await getCellValueWithoutStrikethrough(SHEET_INDUSTRY_CLOUD, rowIdx, col)) || val; } catch { }
+                const html = val
+                  ? `
+                    <div style=\"border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;\">\n                      <div style=\"display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;\">\n                        <div style=\"font-weight:700; color:#0f766e;\">${title}</div>\n                        <span style=\"font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;\">Click to copy</span>\n                      </div>\n                      <div id=\"${id}\" title=\"Click to copy\" style=\"padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;\">${formatNamesToMultiline(val)}</div>\n                    </div>`
+                  : `
+                    <div style=\"border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;\">\n                      <div style=\"font-weight:700; color:#0f766e; margin-bottom:4px;\">${title}</div>\n                      <div style=\"font-size:14px; color:#64748b;\">No data for ${shift} on ${weekendDateStr}.</div>\n                    </div>`;
+                container.insertAdjacentHTML('beforeend', html);
+                if (val) {
+                  const copyEl = document.getElementById(id);
+                  if (copyEl) {
+                    const toCopy = normalizeNamesForCopy(val);
+                    copyEl.addEventListener('click', () => navigator.clipboard.writeText(toCopy).then(() => showToast(`${title} copied`)).catch(() => showToast('Copy failed')));
+                  }
+                  // Add counters under each industry block
+                  const countersEl = document.createElement('div');
+                  countersEl.id = `${id}-counters`;
+                  countersEl.style.marginTop = '10px';
+                  const lastBlock = container.lastElementChild;
+                  if (lastBlock) lastBlock.appendChild(countersEl);
+                  const names = parseRosterNames(val);
+                  let emailMap = {};
+                  try { emailMap = await getEmailsByNames(names); } catch { }
+                  renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                }
+              });
+            }, (e) => console.error('Premier Industry read fail:', e));
+          };
+
+          const renderData = () => {
+            container.innerHTML = '';
+            // 2 cells from Data Cloud and AF sheet: DataCloud {Shift}, Agentforce {Shift}
+            const rangePD = `'${SHEET_DATA_CLOUD_AF}'!A:Z`;
+            googleSheetsGET(rangePD, (r) => {
+              const rowsPD = r.values || [];
+              let rowIdx = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsPD.length; i++) {
+                const aVal = rowsPD[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdx = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdx = i; break; }
+                }
+              }
+              const getCell = (col) => {
+                if (rowIdx < 0) return '';
+                const idx = col.charCodeAt(0) - 'A'.charCodeAt(0);
+                return (rowsPD[rowIdx][idx] || '').toString();
+              };
+              const blocks = [
+                { title: `DataCloud ${shift}`, col: getPremierDataCloudColumn(shift), id: 'premier-data-datacloud' },
+                { title: `Agentforce ${shift}`, col: getPremierAgentforceColumn(shift), id: 'premier-data-agentforce' },
+              ];
+              blocks.forEach(async ({ title, col, id }) => {
+                let val = getCell(col).trim();
+                try { val = (await getCellValueWithoutStrikethrough(SHEET_DATA_CLOUD_AF, rowIdx, col)) || val; } catch { }
+                const html = val
+                  ? `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:700; color:#0f766e;">${title}</div>
+                        <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                      </div>
+                      <div id="${id}" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(val)}</div>
+                      <div id="${id}-counters" style="margin-top:10px;"></div>
+                    </div>`
+                  : `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${title}</div>
+                      <div style="font-size:14px; color:#64748b;">No data for ${shift} on ${weekendDateStr}.</div>
+                    </div>`;
+                container.insertAdjacentHTML('beforeend', html);
+                if (val) {
+                  const copyEl = document.getElementById(id);
+                  if (copyEl) {
+                    const toCopy = normalizeNamesForCopy(val);
+                    copyEl.addEventListener('click', () => navigator.clipboard.writeText(toCopy).then(() => showToast(`${title} copied`)).catch(() => showToast('Copy failed')));
+                  }
+                  const countersEl = document.getElementById(`${id}-counters`);
+                  if (countersEl) {
+                    const names = parseRosterNames(val);
+                    let emailMap = {};
+                    try { emailMap = await getEmailsByNames(names); } catch { }
+                    renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                  }
+                }
+              });
+            }, (e) => console.error('Premier Data read fail:', e));
+          };
+
+          // initial render
+          renderSales();
+          select.addEventListener('change', () => {
+            if (select.value === 'sales') return renderSales();
+            if (select.value === 'service') return renderService();
+            if (select.value === 'industry') return renderIndustry();
+            return renderData();
+          });
         }
       }
     } catch (e) {
@@ -2236,11 +2723,6 @@ function checkGHOStatus() {
       <div class="spinner"></div>
       <h4 style="margin-bottom:8px">Loading GHO cases...</h4>
       <p>Please wait while we fetch the latest GHO cases.</p>
-      <div class="skeleton-list">
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-      </div>
     </div>
   `;
 
@@ -2339,7 +2821,7 @@ function checkGHOStatus() {
               if (caseRecord) {
                 const gKey = `gho_tracked_${caseRecord.Id}`;
                 if (!localStorage.getItem(gKey)) {
-                  trackAction(c.LastModifiedDate || c.CreatedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                  trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                   localStorage.setItem(gKey, 'true');
                 }
               }
@@ -3003,7 +3485,7 @@ async function trackNewCaseFromHistory(conn, params) {
       }
       const assignedTo = ownerNameFromHist || ((cRec.Owner && cRec.Owner.Name) ? cRec.Owner.Name : (candidate.NewValue || ''));
 
-      trackAction(
+      trackActionAndCount(
         candidate.CreatedDate,
         cRec.CaseNumber,
         cRec.Severity_Level__c,
@@ -3092,7 +3574,7 @@ async function forceProcessCase(caseNumber) {
         if (c.Body && c.Body.includes('#SigQBmention') && c.CreatedById === userId) {
           const trackingKey = `tracked_${caseId}`;
           if (!localStorage.getItem(trackingKey)) {
-            trackAction(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
+            trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
             localStorage.setItem(trackingKey, 'true');
             actions.push('New Case (QB mention)');
           }
@@ -3106,7 +3588,7 @@ async function forceProcessCase(caseNumber) {
           if (isToday(commentDate) && getShiftForDate(commentDate) === getCurrentShift()) {
             const ghoKey = `gho_tracked_${caseId}`;
             if (!localStorage.getItem(ghoKey)) {
-              trackAction(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
+              trackActionAndCount(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
               localStorage.setItem(ghoKey, 'true');
               actions.push('GHO (#GHOTriage)');
             }
@@ -3198,7 +3680,7 @@ async function forceProcessCaseById(caseId) {
         if (c.Body && c.Body.includes('#SigQBmention') && c.CreatedById === userId) {
           const trackingKey = `tracked_${caseRec.Id}`;
           if (!localStorage.getItem(trackingKey)) {
-            trackAction(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
+            trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
             localStorage.setItem(trackingKey, 'true');
             actions.push('New Case (QB mention)');
           }
@@ -3211,7 +3693,7 @@ async function forceProcessCaseById(caseId) {
           if (isToday(commentDate) && getShiftForDate(commentDate) === getCurrentShift()) {
             const ghoKey = `gho_tracked_${caseRec.Id}`;
             if (!localStorage.getItem(ghoKey)) {
-              trackAction(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
+              trackActionAndCount(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
               localStorage.setItem(ghoKey, 'true');
               actions.push('GHO (#GHOTriage)');
             }

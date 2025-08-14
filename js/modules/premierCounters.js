@@ -1,0 +1,124 @@
+import { showToast } from './toast.js';
+const STORAGE_KEY = 'premierRosterCounts';
+
+function todayKeyFromDateStr(dateStr) { return String(dateStr || '').trim(); }
+function getNowIST() { return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })); }
+function prevDateStr(dateStr) {
+    try {
+        const [mStr, dStr, yStr] = String(dateStr).split('/');
+        const m = parseInt(mStr, 10), d = parseInt(dStr, 10), y = parseInt(yStr, 10);
+        const dt = new Date(y, m - 1, d); dt.setDate(dt.getDate() - 1);
+        const outM = dt.getMonth() + 1, outD = String(dt.getDate()).padStart(2, '0'), outY = dt.getFullYear();
+        return `${outM}/${outD}/${outY}`;
+    } catch { return todayKeyFromDateStr(dateStr); }
+}
+function computeCycleKey(dateStr, shift) {
+    const base = todayKeyFromDateStr(dateStr);
+    if (String(shift).toUpperCase() === 'AMER') {
+        const ist = getNowIST();
+        const day = ist.getDay(), h = ist.getHours(), m = ist.getMinutes();
+        const todayStr = `${ist.getMonth() + 1}/${String(ist.getDate()).padStart(2, '0')}/${ist.getFullYear()}`;
+        if (day === 0 && base === todayStr && (h < 20 || (h === 20 && m < 30))) return prevDateStr(base);
+    }
+    return base;
+}
+
+function readStore() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        if (parsed && parsed.lastDateKey && !parsed.lastByShift) { parsed.lastByShift = { APAC: parsed.lastDateKey, EMEA: parsed.lastDateKey, AMER: parsed.lastDateKey }; delete parsed.lastDateKey; }
+        if (!parsed || typeof parsed !== 'object') return { lastByShift: {}, data: {} };
+        parsed.lastByShift = parsed.lastByShift || {}; parsed.data = parsed.data || {};
+        return parsed;
+    } catch { return { lastByShift: {}, data: {} }; }
+}
+
+function writeStore(obj) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); } catch { } }
+function purgeShiftData(store, shift) {
+    const out = {}; const target = String(shift || '').toUpperCase();
+    for (const k of Object.keys(store.data || {})) {
+        const parts = k.split('|');
+        if (parts.length >= 3 && String(parts[1]).toUpperCase() === target) continue;
+        out[k] = store.data[k];
+    }
+    store.data = out;
+}
+
+export function initPremierCounters(dateStr, shift) {
+    const store = readStore();
+    const sh = String(shift || '').toUpperCase();
+    if (!sh) {
+        const k = todayKeyFromDateStr(dateStr);
+        const legacyLast = store.lastByShift && (store.lastByShift.APAC || store.lastByShift.EMEA || store.lastByShift.AMER);
+        if (!legacyLast || legacyLast !== k) writeStore({ lastByShift: { APAC: k, EMEA: k, AMER: k }, data: {} });
+        return;
+    }
+    const cycleKey = computeCycleKey(dateStr, sh);
+    const lastForShift = store.lastByShift[sh];
+    if (!lastForShift || lastForShift !== cycleKey) { purgeShiftData(store, sh); store.lastByShift[sh] = cycleKey; writeStore(store); }
+}
+
+export function resetPremierCountersAll(dateStr, shift) {
+    const store = readStore();
+    const sh = String(shift || '').toUpperCase();
+    if (sh) { purgeShiftData(store, sh); store.lastByShift[sh] = computeCycleKey(dateStr, sh); writeStore(store); }
+    else { const k = todayKeyFromDateStr(dateStr); writeStore({ lastByShift: { APAC: k, EMEA: k, AMER: k }, data: {} }); }
+}
+
+function scopeKey(dateStr, shift, blockId) { const key = computeCycleKey(dateStr, shift); return `${key}|${shift}|${blockId}`; }
+
+function getCounts(dateStr, shift, blockId) { const s = readStore(); const sk = scopeKey(dateStr, shift, blockId); return (s.data && s.data[sk]) ? s.data[sk] : {}; }
+
+function setCount(dateStr, shift, blockId, name, value) { const s = readStore(); const sk = scopeKey(dateStr, shift, blockId); if (!s.data) s.data = {}; if (!s.data[sk]) s.data[sk] = {}; s.data[sk][name] = value; writeStore(s); }
+
+export function parseRosterNames(raw) {
+    if (!raw) return [];
+    const parts = String(raw).replace(/\r/g, '').split(/\n|,|\s&\s|&/g).map(s => s.trim()).filter(Boolean);
+    const seen = new Set(), out = [];
+    for (const p of parts) { if (!seen.has(p)) { seen.add(p); out.push(p); } }
+    return out;
+}
+
+export function renderPremierCounters(containerEl, namesArray, { dateStr, shift, blockId, emailMap }) {
+    if (!containerEl) return;
+    const counts = getCounts(dateStr, shift, blockId);
+    const rows = namesArray.map((name, idx) => {
+        const val = Number(counts[name] || 0), rowId = `${blockId}-row-${idx}`;
+        const lc = name && name.toLowerCase();
+        const email = emailMap && (emailMap[lc] || emailMap[name] || emailMap[(lc || '')]);
+        return `
+            <div class="pc-row" id="${rowId}" data-name="${name.replace(/"/g, '&quot;')}" style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#ffffff;">
+                <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                    <div style="width:8px; height:8px; border-radius:50%; background:#0ea5e9;"></div>
+                    <div title="${name}" style="font-size:13px; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
+                    ${email ? `<button class=\"pc-mail\" data-email=\"${email.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}\" title=\"Copy email\" style=\"margin-left:6px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border:1px solid #cbd5e1; background:#f8fafc; color:#0f172a; border-radius:6px; cursor:pointer;\">✉️</button>` : ''}
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <button class="pc-dec" aria-label="Decrease" style="border:1px solid #cbd5e1; background:#f8fafc; color:#0f172a; width:28px; height:28px; border-radius:8px; cursor:pointer;">-</button>
+                    <div class="pc-val" style="min-width:22px; text-align:center; font-weight:600; color:#0f172a;">${val}</div>
+                    <button class="pc-inc" aria-label="Increase" style="border:1px solid #cbd5e1; background:#f8fafc; color:#0f172a; width:28px; height:28px; border-radius:8px; cursor:pointer;">+</button>
+                </div>
+            </div>`;
+    }).join('');
+    containerEl.innerHTML = `<div class="pc-list" style="display:flex; flex-direction:column; gap:8px;">${rows || '<div style="color:#64748b; font-size:13px;">No names to display.</div>'}</div>`;
+    containerEl.querySelectorAll('.pc-row').forEach(row => {
+        const name = row.getAttribute('data-name');
+        const valEl = row.querySelector('.pc-val');
+        const dec = row.querySelector('.pc-dec');
+        const inc = row.querySelector('.pc-inc');
+        const getVal = () => Number(valEl.textContent || '0') || 0;
+        const setVal = (n) => { valEl.textContent = String(n); setCount(dateStr, shift, blockId, name, n); };
+        if (dec) dec.addEventListener('click', (e) => { e.stopPropagation(); const v = Math.max(0, getVal() - 1); setVal(v); });
+        if (inc) inc.addEventListener('click', (e) => { e.stopPropagation(); const v = getVal() + 1; setVal(v); });
+        const mailBtn = row.querySelector('.pc-mail');
+        if (mailBtn) mailBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const em = mailBtn.getAttribute('data-email');
+            if (em) {
+                navigator.clipboard.writeText(em)
+                    .then(() => showToast('Email copied'))
+                    .catch(() => showToast('Copy failed', 'error'));
+            }
+        });
+    });
+}
