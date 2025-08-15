@@ -116,18 +116,20 @@ export function trackAction(dateofAction, caseNumber, severity, actionType, clou
 
 // Logs daily usage metrics (total active minutes & last active timestamps) to the 'Logs' sheet
 // Params: { datePSTString: 'MM/DD/YYYY', userName: string, totalActiveMinutes: number, lastActiveISO: string }
-// Debounce / duplicate control should be handled by caller (we also add a lightweight localStorage guard)
 export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, lastActiveISO, actionedCases = 0 }) {
     try {
         if (!dateLocalString || !userName) return;
+        const normalizedName = String(userName).trim().replace(/\s+/g, ' ');
+
         if (typeof totalActiveMinutes !== 'number' || totalActiveMinutes < 0) return;
 
-        const guardKey = `usage_logged_${dateLocalString}_${userName}`;
+        const guardKey = `usage_logged_${dateLocalString}_${normalizedName}`;
+        const lockKey = `usage_lock_${dateLocalString}_${normalizedName}`;
         let lastLogged = null;
         try { lastLogged = JSON.parse(localStorage.getItem(guardKey) || 'null'); } catch { }
         if (lastLogged && typeof lastLogged.lastMinutes === 'number') {
-            if (totalActiveMinutes < lastLogged.lastMinutes) return; // don't regress
-            if (totalActiveMinutes - lastLogged.lastMinutes < 2) return; // throttle updates (<2 min delta)
+            if (totalActiveMinutes < lastLogged.lastMinutes) return;
+            if (totalActiveMinutes - lastLogged.lastMinutes < 2) return;
         }
 
         getAuthToken(async function (token) {
@@ -137,7 +139,7 @@ export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, l
             const lastActivePST = lastActive.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
             const lastActiveIST = lastActive.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
             // Required columns: Date, Name, Active Time (Minutes), Last Active Time(PST), Last Active Time(IST), Actioned Cases
-            const rowValues = [dateLocalString, userName, totalActiveMinutes, lastActivePST, lastActiveIST, actionedCases];
+            const rowValues = [dateLocalString, normalizedName, totalActiveMinutes, lastActivePST, lastActiveIST, actionedCases];
 
             const doUpdate = (rowNumber) => {
                 const range = `${sheetName}!A${rowNumber}:F${rowNumber}`;
@@ -160,43 +162,78 @@ export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, l
                     .catch(e => console.error('Usage append error', e));
             };
 
-            const ensureCache = async () => {
-                const now = Date.now();
-                if (__usageLogsCache.rows && now - __usageLogsCache.fetchedAt < USAGE_CACHE_TTL) return;
-                if (__usageFetchInFlight) return;
-                __usageFetchInFlight = true;
+            const fetchRowsFresh = async () => {
                 try {
                     const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A:F`, { headers: { 'Authorization': 'Bearer ' + token } });
-                    if (!resp.ok) { console.warn('Usage fetch rows failed', resp.status); return; }
+                    if (!resp.ok) { console.warn('Usage fetch rows failed', resp.status); return []; }
                     const data = await resp.json();
                     __usageLogsCache.rows = data.values || [];
                     __usageLogsCache.fetchedAt = Date.now();
-                } catch (e) { console.warn('Usage rows fetch error', e); }
-                finally { __usageFetchInFlight = false; }
+                    return __usageLogsCache.rows;
+                } catch (e) {
+                    console.warn('Usage rows fetch error', e);
+                    return [];
+                }
             };
 
-            await ensureCache();
-            let rows = __usageLogsCache.rows || [];
+            // Acquire a short-lived local lock to avoid concurrent writes from multiple popups
+            const nowMs = Date.now();
+            let existingLock = null;
+            try { existingLock = JSON.parse(localStorage.getItem(lockKey) || 'null'); } catch { existingLock = null; }
+            if (existingLock && (nowMs - (existingLock.at || 0)) < 15000) {
+                // Another writer recently updated this row; skip this tick
+                return;
+            }
+            try { localStorage.setItem(lockKey, JSON.stringify({ at: nowMs })); } catch { /* noop */ }
+
+            // Always fetch the latest rows before deciding update vs append to reduce duplicates
+            let rows = await fetchRowsFresh();
+            rows = rows && rows.length ? rows : (__usageLogsCache.rows || []);
             let startIndex = 0;
             if (rows.length > 0) {
                 const first = rows[0].map(v => v.toLowerCase());
                 if (first.includes('date') && first.includes('name')) startIndex = 1;
             }
             let targetRowNumber = null;
+            let duplicateRowNumbers = [];
             for (let i = startIndex; i < rows.length; i++) {
                 const r = rows[i];
-                if (r[0] === dateLocalString && r[1] === userName) { targetRowNumber = i + 1; break; }
+                if (r[0] === dateLocalString && String(r[1]).trim().replace(/\s+/g, ' ') === normalizedName) {
+                    if (targetRowNumber === null) targetRowNumber = i + 1; else duplicateRowNumbers.push(i + 1);
+                }
             }
 
             if (targetRowNumber) {
                 await doUpdate(targetRowNumber);
                 if (__usageLogsCache.rows) __usageLogsCache.rows[targetRowNumber - 1] = rowValues;
+                // Note: We intentionally do not delete duplicates here to avoid needing sheetId; optional cleanup can be done manually.
             } else {
-                await appendNew();
-                __usageLogsCache.fetchedAt = 0; // invalidate
+                // Double-check immediately before append with a tiny randomized backoff to avoid race duplicates
+                await new Promise(r => setTimeout(r, Math.floor(100 + Math.random() * 300)));
+                rows = await fetchRowsFresh();
+                startIndex = 0;
+                if (rows.length > 0) {
+                    const first = rows[0].map(v => v.toLowerCase());
+                    if (first.includes('date') && first.includes('name')) startIndex = 1;
+                }
+                for (let i = startIndex; i < rows.length; i++) {
+                    const r = rows[i];
+                    if (r[0] === dateLocalString && String(r[1]).trim().replace(/\s+/g, ' ') === normalizedName) {
+                        targetRowNumber = i + 1;
+                        break;
+                    }
+                }
+                if (targetRowNumber) {
+                    await doUpdate(targetRowNumber);
+                    if (__usageLogsCache.rows) __usageLogsCache.rows[targetRowNumber - 1] = rowValues;
+                } else {
+                    await appendNew();
+                    __usageLogsCache.fetchedAt = 0; // invalidate
+                }
             }
 
             localStorage.setItem(guardKey, JSON.stringify({ lastMinutes: totalActiveMinutes, loggedAt: Date.now() }));
+            try { localStorage.removeItem(lockKey); } catch { /* noop */ }
         });
     } catch (e) {
         console.error('logUsageDaily upsert error', e);

@@ -10,7 +10,8 @@ export const SHEET_DATA_CLOUD_AF = 'Data Cloud and AF';
 export const COLUMN_MAP = {
     CIC: { APAC: 'B', EMEA: 'J', AMER: 'S' },
     TE: { APAC: 'F', EMEA: 'O', AMER: 'W' },
-    SWARM_LEAD: { APAC: 'G', EMEA: 'P', AMER: 'X' }
+    SWARM_LEAD_SERVICE: { APAC: 'G', EMEA: 'P', AMER: 'X' },
+    SWARM_LEAD_SALES: { APAC: 'G', EMEA: 'P', AMER: 'X' }
 };
 
 export function getCICColumnForShift(shift) {
@@ -21,8 +22,12 @@ export function getTEColumnForShift(shift) {
     return COLUMN_MAP.TE[shift] || COLUMN_MAP.TE.AMER;
 }
 
-export function getSwarmLeadColumnForShift(shift) {
-    return COLUMN_MAP.SWARM_LEAD[shift] || COLUMN_MAP.SWARM_LEAD.AMER;
+export function getSwarmLeadServiceColumnForShift(shift) {
+    return COLUMN_MAP.SWARM_LEAD_SERVICE[shift] || COLUMN_MAP.SWARM_LEAD_SERVICE.AMER;
+}
+
+export function getSwarmLeadSalesColumnForShift(shift) {
+    return COLUMN_MAP.SWARM_LEAD_SALES[shift] || COLUMN_MAP.SWARM_LEAD_SALES.AMER;
 }
 
 // Premier-specific mappings
@@ -34,7 +39,7 @@ export const PREMIER_COLUMN_MAP = {
     },
     INDUSTRY: {
         TE: { APAC: 'B', EMEA: 'F', AMER: 'H' },
-        SWARM_LEAD: { APAC: 'C', EMEA: 'J', AMER: 'I' }
+        SWARM_LEAD: { APAC: 'C', EMEA: 'G', AMER: 'I' }
     },
     DATA: {
         DATACLOUD: { APAC: 'B', EMEA: 'C', AMER: 'D' },

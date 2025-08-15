@@ -1,5 +1,6 @@
 import { showToast } from './toast.js';
 const STORAGE_KEY = 'premierRosterCounts';
+const OVERRIDES_KEY = 'premierRosterOverridesV1';
 
 function todayKeyFromDateStr(dateStr) { return String(dateStr || '').trim(); }
 function getNowIST() { return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })); }
@@ -71,21 +72,140 @@ function getCounts(dateStr, shift, blockId) { const s = readStore(); const sk = 
 
 function setCount(dateStr, shift, blockId, name, value) { const s = readStore(); const sk = scopeKey(dateStr, shift, blockId); if (!s.data) s.data = {}; if (!s.data[sk]) s.data[sk] = {}; s.data[sk][name] = value; writeStore(s); }
 
+// --- Overrides store (per shift, per block) for edited TE names and emails ---
+function readOverridesStore() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(OVERRIDES_KEY) || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : { data: {} };
+    } catch { return { data: {} }; }
+}
+function writeOverridesStore(obj) { try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(obj)); } catch { } }
+function lcKey(s) { return String(s || '').trim().toLowerCase(); }
+function getOverrides(dateStr, shift, blockId) {
+    const s = readOverridesStore();
+    const sk = scopeKey(dateStr, shift, blockId);
+    return (s.data && s.data[sk]) ? s.data[sk] : {};
+}
+function setOverrides(dateStr, shift, blockId, map) {
+    const s = readOverridesStore();
+    const sk = scopeKey(dateStr, shift, blockId);
+    if (!s.data) s.data = {};
+    s.data[sk] = map || {};
+    writeOverridesStore(s);
+}
+
+// Exported: set a single override; migrates counts from old name to new name for this scope
+export function setPremierOverride(dateStr, shift, blockId, originalName, newName, email) {
+    try {
+        const o = getOverrides(dateStr, shift, blockId);
+        const origKey = lcKey(originalName);
+        const newRec = { name: String(newName || originalName).trim(), email: String(email || '').trim() || undefined };
+        o[origKey] = newRec;
+        // Also allow lookup by new name key to be idempotent
+        o[lcKey(newRec.name)] = newRec;
+        setOverrides(dateStr, shift, blockId, o);
+
+        // Migrate counts if needed
+        const counts = getCounts(dateStr, shift, blockId);
+        if (counts && Object.prototype.hasOwnProperty.call(counts, originalName)) {
+            const val = Number(counts[originalName] || 0);
+            if (!Object.prototype.hasOwnProperty.call(counts, newRec.name)) {
+                // move
+                delete counts[originalName];
+                counts[newRec.name] = val;
+                const s = readStore();
+                const sk = scopeKey(dateStr, shift, blockId);
+                if (!s.data) s.data = {}; if (!s.data[sk]) s.data[sk] = {};
+                s.data[sk] = counts;
+                writeStore(s);
+            } else if (originalName !== newRec.name) {
+                // drop old key
+                delete counts[originalName];
+                const s = readStore();
+                const sk = scopeKey(dateStr, shift, blockId);
+                if (!s.data) s.data = {}; if (!s.data[sk]) s.data[sk] = {};
+                s.data[sk] = counts;
+                writeStore(s);
+            }
+        }
+        showToast('Saved edit');
+        return true;
+    } catch { return false; }
+}
+
+// Apply overrides to names array and merge email map
+function applyOverridesToNames(namesArray, { dateStr, shift, blockId, emailMap }) {
+    const overrides = getOverrides(dateStr, shift, blockId) || {};
+    const outNames = [];
+    const mergedEmail = { ...(emailMap || {}) };
+    for (const name of (namesArray || [])) {
+        const key = lcKey(name);
+        const rec = overrides[key] || null;
+        if (rec && rec.name) {
+            outNames.push(rec.name);
+            if (rec.email) {
+                mergedEmail[lcKey(rec.name)] = rec.email;
+                mergedEmail[rec.name] = rec.email;
+            }
+        } else {
+            outNames.push(name);
+        }
+    }
+    return { names: outNames, emailMap: mergedEmail };
+}
+
 export function parseRosterNames(raw) {
     if (!raw) return [];
-    const parts = String(raw).replace(/\r/g, '').split(/\n|,|\s&\s|&/g).map(s => s.trim()).filter(Boolean);
-    const seen = new Set(), out = [];
-    for (const p of parts) { if (!seen.has(p)) { seen.add(p); out.push(p); } }
+    const s = String(raw);
+    let outStr = '';
+    let depth = 0;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (c === '\r') continue;
+        if (c === '(') depth++;
+        if (c === ')' && depth > 0) depth--;
+        if (c === '\n' && depth > 0) {
+            outStr += ' & ';
+            i++;
+            while (i < s.length && /\s/.test(s[i])) i++;
+            const save = i;
+            let j = i;
+            while (j < s.length && /[0-9]/.test(s[j])) j++;
+            if (j < s.length && s[j] === '.') { j++; while (j < s.length && s[j] === ' ') j++; i = j - 1; } else { i = save - 1; }
+            continue;
+        }
+        outStr += c;
+    }
+    const tokens = [];
+    let buf = '';
+    depth = 0;
+    for (let i = 0; i < outStr.length; i++) {
+        const c = outStr[i];
+        if (c === '(') depth++;
+        else if (c === ')' && depth > 0) depth--;
+        if ((c === '\n' || c === ',' || c === '&') && depth === 0) { if (buf.trim()) tokens.push(buf.trim()); buf = ''; continue; }
+        buf += c;
+    }
+    if (buf.trim()) tokens.push(buf.trim());
+    const cleaned = tokens.map(t => t.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean);
+    const seen = new Set();
+    const out = [];
+    for (const p of cleaned) { if (!seen.has(p)) { seen.add(p); out.push(p); } }
     return out;
 }
 
 export function renderPremierCounters(containerEl, namesArray, { dateStr, shift, blockId, emailMap }) {
     if (!containerEl) return;
     const counts = getCounts(dateStr, shift, blockId);
-    const rows = namesArray.map((name, idx) => {
+    // Apply per-shift overrides (renamed entries, email fixes)
+    const applied = applyOverridesToNames(namesArray, { dateStr, shift, blockId, emailMap });
+    const finalNames = applied.names;
+    const finalEmailMap = applied.emailMap;
+
+    const rows = finalNames.map((name, idx) => {
         const val = Number(counts[name] || 0), rowId = `${blockId}-row-${idx}`;
         const lc = name && name.toLowerCase();
-        const email = emailMap && (emailMap[lc] || emailMap[name] || emailMap[(lc || '')]);
+        const email = finalEmailMap && (finalEmailMap[lc] || finalEmailMap[name] || finalEmailMap[(lc || '')]);
         return `
             <div class="pc-row" id="${rowId}" data-name="${name.replace(/"/g, '&quot;')}" style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#ffffff;">
                 <div style="display:flex; align-items:center; gap:10px; min-width:0;">

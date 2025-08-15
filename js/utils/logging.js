@@ -8,7 +8,7 @@ const LEVELS = {
     fatal: { rank: 60, label: 'FATAL', color: '#ffffff', bg: '#d93025' }
 };
 
-const DEFAULT_LEVEL = 'debug';
+const DEFAULT_LEVEL = 'info';
 const STORAGE_KEY = 'logger_level_v1';
 
 function loadLevel() {

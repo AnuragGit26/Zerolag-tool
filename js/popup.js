@@ -2,14 +2,106 @@ import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js
 import { applyFilter, applySearch, updateWeekendModeIndicator } from './utils/dom.js';
 import { trackAction, logUsageDaily } from './utils/api.js';
 import { formatDateWithDayOfWeek, getShiftForDate, isToday, getCurrentShift, getPreferredShiftValues, buildPreferredShiftCondition, getWeekendSignatureTemplate, getGHOTemplate } from './modules/shift.js';
-import { SHEET_SERVICE_CLOUD, SHEET_SALES_CLOUD, SHEET_INDUSTRY_CLOUD, SHEET_DATA_CLOUD_AF, getCICColumnForShift, getTEColumnForShift, getSwarmLeadColumnForShift, getPremierSalesDevTEColumn, getPremierSalesNonDevTEColumn, getPremierSalesSwarmLeadColumn, getPremierIndustryTEColumn, getPremierIndustrySwarmLeadColumn, getPremierDataCloudColumn, getPremierAgentforceColumn } from './modules/rosterDetails.js';
-import { initPremierCounters, resetPremierCountersAll, parseRosterNames, renderPremierCounters } from './modules/premierCounters.js';
+import { SHEET_SERVICE_CLOUD, SHEET_SALES_CLOUD, SHEET_INDUSTRY_CLOUD, SHEET_DATA_CLOUD_AF, getCICColumnForShift, getTEColumnForShift, getSwarmLeadServiceColumnForShift, getSwarmLeadSalesColumnForShift, getPremierSalesDevTEColumn, getPremierSalesNonDevTEColumn, getPremierSalesSwarmLeadColumn, getPremierIndustryTEColumn, getPremierIndustrySwarmLeadColumn, getPremierDataCloudColumn, getPremierAgentforceColumn } from './modules/rosterDetails.js';
+import { initPremierCounters, resetPremierCountersAll, parseRosterNames, renderPremierCounters, setPremierOverride } from './modules/premierCounters.js';
 import { showToast } from './modules/toast.js';
 import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.js';
 import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
 import { logger } from './utils/logging.js';
 
 try { logger.installConsoleBeautifier(); } catch { /* noop */ }
+
+// Show a toast when Salesforce blocks requests due to IP restrictions (e.g., "INSUFFICIENT_ACCESS: Access from current IP address is not allowed").
+// We hook console.error after the logger beautifier so vendor jsforce logs also trigger this.
+(() => {
+  try {
+    const SEEN_KEY = '__ip_access_toast_last_shown_ts';
+    const SHOW_COOLDOWN_MS = 5 * 60 * 1000; // at most once every 5 minutes
+    const origError = console.error;
+    const matchErr = (args) => {
+      try {
+        const text = args.map(a => {
+          if (a == null) return '';
+          if (typeof a === 'string') return a;
+          if (a && typeof a.message === 'string') return a.message;
+          try { return JSON.stringify(a); } catch { return String(a); }
+        }).join(' ');
+        return /INSUFFICIENT_ACCESS/i.test(text) && /current\s+ip\s+address\s+is\s+not\s+allowed/i.test(text);
+      } catch { return false; }
+    };
+    const maybeToast = () => {
+      const now = Date.now();
+      const last = Number(localStorage.getItem(SEEN_KEY) || 0);
+      if (!last || (now - last) > SHOW_COOLDOWN_MS) {
+        localStorage.setItem(SEEN_KEY, String(now));
+        showToast('Salesforce blocked requests from this IP. Please turn on Zscaler/VPN or use an allowed network.', { type: 'error', duration: 12000 });
+      }
+    };
+    const isSfUrl = (u) => {
+      try { return typeof u === 'string' && /orgcs\.my\.salesforce\.com/i.test(u); } catch { return false; }
+    };
+    const bodyMatches = (t) => /INSUFFICIENT_ACCESS/i.test(t) && /current\s*ip\s*address\s*is\s*not\s*allowed/i.test(t);
+
+    // Intercept fetch
+    try {
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async function (input, init) {
+        const resp = await origFetch(input, init);
+        try {
+          const url = (resp && resp.url) || (typeof input === 'string' ? input : (input && input.url));
+          if (resp && !resp.ok && isSfUrl(url)) {
+            const text = await resp.clone().text().catch(() => '');
+            if (text && bodyMatches(text)) maybeToast();
+          }
+        } catch { /* ignore */ }
+        return resp;
+      };
+    } catch { /* noop */ }
+
+    // Intercept XMLHttpRequest
+    try {
+      const XHR = window.XMLHttpRequest;
+      if (XHR && XHR.prototype) {
+        const origOpen = XHR.prototype.open;
+        const origSend = XHR.prototype.send;
+        XHR.prototype.open = function (method, url, async, user, password) {
+          try { this.___sf_ip_err_url = url; } catch { /* noop */ }
+          return origOpen.apply(this, arguments);
+        };
+        XHR.prototype.send = function (body) {
+          try {
+            this.addEventListener('loadend', () => {
+              try {
+                if (isSfUrl(this.___sf_ip_err_url) && this.status >= 400) {
+                  const text = String(this.responseText || '');
+                  if (text && bodyMatches(text)) maybeToast();
+                }
+              } catch { /* noop */ }
+            });
+          } catch { /* noop */ }
+          return origSend.apply(this, arguments);
+        };
+      }
+    } catch { /* noop */ }
+    console.error = function (...args) {
+      try {
+        if (matchErr(args)) maybeToast();
+      } catch { /* noop */ }
+      try { return origError.apply(this, args); } catch { /* noop */ }
+    };
+
+    // Also intercept our structured logger path so messages printed via logger.error are caught too.
+    try {
+      if (logger && typeof logger.error === 'function') {
+        const origLoggerError = logger.error.bind(logger);
+        logger.error = (...args) => {
+          try { if (matchErr(args)) maybeToast(); } catch { /* noop */ }
+          return origLoggerError(...args);
+        };
+      }
+    } catch { /* noop */ }
+  } catch { /* swallow */ }
+})();
 
 let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
@@ -20,9 +112,7 @@ let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70iXfT-MVfhPs';
 
-// DEV: Force show Weekend Roster button and allow access regardless of actual weekend window
-// Set to false to restore original behavior, or gate with a localStorage flag if preferred.
-const DEV_FORCE_SHOW_WEEKEND_ROSTER = true;
+const DEV_FORCE_SHOW_WEEKEND_ROSTER = false;
 
 const GHO_CACHE_TTL = 80000;
 window.__ghoCache = window.__ghoCache || { signature: null, premier: null };
@@ -70,7 +160,15 @@ function escapeSoqlString(s) { return String(s).replace(/\\/g, '\\\\').replace(/
 function cleanRosterNameForQuery(name) {
   let s = String(name || '').trim();
   s = s.replace(/^\s*[^:]*:\s*/, '');
-  s = s.replace(/\([^)]*\)/g, '');
+  // Remove any content in common brackets: (), [], {}, <>
+  s = s.replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}|<[^>]*>/g, '');
+  // Remove any single-quoted suffixes like:  Name 'Sev 1(Sales)'
+  s = s.replace(/'[^']*'/g, '');
+  // Also remove any double-quoted segments just in case
+  s = s.replace(/"[^"]*"/g, '');
+  // Omit tokens like 'Sev 1' and '_Dev' (case-insensitive)
+  s = s.replace(/\bsev\s*1\b/gi, '');
+  s = s.replace(/_dev\b/gi, '');
   s = s.replace(/\s{2,}/g, ' ').trim();
   return s;
 }
@@ -100,7 +198,7 @@ function getEmailsByNames(names) {
           return resolve(out);
         }
         const slice = missing.slice(idx, idx += CHUNK);
-        const soql = `SELECT Name, Email FROM User WHERE IsActive = true AND Username LIKE '%orgcs.com' AND Email != null AND Name IN ('${slice.map(escapeSoqlString).join("','")}')`;
+        const soql = `SELECT Name, Email, Username FROM User WHERE IsActive = true AND Email != null AND (Username LIKE '%dreamevent.com' OR Username LIKE '%orgcs.com') AND Name IN ('${slice.map(escapeSoqlString).join("','")}')`;
         conn.query(soql, (err, res) => {
           if (!err && res && res.records) {
             res.records.forEach(u => { if (u && u.Name && u.Email) merged[String(u.Name).toLowerCase()] = u.Email; });
@@ -192,6 +290,7 @@ function ensureUserUsageBucket(userName) {
   const newKey = getISTBusinessDayKey();
   if (newKey !== currentBusinessDayKey) {
     // Day rollover at 05:30 IST - start fresh bucket (prior day retained in usageState for reference until reload)
+    const oldKey = currentBusinessDayKey;
     currentBusinessDayKey = newKey;
     cleanupOldUsageData(oldKey, newKey);
   }
@@ -326,6 +425,9 @@ function getCookies(domain, name, callback) {
         callback(cookie);
       }
     }
+    else {
+      showToast(`No session cookie found for ${domain}. Please log in to Salesforce.`);
+    }
   });
 }
 
@@ -339,7 +441,7 @@ function getCaseDetails() {
     if (err) {
       const errorMessage = (err.message || err.toString()).toLowerCase();
       if (errorMessage.includes('session') || errorMessage.includes('connection')) {
-        showToast('Connection or Session ID error. Please refresh or try toggling modes.');
+        showToast('Connection or Session ID error. Please ensure Zscaler is turned on!');
       }
 
       var data = 'openTabSilent';
@@ -377,7 +479,7 @@ function getCaseDetails() {
         return conn.query(query,
           function (err, result) {
             if (err) {
-              alert('Your query has failed');
+              try { showToast('Query failed. Please retry or refresh.', 'error'); } catch { }
               return console.error(err);
             }
 
@@ -410,27 +512,28 @@ function getCaseDetails() {
               action: 'syncPersistentCases',
               mode: currentMode,
               caseIds: caseIds
-            }, function (response) {
+            }, async function (response) {
               if (chrome.runtime.lastError) {
                 console.error('Runtime error syncing persistent cases:', chrome.runtime.lastError.message);
               } else if (response && response.success) {
-                logger.info('cases.persistent.synced', { mode: currentMode, removed: response.removed, tracking: response.count });
-                // If cases were removed due to refresh (not in current query), try to track any last-moment assignments
+                logger.info('cases.persistent.synced', { mode: currentMode, removed: response.removed, missing: (response.missingCases || []).length, tracking: response.count });
+                // For cases that went missing from the latest query, verify assignment by ANY user before removing.
                 try {
-                  const removedCases = Array.isArray(response.removedCases) ? response.removedCases : [];
-                  if (removedCases.length > 0) {
-                    const removedIds = removedCases.map(rc => rc.id);
-                    trackNewCaseFromHistory(conn, {
-                      caseIds: removedIds,
-                      currentUserId,
-                      currentUserName,
-                      currentMode,
-                      strategy: 'latestByUser',
-                      removeFromPersistent: false
-                    });
+                  const missingCases = Array.isArray(response.missingCases) ? response.missingCases : [];
+                  if (missingCases.length > 0) {
+                    const missingIds = missingCases.map(rc => rc.id);
+                    const verified = await detectAssignmentsForCases(conn, { caseIds: missingIds });
+                    if (verified && verified.processed && verified.processed.length > 0) {
+                      // Remove only those confirmed as assigned
+                      for (const p of verified.processed) {
+                        try {
+                          chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId: p.caseId, reason: 'assigned-by-any' }, () => { });
+                        } catch { /* noop */ }
+                      }
+                    }
                   }
                 } catch (e) {
-                  console.warn('Error while post-processing removed persistent cases:', e);
+                  console.warn('Error while verifying missing persistent cases:', e);
                 }
               }
             });
@@ -2189,7 +2292,10 @@ function showCICManagers() {
               <option value="industry">Industry</option>
               <option value="data">Data</option>
             </select>
-            <button id="premier-reset" title="Reset all counters" style="margin-left:auto; padding:6px 10px; border:1px solid #ef4444; background:#fef2f2; color:#b91c1c; border-radius:8px; font-size:12px; cursor:pointer;">Reset Counts</button>
+            <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+              <button id="premier-edit" title="Edit names/emails" style="padding:6px 10px; border:1px solid #94a3b8; background:#f8fafc; color:#0f172a; border-radius:8px; font-size:12px; cursor:pointer;">✏️ Edit</button>
+              <button id="premier-reset" title="Reset all counters" style="padding:6px 10px; border:1px solid #ef4444; background:#fef2f2; color:#b91c1c; border-radius:8px; font-size:12px; cursor:pointer;">Reset Counts</button>
+            </div>
           </div>
           <div id="premier-sections" style="display:flex; flex-direction:column; gap:12px;"></div>
           ` : ''}
@@ -2203,12 +2309,106 @@ function showCICManagers() {
       });
 
       if (currentMode === 'signature') {
-        const swarmCol = getSwarmLeadColumnForShift(shift);
+        // Insert Sales, Service, Industry sections for better visibility (if not already present)
+        try {
+          const wrapper = document.querySelector('#cic-modal .modal-body > div');
+          if (wrapper && !document.getElementById('sig-sales-section')) {
+            wrapper.insertAdjacentHTML('beforeend', `
+              <div class="sig-section" id="sig-sales-section" style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; padding:12px;">
+                <div class="sig-section-header" style="font-weight:700; color:#0f172a; margin-bottom:8px;">Sales</div>
+                <div class="sig-section-content" id="sig-sales-section-content" style="display:flex; flex-direction:column; gap:12px;"></div>
+              </div>
+              <div class="sig-section" id="sig-service-section" style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; padding:12px; margin-top:12px;">
+                <div class="sig-section-header" style="font-weight:700; color:#0f172a; margin-bottom:8px;">Service</div>
+                <div class="sig-section-content" id="sig-service-section-content" style="display:flex; flex-direction:column; gap:12px;"></div>
+              </div>
+              <div class="sig-section" id="sig-industry-section" style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; padding:12px; margin-top:12px;">
+                <div class="sig-section-header" style="font-weight:700; color:#0f172a; margin-bottom:8px;">Industry</div>
+                <div class="sig-section-content" id="sig-industry-section-content" style="display:flex; flex-direction:column; gap:12px;"></div>
+              </div>
+              <div class="sig-section" id="sig-data-section" style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; padding:12px; margin-top:12px;">
+                <div class="sig-section-header" style="font-weight:700; color:#0f172a; margin-bottom:8px;">Data</div>
+                <div class="sig-section-content" id="sig-data-section-content" style="display:flex; flex-direction:column; gap:12px;"></div>
+              </div>
+            `);
+          }
+        } catch { /* noop */ }
+
+        // Show the Signature Sales Swarm Lead first (Sales > Service > Industry ordering)
+        const bodyElSales = document.getElementById('sig-sales-section-content');
+        if (bodyElSales) {
+          const salesRange = `'${SHEET_SALES_CLOUD}'!A:Z`;
+          const salesSwarmCol = getSwarmLeadSalesColumnForShift(shift);
+          googleSheetsGET(salesRange, (rSales) => {
+            try {
+              const rowsSales = (rSales && rSales.values) ? rSales.values : [];
+              let rowIdxSales = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsSales.length; i++) {
+                const aVal = rowsSales[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdxSales = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdxSales = i; break; }
+                }
+              }
+
+              let salesSwarmCell = '';
+              if (rowIdxSales >= 0) {
+                const colIdxSales = salesSwarmCol.charCodeAt(0) - 'A'.charCodeAt(0);
+                salesSwarmCell = (rowsSales[rowIdxSales][colIdxSales] || '').toString().trim();
+              }
+
+              const salesSwarmTitle = 'Signature Sales Swarm Lead - ' + shift;
+              if (!salesSwarmCell) {
+                bodyElSales.insertAdjacentHTML('beforeend', `
+                  <div style="margin-top:12px;">
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${salesSwarmTitle}</div>
+                      <div style="font-size:14px; color:#64748b;">No Designated Name</div>
+                    </div>
+                  </div>
+                `);
+              } else {
+                const salesSwarmCopy = normalizeNamesForCopy(salesSwarmCell);
+                bodyElSales.insertAdjacentHTML('beforeend', `
+                  <div style="margin-top:12px;">
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:700; color:#0f766e;">${salesSwarmTitle}</div>
+                        <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                      </div>
+                      <div id="sig-sales-swarm-lead-names" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(salesSwarmCell)}</div>
+                    </div>
+                  </div>
+                `);
+                const swSalesEl = document.getElementById('sig-sales-swarm-lead-names');
+                if (swSalesEl) {
+                  swSalesEl.addEventListener('click', () => {
+                    navigator.clipboard.writeText(salesSwarmCopy).then(() => showToast('Signature Sales Swarm Lead copied')).catch(() => showToast('Copy failed'));
+                  });
+                }
+              }
+            } catch (e) {
+              console.error('Failed building Signature Sales Swarm Lead section:', e);
+            }
+          }, (err) => {
+            console.error('Failed loading Sales Cloud sheet for Swarm Lead:', err);
+          });
+        }
+        const swarmCol = getSwarmLeadServiceColumnForShift(shift);
         const swarmIdx = swarmCol.charCodeAt(0) - 'A'.charCodeAt(0);
         const swarmCellRaw = (foundRowIdx >= 0 && rows[foundRowIdx]) ? (rows[foundRowIdx][swarmIdx] || '') : '';
         const swarmCell = String(swarmCellRaw || '').trim();
-        const swarmTitle = 'Signature Swarm Lead - ' + shift;
-        const bodyEl2 = document.querySelector('#cic-modal .modal-body');
+        const swarmTitle = 'Signature Service Swarm Lead - ' + shift;
+        const bodyEl2 = document.getElementById('sig-service-section-content');
         if (bodyEl2) {
           if (!swarmCell) {
             bodyEl2.insertAdjacentHTML('beforeend', `
@@ -2242,15 +2442,162 @@ function showCICManagers() {
             }
           }
         }
+
+        // Industry Swarm Lead (Signature) — same mapping as Premier Industry, read from Industry sheet
+        const industryContainer = document.getElementById('sig-industry-section-content');
+        if (industryContainer) {
+          const industryRange = `'${SHEET_INDUSTRY_CLOUD}'!A:Z`;
+          const industrySwarmCol = getPremierIndustrySwarmLeadColumn(shift);
+          googleSheetsGET(industryRange, (rInd) => {
+            try {
+              const rowsInd = (rInd && rInd.values) ? rInd.values : [];
+              let rowIdxInd = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsInd.length; i++) {
+                const aVal = rowsInd[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdxInd = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdxInd = i; break; }
+                }
+              }
+              let indSwarmCell = '';
+              if (rowIdxInd >= 0) {
+                const colIdxInd = industrySwarmCol.charCodeAt(0) - 'A'.charCodeAt(0);
+                indSwarmCell = (rowsInd[rowIdxInd][colIdxInd] || '').toString().trim();
+              }
+              const indSwarmTitle = 'Signature Industry Swarm Lead - ' + shift;
+              if (!indSwarmCell) {
+                industryContainer.insertAdjacentHTML('beforeend', `
+                  <div style="margin-top:12px;">
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${indSwarmTitle}</div>
+                      <div style="font-size:14px; color:#64748b;">No Designated Name</div>
+                    </div>
+                  </div>
+                `);
+              } else {
+                const indSwarmCopy = normalizeNamesForCopy(indSwarmCell);
+                industryContainer.insertAdjacentHTML('beforeend', `
+                  <div style="margin-top:12px;">
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:700; color:#0f766e;">${indSwarmTitle}</div>
+                        <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                      </div>
+                      <div id="sig-industry-swarm-lead-names" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(indSwarmCell)}</div>
+                    </div>
+                  </div>
+                `);
+                const swIndEl = document.getElementById('sig-industry-swarm-lead-names');
+                if (swIndEl) {
+                  swIndEl.addEventListener('click', () => {
+                    navigator.clipboard.writeText(indSwarmCopy).then(() => showToast('Signature Industry Swarm Lead copied')).catch(() => showToast('Copy failed'));
+                  });
+                }
+              }
+            } catch (e) {
+              console.error('Failed building Signature Industry Swarm Lead section:', e);
+            }
+          }, (err) => {
+            console.error('Failed loading Industry Cloud sheet for Swarm Lead:', err);
+          });
+        }
+
+        // Data Cloud & Agentforce (Signature) — mirror Premier Data mappings, read from Data Cloud and AF sheet
+        const dataContainer = document.getElementById('sig-data-section-content');
+        if (dataContainer) {
+          const dataRange = `'${SHEET_DATA_CLOUD_AF}'!A:Z`;
+          googleSheetsGET(dataRange, (rData) => {
+            try {
+              const rowsD = (rData && rData.values) ? rData.values : [];
+              let rowIdxD = -1;
+              const targetDatePadded = weekendDateStr;
+              const dNumTarget = parseInt(targetDatePadded.split('/')[1], 10);
+              const mNumTarget = parseInt(targetDatePadded.split('/')[0], 10);
+              const yNumTarget = parseInt(targetDatePadded.split('/')[2], 10);
+              const targetDateAlt = `${mNumTarget}/${dNumTarget}/${yNumTarget}`;
+              for (let i = 0; i < rowsD.length; i++) {
+                const aVal = rowsD[i][0];
+                if (!aVal) continue;
+                const aStr = String(aVal).trim();
+                if (aStr === targetDatePadded || aStr === targetDateAlt) { rowIdxD = i; break; }
+                const dt = new Date(aStr);
+                if (!isNaN(dt.getTime())) {
+                  const am = dt.getMonth() + 1, ad = dt.getDate(), ay = dt.getFullYear();
+                  if (am === mNumTarget && ad === dNumTarget && ay === yNumTarget) { rowIdxD = i; break; }
+                }
+              }
+
+              const blocks = [
+                { title: `DataCloud ${shift}`, col: getPremierDataCloudColumn(shift), id: 'sig-data-datacloud' },
+                { title: `Agentforce ${shift}`, col: getPremierAgentforceColumn(shift), id: 'sig-data-agentforce' },
+              ];
+              blocks.forEach(async ({ title, col, id }) => {
+                let cellVal = '';
+                if (rowIdxD >= 0) {
+                  const colIdx = col.charCodeAt(0) - 'A'.charCodeAt(0);
+                  cellVal = (rowsD[rowIdxD][colIdx] || '').toString().trim();
+                }
+                try { cellVal = (await getCellValueWithoutStrikethrough(SHEET_DATA_CLOUD_AF, rowIdxD, col)) || cellVal; } catch { }
+                if (!cellVal) {
+                  dataContainer.insertAdjacentHTML('beforeend', `
+                    <div style="margin-top:12px;">
+                      <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                        <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${title}</div>
+                        <div style="font-size:14px; color:#64748b;">No data for ${shift} on ${weekendDateStr}.</div>
+                      </div>
+                    </div>
+                  `);
+                } else {
+                  const copyText = normalizeNamesForCopy(cellVal);
+                  dataContainer.insertAdjacentHTML('beforeend', `
+                    <div style="margin-top:12px;">
+                      <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                          <div style="font-weight:700; color:#0f766e;">${title}</div>
+                          <span style="font-size:12px; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; padding:4px 8px; border-radius:999px;">Click to copy</span>
+                        </div>
+                        <div id="${id}" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(cellVal)}</div>
+                      </div>
+                    </div>
+                  `);
+                  const copyEl = document.getElementById(id);
+                  if (copyEl) {
+                    copyEl.addEventListener('click', () => {
+                      navigator.clipboard.writeText(copyText).then(() => showToast(`${title} copied`)).catch(() => showToast('Copy failed'));
+                    });
+                  }
+                }
+              });
+            } catch (e) {
+              console.error('Failed building Signature Data section:', e);
+            }
+          }, (err) => {
+            console.error('Failed loading Data Cloud and AF sheet:', err);
+          });
+        }
+
       }
 
-      // In Signature mode, also show Sales/Service Cloud TEs sections
+      // In Signature mode, also show Sales/Service/Industry Cloud TEs sections
       if (currentMode === 'signature') {
-        const bodyEl2 = document.querySelector('#cic-modal .modal-body');
-        if (bodyEl2) {
+        const salesContainer = document.getElementById('sig-sales-section-content');
+        const serviceContainer = document.getElementById('sig-service-section-content');
+        const industryContainer = document.getElementById('sig-industry-section-content');
+        if (salesContainer && serviceContainer && industryContainer) {
           // Helper to append a TE section for a given sheet and title
-          const appendTESection = (sheetName, titlePrefix, idSuffix) => {
-            const teColumn = getTEColumnForShift(shift);
+          const appendTESection = (sheetName, titlePrefix, idSuffix, containerEl) => {
+            const teColumn = (sheetName === SHEET_INDUSTRY_CLOUD)
+              ? getPremierIndustryTEColumn(shift)
+              : getTEColumnForShift(shift);
             const teRange = `'${sheetName}'!A:Z`;
             googleSheetsGET(teRange, (r2) => {
               try {
@@ -2289,7 +2636,7 @@ function showCICManagers() {
                         <div style="font-size:14px; color:#64748b;">No TEs found for ${shift} on ${weekendDateStr}.</div>
                       </div>
                     </div>`;
-                  bodyEl2.insertAdjacentHTML('beforeend', sectionHtml);
+                  containerEl.insertAdjacentHTML('beforeend', sectionHtml);
                   return;
                 }
 
@@ -2304,7 +2651,7 @@ function showCICManagers() {
                       <div id="${idSuffix}-names" title="Click to copy" style="padding:12px; border:1px dashed #94a3b8; border-radius:8px; background:#f8fafc; cursor:pointer; white-space:normal; word-break:break-word; overflow-wrap:anywhere;">${formatNamesToMultiline(teNamesCell)}</div>
                     </div>
                   </div>`;
-                bodyEl2.insertAdjacentHTML('beforeend', sectionHtml);
+                containerEl.insertAdjacentHTML('beforeend', sectionHtml);
 
                 const teDiv = document.getElementById(`${idSuffix}-names`);
                 if (teDiv) {
@@ -2322,8 +2669,9 @@ function showCICManagers() {
             });
           };
 
-          appendTESection(SHEET_SALES_CLOUD, 'Sales Cloud TEs', 'sales-te');
-          appendTESection(SHEET_SERVICE_CLOUD, 'Service Cloud TEs', 'service-te');
+          appendTESection(SHEET_SALES_CLOUD, 'Sales Cloud TEs', 'sales-te', salesContainer);
+          appendTESection(SHEET_SERVICE_CLOUD, 'Service Cloud TEs', 'service-te', serviceContainer);
+          appendTESection(SHEET_INDUSTRY_CLOUD, 'Industry Cloud TEs', 'industry-te', industryContainer);
         }
       }
 
@@ -2332,6 +2680,8 @@ function showCICManagers() {
         const container = document.getElementById('premier-sections');
         const select = document.getElementById('premier-view');
         const resetBtn = document.getElementById('premier-reset');
+        const editBtn = document.getElementById('premier-edit');
+        let currentPremierBlocks = [];
         if (container && select) {
           if (resetBtn) {
             resetBtn.addEventListener('click', () => {
@@ -2339,8 +2689,145 @@ function showCICManagers() {
               const v = select.value; if (v === 'sales') return renderSales(); if (v === 'service') return renderService(); if (v === 'industry') return renderIndustry(); return renderData();
             });
           }
+          const openPremierEditDialog = () => {
+            if (!currentPremierBlocks || currentPremierBlocks.length === 0) { showToast('Nothing to edit'); return; }
+            const dlg = document.createElement('div');
+            dlg.style.position = 'fixed';
+            dlg.style.inset = '0';
+            dlg.style.background = 'rgba(0,0,0,0.4)';
+            dlg.style.display = 'flex';
+            dlg.style.alignItems = 'center';
+            dlg.style.justifyContent = 'center';
+            dlg.style.zIndex = '1005';
+            dlg.innerHTML = `
+              <div style="background:#fff; padding:16px; border-radius:8px; width:380px; max-width:90vw; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+                <div style="font-weight:700; margin-bottom:10px; color:#0f172a;">Edit Premier TE</div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <label style="font-size:12px; color:#475569;">Block</label>
+                  <select id="pe-block" class="slds-select">${currentPremierBlocks.map(b => `<option value="${b.blockId}">${b.title}</option>`).join('')}</select>
+                  <label style="font-size:12px; color:#475569;">Select name</label>
+                  <select id="pe-name" class="slds-select"></select>
+                  <label style="font-size:12px; color:#475569;">Search Email with Full Name</label>
+                  <input id="pe-newname" class="slds-input" placeholder="Leave same to keep" />
+                  <label style="font-size:12px; color:#475569;">Search Email</label>
+                  <div style="display:flex; gap:6px;">
+                    <input id="pe-email" class="slds-input" placeholder="Search and select email" style="flex:1;" />
+                    <button id="pe-search" class="slds-button slds-button_neutral" title="Search by exact Name in Salesforce">Search</button>
+                  </div>
+                  <div id="pe-results" style="max-height:140px; overflow:auto; border:1px solid #e5e7eb; border-radius:6px; padding:6px; display:none;"></div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+                  <button id="pe-cancel" class="slds-button slds-button_neutral">Cancel</button>
+                  <button id="pe-save" class="slds-button slds-button_brand">Save</button>
+                </div>
+              </div>`;
+            document.body.appendChild(dlg);
+            const blockSel = dlg.querySelector('#pe-block');
+            const nameSel = dlg.querySelector('#pe-name');
+            const emailInp = dlg.querySelector('#pe-email');
+            const newNameInp = dlg.querySelector('#pe-newname');
+            const refreshNames = () => {
+              const b = currentPremierBlocks.find(x => x.blockId === blockSel.value);
+              const rows = b && b.mount ? Array.from(b.mount.querySelectorAll('.pc-row')) : [];
+              const namesArr = rows.map(r => r.getAttribute('data-name'));
+              nameSel.innerHTML = namesArr.map(n => `<option value="${n}">${n}</option>`).join('');
+              const sel = namesArr[0] || '';
+              const row = rows.find(r => (r.getAttribute('data-name') || '') === sel);
+              const mailBtn = row ? row.querySelector('.pc-mail') : null;
+              const em = mailBtn ? (mailBtn.getAttribute('data-email') || '') : '';
+              emailInp.value = em || '';
+              newNameInp.value = sel || '';
+            };
+            blockSel.onchange = refreshNames;
+            nameSel.onchange = () => {
+              const b = currentPremierBlocks.find(x => x.blockId === blockSel.value);
+              const sel = nameSel.value;
+              const rows = b && b.mount ? Array.from(b.mount.querySelectorAll('.pc-row')) : [];
+              const row = rows.find(r => (r.getAttribute('data-name') || '') === sel);
+              const mailBtn = row ? row.querySelector('.pc-mail') : null;
+              const em = mailBtn ? (mailBtn.getAttribute('data-email') || '') : '';
+              emailInp.value = em || '';
+              newNameInp.value = sel || '';
+            };
+            refreshNames();
+            dlg.querySelector('#pe-search').onclick = async () => {
+              const qname = (newNameInp.value || '').trim();
+              const resultsEl = dlg.querySelector('#pe-results');
+              resultsEl.style.display = 'none';
+              resultsEl.innerHTML = '';
+              if (!qname) return;
+              try {
+                if (!window.jsforce || !SESSION_ID) {
+                  const m = await getEmailsByNames([qname]);
+                  const cleaned = cleanRosterNameForQuery(qname).toLowerCase();
+                  const fallback = m[qname] || m[qname.toLowerCase()] || m[cleaned] || '';
+                  if (fallback) { emailInp.value = fallback; }
+                  return;
+                }
+                const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID });
+                const soql = `SELECT Name, Email, Title, Username FROM User WHERE IsActive = true AND Email != null AND (Username LIKE '%dreamevent.com' OR Username LIKE '%orgcs.com') AND Name ='${escapeSoqlString(qname)}'`;
+                conn.query(soql, (err, res) => {
+                  if (err) {
+                    resultsEl.style.display = 'block';
+                    resultsEl.innerHTML = `<div style=\"color:#b91c1c; font-size:12px;\">Search failed: ${String(err.message || err).replace(/</g, '&lt;')}</div>`;
+                    return;
+                  }
+                  const recs = (res && res.records) ? res.records : [];
+                  if (recs.length === 0) {
+                    resultsEl.style.display = 'block';
+                    resultsEl.innerHTML = `<div style=\"color:#64748b; font-size:12px;\">No results found</div>`;
+                    return;
+                  }
+                  resultsEl.style.display = 'block';
+                  resultsEl.innerHTML = recs.map(r => {
+                    const nm = String(r.Name || ''); const em = String(r.Email || ''); const un = String(r.Username || ''); const dg = String(r.Title || '');
+                    return `<div class=\"pe-result\" data-name=\"${nm.replace(/\"/g, '&quot;')}\" data-email=\"${em.replace(/\"/g, '&quot;')}\" style=\"padding:6px 8px; border-radius:6px; cursor:pointer; display:flex; flex-direction:column; gap:2px;\">`
+                      + `<div style=\"font-size:13px; color:#0f172a;\">${nm}</div>`
+                      + `<div style=\"font-size:12px; color:#475569;\">${em} · ${un} · ${dg}</div>`
+                      + `</div>`;
+                  }).join('');
+                  resultsEl.querySelectorAll('.pe-result').forEach(item => {
+                    item.addEventListener('click', () => {
+                      const selName = item.getAttribute('data-name') || '';
+                      const selEmail = item.getAttribute('data-email') || '';
+                      if (selEmail) emailInp.value = selEmail;
+                      resultsEl.querySelectorAll('.pe-result').forEach(el => { el.style.background = 'transparent'; });
+                      item.style.background = '#f1f5f9';
+                    });
+                  });
+                });
+              } catch (e) {
+                resultsEl.style.display = 'block';
+                resultsEl.innerHTML = `<div style=\"color:#b91c1c; font-size:12px;\">Search error</div>`;
+              }
+            };
+            dlg.querySelector('#pe-cancel').onclick = () => dlg.remove();
+            dlg.querySelector('#pe-save').onclick = async () => {
+              const bId = blockSel.value;
+              const original = nameSel.value;
+              const newName = (newNameInp.value || '').trim() || original;
+              const email = (emailInp.value || '').trim();
+              setPremierOverride(weekendDateStr, shift, bId, original, newName, email);
+              try {
+                if (email && newName) {
+                  const cached = loadUserEmailCache();
+                  const map = cached.map || {};
+                  const cleaned = cleanRosterNameForQuery(newName).toLowerCase();
+                  map[cleaned] = email; map[newName.toLowerCase()] = email;
+                  saveUserEmailCache(map);
+                }
+              } catch { /* noop */ }
+              // Re-render current view
+              const v = select.value; if (v === 'sales') await renderSales(); else if (v === 'service') await renderService(); else if (v === 'industry') await renderIndustry(); else await renderData();
+              dlg.remove();
+            };
+          };
+          if (editBtn) {
+            editBtn.addEventListener('click', openPremierEditDialog);
+          }
           const renderSales = () => {
             container.innerHTML = '';
+            currentPremierBlocks = [];
             // 3 cells from Sales Cloud sheet
             const rangePS = `'${SHEET_SALES_CLOUD}'!A:Z`;
             googleSheetsGET(rangePS, (r) => {
@@ -2403,6 +2890,7 @@ function showCICManagers() {
                     let emailMap = {};
                     try { emailMap = await getEmailsByNames(names); } catch { }
                     renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                    currentPremierBlocks.push({ blockId: id, title, names, emailMap, mount: countersEl });
                   }
                 }
               });
@@ -2411,6 +2899,7 @@ function showCICManagers() {
 
           const renderService = () => {
             container.innerHTML = '';
+            currentPremierBlocks = [];
             // 3 cells from Service Cloud sheet
             const rangePSe = `'${SHEET_SERVICE_CLOUD}'!A:Z`;
             googleSheetsGET(rangePSe, (r) => {
@@ -2473,6 +2962,7 @@ function showCICManagers() {
                     let emailMap = {};
                     try { emailMap = await getEmailsByNames(names); } catch { }
                     renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                    currentPremierBlocks.push({ blockId: id, title, names, emailMap, mount: countersEl });
                   }
                 }
               });
@@ -2481,6 +2971,7 @@ function showCICManagers() {
 
           const renderIndustry = () => {
             container.innerHTML = '';
+            currentPremierBlocks = [];
             // 2 cells: Industry TEs, Swarm Lead from Industry Cloud sheet
             const rangePI = `'${SHEET_INDUSTRY_CLOUD}'!A:Z`;
             googleSheetsGET(rangePI, (r) => {
@@ -2536,6 +3027,7 @@ function showCICManagers() {
                   let emailMap = {};
                   try { emailMap = await getEmailsByNames(names); } catch { }
                   renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                  currentPremierBlocks.push({ blockId: id, title, names, emailMap, mount: countersEl });
                 }
               });
             }, (e) => console.error('Premier Industry read fail:', e));
@@ -2543,6 +3035,7 @@ function showCICManagers() {
 
           const renderData = () => {
             container.innerHTML = '';
+            currentPremierBlocks = [];
             // 2 cells from Data Cloud and AF sheet: DataCloud {Shift}, Agentforce {Shift}
             const rangePD = `'${SHEET_DATA_CLOUD_AF}'!A:Z`;
             googleSheetsGET(rangePD, (r) => {
@@ -2604,6 +3097,7 @@ function showCICManagers() {
                     let emailMap = {};
                     try { emailMap = await getEmailsByNames(names); } catch { }
                     renderPremierCounters(countersEl, names, { dateStr: weekendDateStr, shift, blockId: id, emailMap });
+                    currentPremierBlocks.push({ blockId: id, title, names, emailMap, mount: countersEl });
                   }
                 }
               });
@@ -3506,6 +4000,59 @@ async function trackNewCaseFromHistory(conn, params) {
     return { processed };
   } catch (e) {
     console.warn('trackNewCaseFromHistory failed:', e);
+    return { processed: [], error: e.message };
+  }
+}
+
+// Helper Fn: detect if cases have been assigned by ANY user (owner change or manual assignment), no tracking/logging, used to safely remove missing ones.
+async function detectAssignmentsForCases(conn, params) {
+  const { caseIds } = params || {};
+  try {
+    if (!Array.isArray(caseIds) || caseIds.length === 0) return { processed: [] };
+
+    // Pull Case info for context/state checks
+    const caseRes = await conn.query(`SELECT Id, CaseNumber, Owner.Name, Status, IsClosed FROM Case WHERE Id IN ('${caseIds.join("','")}')`);
+    const caseMap = new Map((caseRes.records || []).map(r => [r.Id, r]));
+
+    // Look for either routing status manual assignment OR owner changes by anyone in recent history (last 24h window)
+    const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const histRes = await conn.query(`SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND CreatedDate >= ${sinceIso} AND (Field='Routing_Status__c' OR Field='Owner') ORDER BY CreatedDate DESC`);
+    const records = histRes.records || [];
+    const byCase = new Map();
+    for (const h of records) {
+      if (!byCase.has(h.CaseId)) byCase.set(h.CaseId, []);
+      byCase.get(h.CaseId).push(h);
+    }
+
+    const processed = [];
+    for (const caseId of caseIds) {
+      const hist = byCase.get(caseId) || [];
+      let assigned = false;
+      let reason = '';
+
+      // Check current state first (cheap & definitive)
+      const cRec = caseMap.get(caseId);
+      if (cRec) {
+        const ownerName = (cRec.Owner && cRec.Owner.Name) ? String(cRec.Owner.Name) : '';
+        const isQueueOwner = /Queue/i.test(ownerName) || ['Kase Changer', 'Working in Org62', 'Data Cloud Queue'].some(q => ownerName.includes(q));
+        if (cRec.IsClosed === true) { assigned = true; reason = 'closed'; }
+        else if (cRec.Status && cRec.Status !== 'New') { assigned = true; reason = 'status-changed'; }
+        else if (!isQueueOwner && ownerName) { assigned = true; reason = 'owner-human'; }
+      }
+
+      // If still not decided, look at recent history changes by anyone
+      for (const h of hist) {
+        const isManualAssign = (h.Field === 'Routing_Status__c' && typeof h.NewValue === 'string' && h.NewValue.startsWith('Manually Assigned'));
+        const isOwnerChange = (h.Field === 'Owner');
+        if (isManualAssign || isOwnerChange) { assigned = true; reason = isManualAssign ? 'history-manual' : 'history-owner'; break; }
+      }
+      if (assigned) {
+        processed.push({ caseId, action: 'assignment-detected', reason, owner: (cRec && cRec.Owner && cRec.Owner.Name) || '' });
+      }
+    }
+    return { processed };
+  } catch (e) {
+    console.warn('detectAssignmentsForCases failed:', e);
     return { processed: [], error: e.message };
   }
 }

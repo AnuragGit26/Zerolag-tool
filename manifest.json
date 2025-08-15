@@ -3,18 +3,6 @@
 	"name": "Zerolag",
 	"version": "3.0.15",
 	"description": "Triage Team New Sev1/Sev2 Cases Notifier for Sig - Sales/Service/Industry Cloud and Premier Weekend New Cases",
-	"content_scripts": [
-		{
-			"matches": [
-				"https://orgcs.my.salesforce.com/*"
-			],
-			"js": [
-				"js/vendor/jsforce.js",
-				"js/vendor/jquery.min.js",
-				"js/vendor/bootstrap.min.js"
-			]
-		}
-	],
 	"action": {
 		"default_icon": "assets/images/case.png"
 	},
@@ -28,20 +16,16 @@
 	},
 	"permissions": [
 		"storage",
-		"activeTab",
-		"scripting",
 		"tabs",
 		"alarms",
 		"cookies",
 		"identity"
 	],
 	"host_permissions": [
-		"https://orgcs.lightning.force.com/",
-		"https://orgcs.my.salesforce.com/services/data/v59.0",
+		"https://orgcs.lightning.force.com/*",
 		"https://orgcs.my.salesforce.com/services/data/*",
 		"https://orgcs.my.salesforce.com/*",
-		"https://login.Salesforce.com/*",
-		"https://maxcdn.bootstrapcdn.com/*",
+		"https://login.salesforce.com/*",
 		"https://sheets.googleapis.com/*"
 	],
 	"oauth2": {

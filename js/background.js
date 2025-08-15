@@ -14,6 +14,25 @@ chrome.runtime.onStartup.addListener(() => {
 let tabId;
 let persistentCases = new Map(); // Store persistent cases by case ID
 
+// Helper to upsert a case record in the persistent map with bookkeeping
+function upsertPersistentCase(caseObj, meta) {
+	const existing = persistentCases.get(caseObj.Id) || {};
+	const now = Date.now();
+	const updated = {
+		...existing,
+		...caseObj,
+		mode: meta.currentMode || existing.mode,
+		userId: meta.currentUserId || existing.userId,
+		userName: meta.currentUserName || existing.userName,
+		addedAt: existing.addedAt || now,
+		lastSeenMs: now,
+		missingCount: 0,
+		processed: existing.processed || false,
+		processedReason: existing.processedReason || null,
+	};
+	persistentCases.set(caseObj.Id, updated);
+}
+
 // Function to close all existing extension tabs (except active ones)
 async function closeExistingExtensionTabs() {
 	const extensionUrl = chrome.runtime.getURL('popup/popup.html');
@@ -143,12 +162,10 @@ chrome.runtime.onMessage.addListener(
 				try {
 					if (request.cases && Array.isArray(request.cases)) {
 						request.cases.forEach(caseObj => {
-							persistentCases.set(caseObj.Id, {
-								...caseObj,
-								mode: request.currentMode,
-								userId: request.currentUserId,
-								userName: request.currentUserName,
-								addedAt: Date.now()
+							upsertPersistentCase(caseObj, {
+								currentMode: request.currentMode,
+								currentUserId: request.currentUserId,
+								currentUserName: request.currentUserName
 							});
 						});
 						sendResponse({
@@ -166,7 +183,7 @@ chrome.runtime.onMessage.addListener(
 				return true;
 			}
 
-			// Remove stale cases for a mode that are no longer in the latest query results
+			// Sync cases seen in latest query. Do not auto-remove missing; only mark as missing and report back.
 			if (request.action === 'syncPersistentCases') {
 				try {
 					const mode = request.mode;
@@ -175,16 +192,47 @@ chrome.runtime.onMessage.addListener(
 						sendResponse({ success: false, message: 'Mode is required' });
 						return true;
 					}
-					let removed = 0;
+					const now = Date.now();
+					const MAX_MISSING_DURATION_MS = 10 * 60 * 60 * 1000; // fallback cleanup after 10h
+					const missingCases = [];
 					const removedCases = [];
-					for (const [caseId, data] of persistentCases.entries()) {
-						if (data.mode === mode && !ids.has(caseId)) {
-							removedCases.push({ id: caseId, data });
-							persistentCases.delete(caseId);
-							removed++;
+					let removed = 0;
+
+					// First, update lastSeen for all ids in current result
+					for (const id of ids) {
+						const data = persistentCases.get(id);
+						if (data && data.mode === mode) {
+							data.lastSeenMs = now;
+							data.missingCount = 0;
+							persistentCases.set(id, data);
 						}
 					}
-					sendResponse({ success: true, removed, count: persistentCases.size, removedCases });
+
+					// Mark missing cases, only remove if explicitly processed or very stale
+					for (const [caseId, data] of persistentCases.entries()) {
+						if (data.mode !== mode) continue;
+						if (!ids.has(caseId)) {
+							const updated = { ...data };
+							updated.missingCount = (updated.missingCount || 0) + 1;
+							updated.lastMissingAt = now;
+							persistentCases.set(caseId, updated);
+							// If already processed, we can safely remove
+							if (updated.processed === true) {
+								persistentCases.delete(caseId);
+								removed++;
+								removedCases.push({ id: caseId, data: updated, reason: 'processed' });
+							} else if ((updated.lastSeenMs && (now - updated.lastSeenMs) > MAX_MISSING_DURATION_MS)) {
+								// Fallback cleanup for very old entries
+								persistentCases.delete(caseId);
+								removed++;
+								removedCases.push({ id: caseId, data: updated, reason: 'stale-timeout' });
+							} else {
+								missingCases.push({ id: caseId, data: updated });
+							}
+						}
+					}
+
+					sendResponse({ success: true, removed, count: persistentCases.size, removedCases, missingCases });
 				} catch (error) {
 					console.error('Error syncing persistent cases:', error);
 					sendResponse({ success: false, message: error.message });
@@ -195,6 +243,11 @@ chrome.runtime.onMessage.addListener(
 			if (request.action === 'removeCaseFromPersistentSet') {
 				try {
 					if (request.caseId) {
+						// Mark as processed before removal for bookkeeping
+						const existing = persistentCases.get(request.caseId);
+						if (existing) {
+							persistentCases.set(request.caseId, { ...existing, processed: true, processedReason: request.reason || 'explicit-remove' });
+						}
 						const wasRemoved = persistentCases.delete(request.caseId);
 						sendResponse({
 							success: true,
