@@ -9,10 +9,8 @@ import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.
 import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
 import { logger } from './utils/logging.js';
 
-try { logger.installConsoleBeautifier(); } catch { /* noop */ }
+try { logger.installConsoleBeautifier(); } catch { }
 
-// Show a toast when Salesforce blocks requests due to IP restrictions (e.g., "INSUFFICIENT_ACCESS: Access from current IP address is not allowed").
-// We hook console.error after the logger beautifier so vendor jsforce logs also trigger this.
 (() => {
   try {
     const SEEN_KEY = '__ip_access_toast_last_shown_ts';
@@ -56,7 +54,7 @@ try { logger.installConsoleBeautifier(); } catch { /* noop */ }
         } catch { /* ignore */ }
         return resp;
       };
-    } catch { /* noop */ }
+    } catch { }
 
     // Intercept XMLHttpRequest
     try {
@@ -65,7 +63,7 @@ try { logger.installConsoleBeautifier(); } catch { /* noop */ }
         const origOpen = XHR.prototype.open;
         const origSend = XHR.prototype.send;
         XHR.prototype.open = function (method, url, async, user, password) {
-          try { this.___sf_ip_err_url = url; } catch { /* noop */ }
+          try { this.___sf_ip_err_url = url; } catch { }
           return origOpen.apply(this, arguments);
         };
         XHR.prototype.send = function (body) {
@@ -76,18 +74,18 @@ try { logger.installConsoleBeautifier(); } catch { /* noop */ }
                   const text = String(this.responseText || '');
                   if (text && bodyMatches(text)) maybeToast();
                 }
-              } catch { /* noop */ }
+              } catch { }
             });
-          } catch { /* noop */ }
+          } catch { }
           return origSend.apply(this, arguments);
         };
       }
-    } catch { /* noop */ }
+    } catch { }
     console.error = function (...args) {
       try {
         if (matchErr(args)) maybeToast();
-      } catch { /* noop */ }
-      try { return origError.apply(this, args); } catch { /* noop */ }
+      } catch { }
+      try { return origError.apply(this, args); } catch { }
     };
 
     // Also intercept our structured logger path so messages printed via logger.error are caught too.
@@ -95,12 +93,12 @@ try { logger.installConsoleBeautifier(); } catch { /* noop */ }
       if (logger && typeof logger.error === 'function') {
         const origLoggerError = logger.error.bind(logger);
         logger.error = (...args) => {
-          try { if (matchErr(args)) maybeToast(); } catch { /* noop */ }
+          try { if (matchErr(args)) maybeToast(); } catch { }
           return origLoggerError(...args);
         };
       }
-    } catch { /* noop */ }
-  } catch { /* swallow */ }
+    } catch { }
+  } catch { }
 })();
 
 let SESSION_ID;
@@ -140,7 +138,7 @@ function saveUserMapCache(userMap) {
   try {
     const payload = { userMap: userMap || {}, fetchedAt: Date.now() };
     localStorage.setItem(GHO_USERMAP_CACHE_KEY, JSON.stringify(payload));
-  } catch { /* noop */ }
+  } catch { }
 }
 
 function loadUserEmailCache() {
@@ -300,7 +298,7 @@ function ensureUserUsageBucket(userName) {
 }
 
 function persistUsageState() {
-  try { localStorage.setItem(USAGE_STATE_KEY, JSON.stringify(usageState)); } catch { /* noop */ }
+  try { localStorage.setItem(USAGE_STATE_KEY, JSON.stringify(usageState)); } catch { }
 }
 
 function startUsageTicking() {
@@ -528,7 +526,7 @@ function getCaseDetails() {
                       for (const p of verified.processed) {
                         try {
                           chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId: p.caseId, reason: 'assigned-by-any' }, () => { });
-                        } catch { /* noop */ }
+                        } catch { }
                       }
                     }
                   }
@@ -1868,7 +1866,7 @@ try {
           trackBtn.disabled = false;
           trackInput.disabled = false;
         }
-      } catch (e) { /* noop */ }
+      } catch (e) { }
     };
 
     const doTrack = async () => {
@@ -2332,7 +2330,7 @@ function showCICManagers() {
               </div>
             `);
           }
-        } catch { /* noop */ }
+        } catch { }
 
         // Show the Signature Sales Swarm Lead first (Sales > Service > Industry ordering)
         const bodyElSales = document.getElementById('sig-sales-section-content');
@@ -2816,7 +2814,7 @@ function showCICManagers() {
                   map[cleaned] = email; map[newName.toLowerCase()] = email;
                   saveUserEmailCache(map);
                 }
-              } catch { /* noop */ }
+              } catch { }
               // Re-render current view
               const v = select.value; if (v === 'sales') await renderSales(); else if (v === 'service') await renderService(); else if (v === 'industry') await renderIndustry(); else await renderData();
               dlg.remove();
@@ -3575,7 +3573,7 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
       // also persist to localStorage day-cache
       const existing = loadUserMapCache();
       saveUserMapCache({ ...(existing.userMap || {}), ...(userMap || {}) });
-    } catch (e) { /* noop */ }
+    } catch (e) { }
 
     // Count cases with QB mentions
     const qbMentionedCount = Array.from(ghoTriageCommentCases).length;
@@ -4149,7 +4147,7 @@ async function forceProcessCase(caseNumber) {
 
     // Optionally, remove from persistent set if present
     try {
-      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId }, () => { /* noop */ });
+      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId }, () => { });
     } catch { }
 
     if (actions.length === 0) {
@@ -4253,7 +4251,7 @@ async function forceProcessCaseById(caseId) {
     }
 
     try {
-      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId: caseRec.Id }, () => { /* noop */ });
+      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId: caseRec.Id }, () => { });
     } catch { }
 
     if (actions.length === 0) {
