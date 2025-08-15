@@ -19,14 +19,18 @@
 		"tabs",
 		"alarms",
 		"cookies",
-		"identity"
+		"identity",
+		"activeTab",
+		"scripting"
 	],
 	"host_permissions": [
 		"https://orgcs.lightning.force.com/*",
+		"https://orgcs.my.salesforce.com/services/*",
 		"https://orgcs.my.salesforce.com/services/data/*",
 		"https://orgcs.my.salesforce.com/*",
 		"https://login.salesforce.com/*",
-		"https://sheets.googleapis.com/*"
+		"https://sheets.googleapis.com/*",
+		"https://maxcdn.bootstrapcdn.com/*"
 	],
 	"oauth2": {
 		"client_id": "378152633002-eq512vmu0m5dhnbugm8604vu5iuve97e.apps.googleusercontent.com",
