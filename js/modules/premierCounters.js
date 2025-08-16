@@ -156,6 +156,8 @@ function applyOverridesToNames(namesArray, { dateStr, shift, blockId, emailMap }
 
 export function parseRosterNames(raw) {
     if (!raw) return [];
+    const skipWords = ['CME/CPQ', 'CORE', 'HINS/OS', 'REVENUE'];
+
     const s = String(raw);
     let outStr = '';
     let depth = 0;
@@ -190,7 +192,10 @@ export function parseRosterNames(raw) {
     const cleaned = tokens.map(t => t.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean);
     const seen = new Set();
     const out = [];
-    for (const p of cleaned) { if (!seen.has(p)) { seen.add(p); out.push(p); } }
+    for (const p of cleaned) {
+        if (skipWords.includes(p)) continue;
+        if (!seen.has(p)) { seen.add(p); out.push(p); }
+    }
     return out;
 }
 
