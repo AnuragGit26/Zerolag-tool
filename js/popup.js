@@ -4136,10 +4136,12 @@ function updateDetailedCacheInfo() {
     const ageMinutes = Math.floor(age / (1000 * 60));
     const isExpired = age >= GHO_CACHE_TTL;
 
+    const weekendFlag = isCurrentlyWeekend();
+    const mondayCount = weekendFlag ? (currentModeCache.mondayCaseIds?.size || 0) : 0;
     currentModeDetail.innerHTML = `
       <strong>${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} Mode Cache:</strong> ${isExpired ? 'Expired' : 'Fresh'} 
       (${ageMinutes}m old)<br>
-      <small>${currentModeCache.records?.length || 0} cases, ${currentModeCache.triageCaseIds?.size || 0} triage, ${currentModeCache.mondayCaseIds?.size || 0} Monday cases</small>
+      <small>${currentModeCache.records?.length || 0} cases, ${currentModeCache.triageCaseIds?.size || 0} triage${weekendFlag ? `, ${mondayCount} Monday cases` : ''}</small>
     `;
     currentModeDetail.style.color = isExpired ? '#dc2626' : '#059669';
   } else {
@@ -4317,6 +4319,7 @@ function checkGHOStatus(forceRefresh = false) {
         });
 
         // Check each case for GHO triage and Monday mentions
+        const isWeekendNow = isCurrentlyWeekend();
         Object.keys(commentsByCase).forEach(caseId => {
           const caseComments = commentsByCase[caseId];
 
@@ -4338,8 +4341,8 @@ function checkGHOStatus(forceRefresh = false) {
             }
           });
 
-          // Check for Monday mentions in the 5 most recent comments
-          const hasMondayInComments = caseComments.some(comment => {
+          // Check for Monday mentions in the 5 most recent comments - weekend only
+          const hasMondayInComments = isWeekendNow && caseComments.some(comment => {
             if (!comment.Body) return false;
             // Strip HTML tags and check for Monday (case insensitive)
             const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
@@ -4356,8 +4359,8 @@ function checkGHOStatus(forceRefresh = false) {
             console.log(`No Monday detected for case ${caseId} - comments:`, caseComments.map(c => c.Body));
           }
 
-          // Check for "No {currentShift} GHO template" mentions in the 5 most recent comments
-          const hasNoWocTemplateInComments = caseComments.some(comment => {
+          // Check for "No {currentShift} GHO template" mentions in the 5 most recent comments - weekend only
+          const hasNoWocTemplateInComments = isWeekendNow && caseComments.some(comment => {
             if (!comment.Body) return false;
             // Strip HTML tags and check for "No {currentShift} GHO template" pattern (case insensitive)
             const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
@@ -4630,7 +4633,10 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
       noWocTemplateCaseIds: pre.noWocTemplateCaseIds?.size || 0,
       noWocTemplateCaseIdsContent: Array.from(pre.noWocTemplateCaseIds || [])
     });
-    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, pre.triageCaseIds, pre.mondayCaseIds || new Set(), pre.noWocTemplateCaseIds || new Set());
+    const weekendNow = isCurrentlyWeekend();
+    const weekendMondaySet = weekendNow ? (pre.mondayCaseIds || new Set()) : new Set();
+    const weekendNoWocSet = weekendNow ? (pre.noWocTemplateCaseIds || new Set()) : new Set();
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, pre.triageCaseIds, weekendMondaySet, weekendNoWocSet);
     return;
   }
 
@@ -4665,6 +4671,7 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
       });
 
       // Check each case for GHO triage and Monday mentions
+      const isWeekendNow = isCurrentlyWeekend();
       Object.keys(commentsByCase).forEach(caseId => {
         const caseComments = commentsByCase[caseId];
 
@@ -4679,8 +4686,8 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
           }
         });
 
-        // Check for Monday mentions in the 5 most recent comments
-        const hasMondayInComments = caseComments.some(comment => {
+        // Check for Monday mentions in the 5 most recent comments - weekend only
+        const hasMondayInComments = isWeekendNow && caseComments.some(comment => {
           if (!comment.Body) return false;
           // Strip HTML tags and check for Monday (case insensitive)
           const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
@@ -4697,8 +4704,8 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
           console.log(`No Monday detected for case ${caseId} - comments:`, caseComments.map(c => c.Body));
         }
 
-        // Check for "No {currentShift} GHO template" mentions in the 5 most recent comments
-        const hasNoWocTemplateInComments = caseComments.some(comment => {
+        // Check for "No {currentShift} GHO template" mentions in the 5 most recent comments - weekend only
+        const hasNoWocTemplateInComments = isWeekendNow && caseComments.some(comment => {
           if (!comment.Body) return false;
           // Strip HTML tags and check for "No {currentShift} GHO template" pattern (case insensitive)
           const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();

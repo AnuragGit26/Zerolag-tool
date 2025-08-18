@@ -1,4 +1,3 @@
-
 // Polyfills for Service Worker environment
 if (typeof globalThis === 'undefined') {
 	globalThis = self;
@@ -882,16 +881,6 @@ class NewCaseProcessingQueue {
 		}
 	}
 
-	// Check if case is already tracked
-	checkIfTracked(trackingKey) {
-		try {
-			const result = sessionStorage.getItem(trackingKey);
-			return result === 'true';
-		} catch (error) {
-			return false;
-		}
-	}
-
 	// Mark case as tracked
 	markAsTracked(trackingKey) {
 		try {
@@ -912,19 +901,6 @@ class NewCaseProcessingQueue {
 			console.error('Error generating tracking ID:', error);
 			// Fallback to a simple ID
 			return `tracking_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-		}
-	}
-
-	// Check if case is already tracked in this session
-	checkIfTracked(trackingId) {
-		try {
-			if (typeof sessionStorage !== 'undefined') {
-				return sessionStorage.getItem(trackingId) === 'true';
-			}
-			return false;
-		} catch (error) {
-			console.error('Error checking if tracked:', error);
-			return false;
 		}
 	}
 
@@ -959,43 +935,33 @@ class NewCaseProcessingQueue {
 				return false;
 			}
 
-			// Check if rawData exists and is a string before calling includes
-			if (typeof rawData === 'string') {
-				// Check if data is corrupted (contains Promise objects)
-				if (rawData.includes('[object Promise]') || rawData.includes('[object Promise]')) {
-					console.warn('Corrupted localStorage data detected (contains Promise objects). Clearing and resetting.');
-					localStorage.removeItem('sentToSheets');
-					return false;
-				}
-			} else {
-				// Handle non-string data types
-				console.warn(`Invalid localStorage data type detected: ${typeof rawData}. Expected string, got: ${rawData}. Clearing and resetting.`);
-				localStorage.removeItem('sentToSheets');
-				return false;
-			}
-
-			const sentEntries = JSON.parse(rawData);
-
-			// Additional validation to ensure entries are strings
-			if (!Array.isArray(sentEntries) || sentEntries.some(entry => typeof entry !== 'string')) {
-				console.warn('Invalid localStorage data format detected. Clearing and resetting.');
-				localStorage.removeItem('sentToSheets');
-				return false;
-			}
-
-			// Log successful check for debugging
-			console.log(`Successfully checked if tracking ID ${trackingId} was already sent. Found: ${sentEntries.includes(trackingId)}`);
-
-			return sentEntries.includes(trackingId);
-		} catch (error) {
-			console.error('Error checking sent entries:', error);
-			// Clear corrupted data
+			let sentEntries = [];
 			try {
-				localStorage.removeItem('sentToSheets');
-				console.log('Cleared corrupted localStorage data');
-			} catch (clearError) {
-				console.error('Failed to clear corrupted localStorage:', clearError);
+				sentEntries = JSON.parse(rawData);
+				console.log('Parsed localStorage data successfully');
+			} catch (parseError) {
+				console.warn('localStorage data is not valid JSON, clearing it');
+				try { localStorage.removeItem('sentToSheets'); } catch { }
+				return false;
 			}
+
+			if (!Array.isArray(sentEntries)) {
+				console.warn('Parsed localStorage data is not an array, clearing it');
+				try { localStorage.removeItem('sentToSheets'); } catch { }
+				return false;
+			}
+
+			for (const entry of sentEntries) {
+				if (entry && entry.trackingId === trackingId) {
+					console.log(`Found existing tracking ID ${trackingId} in localStorage`);
+					return true;
+				}
+			}
+
+			console.log(`Tracking ID ${trackingId} not found in localStorage`);
+			return false;
+		} catch (error) {
+			console.error('Error checking if already sent to Sheets:', error);
 			return false;
 		}
 	}
@@ -2160,15 +2126,7 @@ async function monitorCaseFeedForTrackedChanges() {
 	}
 }
 
-// Helper function to check if case is tracked
-function checkIfTracked(trackingKey) {
-	try {
-		const result = sessionStorage.getItem(trackingKey);
-		return result === 'true';
-	} catch (error) {
-		return false;
-	}
-}
+
 
 // Enhanced function to continuously process CaseFeed records
 async function continuousCaseFeedProcessing(connectionInfo, currentMode, currentUserId, currentUserName) {
