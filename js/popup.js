@@ -9,7 +9,7 @@ import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.
 import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
 import { logger } from './utils/logging.js';
 
-try { logger.installConsoleBeautifier(); } catch { }
+try { logger.setLevel('warn'); logger.installConsoleBeautifier(); } catch { }
 
 (() => {
   try {
@@ -112,14 +112,143 @@ export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70i
 
 const DEV_FORCE_SHOW_WEEKEND_ROSTER = false;
 
-const GHO_CACHE_TTL = 80000;
-window.__ghoCache = window.__ghoCache || { signature: null, premier: null };
+const GHO_CACHE_TTL = 600000;
+const GHO_CACHE_STORAGE_KEY = 'gho_cache_v1';
+window.__ghoCache = window.__ghoCache || loadGHOCache();
 window.__ghoListState = window.__ghoListState || null;
+
+// Initialize GHO cache
+console.log('GHO Cache initialized:', window.__ghoCache);
 const GHO_PAGE_SIZE = 10;
 const GHO_USERMAP_CACHE_KEY = 'gho_user_map_cache_v2';
 const GHO_USERMAP_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
 const USER_EMAIL_CACHE_KEY = 'sf_user_email_cache_v1';
 const USER_EMAIL_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
+
+// GHO mapping storage configuration
+const GHO_MAPPING_STORAGE_KEY = 'gho_transfer_mappings_v1';
+const GHO_MAPPING_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+// Weekend roster caching system with 1-hour TTL
+const WEEKEND_ROSTER_CACHE_TTL = 60 * 60 * 1000;
+const WEEKEND_ROSTER_CACHE_PREFIX = 'weekend_roster_cache_';
+
+function getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode) {
+  return `${WEEKEND_ROSTER_CACHE_PREFIX}${sheetName}_${shift}_${weekendDateStr}_${mode}`;
+}
+
+function getWeekendRosterFromCache(cacheKey) {
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (!cached) return null;
+
+    const parsed = JSON.parse(cached);
+    const now = Date.now();
+
+    // Check if cache is expired
+    if (!parsed.timestamp || (now - parsed.timestamp) > WEEKEND_ROSTER_CACHE_TTL) {
+      sessionStorage.removeItem(cacheKey);
+      return null;
+    }
+
+    return parsed.data;
+  } catch (error) {
+    console.warn('Failed to parse weekend roster cache:', error);
+    sessionStorage.removeItem(cacheKey);
+    return null;
+  }
+}
+
+function setWeekendRosterCache(cacheKey, data) {
+  try {
+    const cacheEntry = {
+      data: data,
+      timestamp: Date.now(),
+      ttl: WEEKEND_ROSTER_CACHE_TTL
+    };
+    sessionStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
+  } catch (error) {
+    console.warn('Failed to set weekend roster cache:', error);
+    // If session storage is full, try to clean up old entries
+    cleanupWeekendRosterCache();
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
+    } catch (retryError) {
+      console.warn('Failed to set weekend roster cache after cleanup:', retryError);
+    }
+  }
+}
+
+function cleanupWeekendRosterCache() {
+  try {
+    const keys = Object.keys(sessionStorage);
+    const now = Date.now();
+    let cleanedCount = 0;
+
+    for (const key of keys) {
+      if (key.startsWith(WEEKEND_ROSTER_CACHE_PREFIX)) {
+        try {
+          const cached = JSON.parse(sessionStorage.getItem(key));
+          if (!cached.timestamp || (now - cached.timestamp) > WEEKEND_ROSTER_CACHE_TTL) {
+            sessionStorage.removeItem(key);
+            cleanedCount++;
+          }
+        } catch {
+          // Remove invalid cache entries
+          sessionStorage.removeItem(key);
+          cleanedCount++;
+        }
+      }
+    }
+
+    if (cleanedCount > 0) {
+      // Cache cleanup completed
+    }
+  } catch (error) {
+    console.warn('Failed to cleanup weekend roster cache:', error);
+  }
+}
+
+function getWeekendRosterData(sheetName, shift, weekendDateStr, mode, callback, onError) {
+  const cacheKey = getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode);
+
+  // Try to get from cache first
+  const cachedData = getWeekendRosterFromCache(cacheKey);
+  if (cachedData) {
+    // Cache hit
+    callback(cachedData);
+    return;
+  }
+
+
+  // Cache miss - fetch from API
+  const range = `'${sheetName}'!A:X`;
+  googleSheetsGET(range, (resp) => {
+    try {
+      // Cache the successful response
+      setWeekendRosterCache(cacheKey, resp);
+      callback(resp);
+    } catch (error) {
+      console.error('Failed to process weekend roster data:', error);
+      onError && onError(error);
+    }
+  }, (error) => {
+    console.error('Failed to fetch weekend roster data:', error);
+    onError && onError(error);
+  });
+}
+
+// Enhanced googleSheetsGET with weekend roster caching
+function googleSheetsGETWithCache(rangeA1, callback, onError, options = {}) {
+  const { useCache = false, sheetName, shift, weekendDateStr, mode } = options;
+
+  if (useCache && sheetName && shift && weekendDateStr && mode) {
+    getWeekendRosterData(sheetName, shift, weekendDateStr, mode, callback, onError);
+    return;
+  }
+
+  googleSheetsGET(rangeA1, callback, onError);
+}
 
 function loadUserMapCache() {
   try {
@@ -153,6 +282,88 @@ function loadUserEmailCache() {
 }
 function saveUserEmailCache(map) {
   try { localStorage.setItem(USER_EMAIL_CACHE_KEY, JSON.stringify({ map: map || {}, fetchedAt: Date.now() })); } catch { }
+}
+
+// GHO Cache Functions
+function loadGHOCache() {
+  try {
+    const raw = localStorage.getItem(GHO_CACHE_STORAGE_KEY);
+    if (!raw) return { signature: null, premier: null };
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { signature: null, premier: null };
+
+    const now = Date.now();
+    const validCache = {};
+
+    // Check each mode's cache validity
+    ['signature', 'premier'].forEach(mode => {
+      if (parsed[mode] && parsed[mode].fetchedAt) {
+        const age = now - parsed[mode].fetchedAt;
+        if (age < GHO_CACHE_TTL) {
+          // Cache is still valid, restore it
+          validCache[mode] = {
+            ...parsed[mode],
+            triageCaseIds: new Set(parsed[mode].triageCaseIds || []),
+            mondayCaseIds: new Set(parsed[mode].mondayCaseIds || []),
+            noWocTemplateCaseIds: new Set(parsed[mode].noWocTemplateCaseIds || [])
+          };
+          console.log(`GHO cache restored for ${mode} mode (${Math.floor(age / 1000 / 60)}m old)`);
+          console.log(`  - triageCaseIds: ${parsed[mode].triageCaseIds?.length || 0} cases`);
+          console.log(`  - mondayCaseIds: ${parsed[mode].mondayCaseIds?.length || 0} cases`);
+          console.log(`  - mondayCaseIds content:`, parsed[mode].mondayCaseIds || []);
+          console.log(`  - noWocTemplateCaseIds: ${parsed[mode].noWocTemplateCaseIds?.length || 0} cases`);
+          console.log(`  - noWocTemplateCaseIds content:`, parsed[mode].noWocTemplateCaseIds || []);
+        } else {
+          console.log(`GHO cache expired for ${mode} mode (${Math.floor(age / 1000 / 60)}m old)`);
+        }
+      }
+    });
+
+    return validCache;
+  } catch (error) {
+    console.warn('Failed to load GHO cache:', error);
+    return { signature: null, premier: null };
+  }
+}
+
+function saveGHOCache() {
+  try {
+    if (!window.__ghoCache) return;
+
+    const payload = {};
+    ['signature', 'premier'].forEach(mode => {
+      if (window.__ghoCache[mode]) {
+        payload[mode] = {
+          records: window.__ghoCache[mode].records,
+          triageCaseIds: Array.from(window.__ghoCache[mode].triageCaseIds || []),
+          mondayCaseIds: Array.from(window.__ghoCache[mode].mondayCaseIds || []),
+          noWocTemplateCaseIds: Array.from(window.__ghoCache[mode].noWocTemplateCaseIds || []),
+          userMap: window.__ghoCache[mode].userMap || {},
+          fetchedAt: window.__ghoCache[mode].fetchedAt,
+          shift: window.__ghoCache[mode].shift
+        };
+      }
+    });
+
+    localStorage.setItem(GHO_CACHE_STORAGE_KEY, JSON.stringify(payload));
+    console.log('GHO cache saved to persistent storage');
+    console.log('Cache payload:', payload);
+    ['signature', 'premier'].forEach(mode => {
+      if (payload[mode]) {
+        console.log(`${mode} mode cache:`, {
+          records: payload[mode].records?.length || 0,
+          triageCaseIds: payload[mode].triageCaseIds?.length || 0,
+          mondayCaseIds: payload[mode].mondayCaseIds?.length || 0,
+          mondayCaseIdsContent: payload[mode].mondayCaseIds || [],
+          noWocTemplateCaseIds: payload[mode].noWocTemplateCaseIds?.length || 0,
+          noWocTemplateCaseIdsContent: payload[mode].noWocTemplateCaseIds || []
+        });
+      }
+    });
+  } catch (error) {
+    console.warn('Failed to save GHO cache:', error);
+  }
 }
 function escapeSoqlString(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 function cleanRosterNameForQuery(name) {
@@ -376,10 +587,152 @@ function initMouseActivityTracking() {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   try {
-    if (request.action === 'trackActionFromBackground') {
-      const { createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue } = request.data;
-      trackActionAndCount(createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue);
+    if (request.action === 'dailyCleanupCompleted') {
+      // Handle daily cleanup notification
+      // Daily cleanup completed
+      showToast(`Daily cleanup completed: ${request.cleanedCases} cases removed from tracking`, 'info');
       sendResponse({ success: true });
+      return true;
+    } else if (request.action === 'trackActionFromBackground') {
+      // Handle case tracking from background script
+      console.log('Received trackActionFromBackground message:', request.data);
+      const { createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue } = request.data;
+
+      console.log('About to call trackActionAndCount with params:', {
+        createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue
+      });
+
+      // Call trackActionAndCount to log to Google Sheets
+      try {
+        trackActionAndCount(createdDate, caseNumber, severity, actionType, cloud, mode, userName, newValue);
+        console.log('trackActionAndCount called successfully');
+      } catch (error) {
+        console.error('Error calling trackActionAndCount:', error);
+      }
+
+      sendResponse({ success: true });
+      return true;
+    } else if (request.action === 'setMode') {
+      // Handle mode setting request from background script
+      console.log('Received setMode message:', request.mode);
+      try {
+        if (request.mode === 'signature' || request.mode === 'premier') {
+          localStorage.setItem('caseTriageMode', request.mode);
+          console.log(`Mode set to: ${request.mode} in popup localStorage`);
+
+          // Update the UI if the mode selector exists
+          const modeSelector = document.getElementById('caseTriageMode');
+          if (modeSelector) {
+            modeSelector.value = request.mode;
+            console.log(`UI updated to show mode: ${request.mode}`);
+          }
+
+          sendResponse({ success: true, message: `Mode set to ${request.mode}` });
+        } else {
+          sendResponse({ success: false, message: 'Invalid mode' });
+        }
+      } catch (error) {
+        console.error('Error setting mode:', error);
+        sendResponse({ success: false, message: error.message });
+      }
+      return true;
+    } else if (request.action === 'getMode') {
+      // Handle mode retrieval request from background script
+      console.log('Received getMode message');
+      try {
+        const currentMode = localStorage.getItem('caseTriageMode') || 'signature';
+        console.log(`Returning mode: ${currentMode}`);
+        sendResponse({ success: true, mode: currentMode });
+      } catch (error) {
+        console.error('Error getting mode:', error);
+        sendResponse({ success: false, message: error.message });
+      }
+      return true;
+    } else if (request.action === 'cleanLocalStorage') {
+      // Handle localStorage cleaning request
+      console.log('Cleaning localStorage as requested...');
+      try {
+        const rawData = localStorage.getItem('sentToSheets');
+
+        if (!rawData) {
+          console.log('No localStorage data to clean');
+          sendResponse({ success: true, message: 'No data to clean' });
+          return true;
+        }
+
+        try {
+          const sentEntries = JSON.parse(rawData);
+          if (!Array.isArray(sentEntries)) {
+            console.log('Invalid localStorage format, clearing completely');
+            localStorage.removeItem('sentToSheets');
+            sendResponse({ success: true, message: 'Invalid data cleared' });
+            return true;
+          }
+
+          // Filter out entries older than current business day to prevent localStorage from growing indefinitely
+          const now = new Date();
+          const istTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+
+          // Calculate start of current business day (5:30 AM of previous day to 5:30 AM of current day)
+          // If current time is before 5:30 AM, we're still in yesterday's business day
+          // If current time is after 5:30 AM, we're in today's business day
+          const currentBusinessDayStart = new Date(istTime);
+          currentBusinessDayStart.setHours(5, 30, 0, 0); // 5:30 AM of current day
+
+          // If it's before 5:30 AM today, use yesterday's 5:30 AM as business day start
+          if (istTime < currentBusinessDayStart) {
+            currentBusinessDayStart.setDate(currentBusinessDayStart.getDate() - 1);
+          }
+
+          const filteredEntries = sentEntries.filter(entry => {
+            try {
+              // Extract date from tracking ID format: CASE_NUMBER_DATE_ACTIONTYPE_ASSIGNEDTO
+              const parts = entry.split('_');
+              if (parts.length >= 3) {
+                const dateStr = parts[1]; // Format: YYYY-MM-DD
+                const entryDate = new Date(dateStr);
+                // Keep entries from current business day onwards
+                return entryDate >= currentBusinessDayStart;
+              }
+              return false; // Remove malformed entries
+            } catch (error) {
+              console.log(`Error parsing date from entry ${entry}:`, error);
+              return false; // Remove entries with invalid dates
+            }
+          });
+
+          if (filteredEntries.length !== sentEntries.length) {
+            const removedCount = sentEntries.length - filteredEntries.length;
+            console.log(`Removed ${removedCount} expired entries from localStorage`);
+            localStorage.setItem('sentToSheets', JSON.stringify(filteredEntries));
+            sendResponse({ success: true, message: `${removedCount} expired entries removed` });
+          } else {
+            console.log('No expired entries to remove');
+            sendResponse({ success: true, message: 'No expired entries to remove' });
+          }
+
+        } catch (parseError) {
+          console.log('Error parsing localStorage data, clearing completely:', parseError);
+          localStorage.removeItem('sentToSheets');
+          sendResponse({ success: true, message: 'Corrupted data cleared' });
+        }
+
+      } catch (error) {
+        console.error('Error cleaning localStorage:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+      return true;
+    } else if (request.action === 'clearLocalStorage') {
+      // Handle localStorage clearing request (manual override)
+      console.log('Manually clearing localStorage as requested...');
+      try {
+        localStorage.removeItem('sentToSheets');
+        console.log('localStorage cleared successfully');
+        sendResponse({ success: true, message: 'localStorage manually cleared' });
+      } catch (error) {
+        console.error('Error clearing localStorage:', error);
+        sendResponse({ success: false, error: error.message });
+      }
       return true;
     }
   } catch (error) {
@@ -389,23 +742,220 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return false;
 });
 
+// Generate a unique tracking identifier to prevent Google Sheet duplicates
+function generateTrackingId(caseNumber, dateofAction, actionType, assignedTo) {
+  try {
+    const dateStr = dateofAction instanceof Date ? dateofAction.toISOString().split('T')[0] : dateofAction.split('T')[0];
+    const uniqueId = `${caseNumber}_${dateStr}_${actionType}_${assignedTo}`;
+    return uniqueId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  } catch (error) {
+    console.error('Error generating tracking ID:', error);
+    return `tracking_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+
+// Check if this exact tracking entry has already been sent to Google Sheets
+function checkIfAlreadySentToSheets(trackingId) {
+  try {
+    console.log(`Checking if tracking ID ${trackingId} was already sent to Google Sheets...`);
+    const rawData = localStorage.getItem('sentToSheets');
+
+    // If no data exists, nothing has been sent
+    if (!rawData) {
+      console.log('No localStorage data found, returning false');
+      return false;
+    }
+
+    console.log(`Raw localStorage data: ${rawData.substring(0, 200)}...`);
+
+    // Check if rawData exists and is a string before calling includes
+    if (typeof rawData === 'string') {
+      // Check if data is corrupted (contains Promise objects)
+      if (rawData.includes('[object Promise]')) {
+        console.warn('Corrupted localStorage data detected (contains Promise objects). Clearing and resetting.');
+        localStorage.removeItem('sentToSheets');
+        return false;
+      }
+    } else {
+      // Handle non-string data types
+      console.warn(`Invalid localStorage data type detected: ${typeof rawData}. Expected string, got: ${rawData}. Clearing and resetting.`);
+      localStorage.removeItem('sentToSheets');
+      return false;
+    }
+
+    const sentEntries = JSON.parse(rawData);
+    console.log(`Parsed sentEntries: ${JSON.stringify(sentEntries).substring(0, 200)}...`);
+
+    // Additional validation to ensure entries are strings
+    if (!Array.isArray(sentEntries) || sentEntries.some(entry => typeof entry !== 'string')) {
+      console.warn('Invalid localStorage data format detected. Clearing and resetting.');
+      localStorage.removeItem('sentToSheets');
+      return false;
+    }
+
+    const isAlreadySent = sentEntries.includes(trackingId);
+    console.log(`Tracking ID ${trackingId} already sent: ${isAlreadySent}`);
+    return isAlreadySent;
+  } catch (error) {
+    console.error('Error checking sent entries:', error);
+    // Clear corrupted data
+    try {
+      localStorage.removeItem('sentToSheets');
+    } catch (clearError) {
+      console.error('Failed to clear corrupted localStorage:', clearError);
+    }
+    return false;
+  }
+}
+
+// Mark tracking entry as sent to Google Sheets
+function markAsSentToSheets(trackingId) {
+  try {
+    console.log(`Marking tracking ID ${trackingId} as sent to Google Sheets...`);
+
+    // Validate trackingId is a string
+    if (typeof trackingId !== 'string') {
+      console.error('Invalid trackingId type:', typeof trackingId, trackingId);
+      return;
+    }
+
+    const rawData = localStorage.getItem('sentToSheets');
+    let sentEntries = [];
+
+    try {
+      if (rawData && typeof rawData === 'string') {
+        // Check if data is corrupted
+        if (rawData.includes('[object Promise]')) {
+          console.warn('Corrupted localStorage data detected. Clearing and resetting.');
+          localStorage.removeItem('sentToSheets');
+        } else {
+          sentEntries = JSON.parse(rawData);
+        }
+      }
+    } catch (parseError) {
+      console.warn('Failed to parse existing localStorage data. Clearing and resetting.');
+      localStorage.removeItem('sentToSheets');
+    }
+
+    // Ensure sentEntries is an array
+    if (!Array.isArray(sentEntries)) {
+      sentEntries = [];
+    }
+
+    // Filter out any non-string entries
+    sentEntries = sentEntries.filter(entry => typeof entry === 'string');
+
+    console.log(`Before adding: ${sentEntries.length} entries`);
+    sentEntries.push(trackingId);
+    console.log(`After adding: ${sentEntries.length} entries`);
+
+    if (sentEntries.length > 1000) {
+      sentEntries.splice(0, sentEntries.length - 1000);
+    }
+
+    localStorage.setItem('sentToSheets', JSON.stringify(sentEntries));
+    console.log(`Marked tracking ID ${trackingId} as sent to Google Sheets`);
+  } catch (error) {
+    console.error('Error marking as sent to sheets:', error);
+  }
+}
+
+// Clean up old tracking IDs (older than 30 days) to prevent localStorage bloat
+function cleanupOldTrackingIds() {
+  try {
+    const sentEntries = JSON.parse(localStorage.getItem('sentToSheets') || '[]');
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const recentEntries = sentEntries.filter(entry => {
+      const dateMatch = entry.match(/\d{4}-\d{2}-\d{2}/);
+      if (dateMatch) {
+        const entryDate = new Date(dateMatch[0]);
+        return entryDate >= thirtyDaysAgo;
+      }
+      return true;
+    });
+
+    if (recentEntries.length < sentEntries.length) {
+      localStorage.setItem('sentToSheets', JSON.stringify(recentEntries));
+      console.log(`Cleaned up ${sentEntries.length - recentEntries.length} old tracking IDs`);
+    }
+  } catch (error) {
+    console.error('Error cleaning up old tracking IDs:', error);
+  }
+}
+
+setInterval(cleanupOldTrackingIds, 24 * 60 * 60 * 1000);
+
+
+
+
+
 // Wrapper: increment per-day actioned cases and then forward to API logger
 function trackActionAndCount(dateofAction, caseNumber, severity, actionType, cloud, mode, userName, assignedTo = '') {
   try {
+    console.log('trackActionAndCount called with params:', {
+      dateofAction, caseNumber, severity, actionType, cloud, mode, userName, assignedTo
+    });
+
     const name = userName || currentUserName;
-    if (name) {
-      const { bucket } = ensureUserUsageBucket(name);
-      bucket.actionedCases = (bucket.actionedCases || 0) + 1;
-      bucket.lastActiveISO = new Date().toISOString();
-      persistUsageState();
+    console.log('Using name:', name);
+
+    const trackingId = generateTrackingId(caseNumber, dateofAction, actionType, assignedTo);
+    console.log(`Generated tracking ID: ${trackingId}`);
+
+    if (checkIfAlreadySentToSheets(trackingId)) {
+      console.log(`Case ${caseNumber} with tracking ID ${trackingId} has already been sent to Google Sheets. Skipping to prevent duplicate.`);
+      return;
     }
-    trackAction(dateofAction, caseNumber, severity, actionType, cloud, mode || currentMode, name, assignedTo);
+
+    console.log(`About to call trackAction for case ${caseNumber}. Current actionedCases: ${name ? ensureUserUsageBucket(name).bucket.actionedCases || 0 : 'unknown'}`);
+    console.log(`Tracking ID for this case: ${trackingId}`);
+
+    console.log('Calling trackAction function...');
+    console.log('trackAction params:', { dateofAction, caseNumber, severity, actionType, cloud, mode: mode || currentMode, name, assignedTo });
+
+    trackAction(dateofAction, caseNumber, severity, actionType, cloud, mode || currentMode, name, assignedTo, () => {
+      console.log('trackAction success callback executed');
+      if (name) {
+        const { bucket } = ensureUserUsageBucket(name);
+        const oldCount = bucket.actionedCases || 0;
+        bucket.actionedCases = oldCount + 1;
+        bucket.lastActiveISO = new Date().toISOString();
+        persistUsageState();
+        console.log(`SUCCESS: Incremented actionedCases for ${name} from ${oldCount} to ${bucket.actionedCases} for case ${caseNumber} (popup processing)`);
+
+        console.log('Call stack for actionedCases increment:', new Error().stack);
+      }
+
+      markAsSentToSheets(trackingId);
+      console.log(`Marked tracking ID ${trackingId} as sent to prevent duplicates`);
+    });
+    console.log('trackAction function called successfully');
+
   } catch (e) {
-    console.warn('trackActionAndCount failed', e);
-    // Fallback to original trackAction to avoid losing logs
-    try { trackAction(dateofAction, caseNumber, severity, actionType, cloud, mode || currentMode, userName || currentUserName, assignedTo); } catch { }
+    console.error('trackActionAndCount failed', e);
+    console.error('Error stack:', e.stack);
+    try {
+      console.log('Attempting fallback trackAction call...');
+      trackAction(dateofAction, caseNumber, severity, actionType, cloud, mode || currentMode, userName || currentUserName, assignedTo);
+      console.log('Fallback trackAction call completed');
+    } catch (fallbackError) {
+      console.error('Fallback trackAction also failed:', fallbackError);
+    }
   }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
@@ -448,7 +998,6 @@ function getCaseDetails() {
           console.error('Runtime error:', chrome.runtime.lastError.message);
           return;
         }
-        console.log('response-----' + response);
       });
       return console.error('error---' + err);
     } else {
@@ -468,9 +1017,12 @@ function getCaseDetails() {
         }
         if (userResult.records.length > 0) {
           currentUserId = userResult.records[0].Id;
+
+          // Resume continuous processing when user becomes active
+          resumeContinuousProcessing(currentUserId, currentUserName, currentMode);
         }
-        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
-        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
+        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 2) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
+        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 2) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
 
         let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
@@ -483,23 +1035,23 @@ function getCaseDetails() {
 
             if (result.records.length === 0) {
               const noCasesHtml = `
-                <div class="no-cases-message">
-                  <h4 class="no-cases-title">No Cases to Action</h4>
-                  <p class="no-cases-text">All cases are up to date. Great work!</p>
-                  <p class="mode-switch-hint">💡 Meanwhile you can switch between Signature and Premier modes to see different case types.</p>
-                </div>
-              `;
+              <div class="no-cases-message">
+                <h4 class="no-cases-title">No Cases to Action</h4>
+                <p class="no-cases-text">All cases are up to date. Great work!</p>
+                <p class="mode-switch-hint">💡 Meanwhile you can switch between Signature and Premier modes to see different case types.</p>
+              </div>
+            `;
               const container = document.getElementById("parentSigSev2");
               container.classList.remove('is-loading');
               container.innerHTML = noCasesHtml;
               container.classList.add('content-enter');
+
               var data = 'openTabSilent';
               chrome.runtime.sendMessage(data, function (response) {
                 if (chrome.runtime.lastError) {
                   console.error('Runtime error:', chrome.runtime.lastError.message);
                   return;
                 }
-                console.log('response-----' + response);
               });
               return;
             }
@@ -515,7 +1067,7 @@ function getCaseDetails() {
                 console.error('Runtime error syncing persistent cases:', chrome.runtime.lastError.message);
               } else if (response && response.success) {
                 logger.info('cases.persistent.synced', { mode: currentMode, removed: response.removed, missing: (response.missingCases || []).length, tracking: response.count });
-                // For cases that went missing from the latest query, verify assignment by ANY user before removing.
+                // Verify assignment by ANY user before removing missing cases
                 try {
                   const missingCases = Array.isArray(response.missingCases) ? response.missingCases : [];
                   if (missingCases.length > 0) {
@@ -549,6 +1101,45 @@ function getCaseDetails() {
               }
               if (response && response.success) {
                 logger.debug('cases.persistent.added', { message: response.message });
+
+                // Trigger background processing for all incoming cases using new TrackedChange approach
+                // Initiating new background processing
+                chrome.runtime.sendMessage({
+                  action: 'processCasesInBackgroundNew',
+                  cases: result.records,
+                  connectionInfo: {
+                    serverUrl: 'https://orgcs.my.salesforce.com',
+                    sessionId: SESSION_ID
+                  },
+                  currentMode: currentMode,
+                  currentUserId: currentUserId,
+                  currentUserName: currentUserName
+                }, function (bgResponse) {
+                  if (chrome.runtime.lastError) {
+                    console.error('❌ Runtime error starting new background processing:', chrome.runtime.lastError.message);
+                  } else if (bgResponse && bgResponse.success) {
+                    // New background processing initiated
+                    logger.info('cases.background.new.processing.started', { message: bgResponse.message });
+
+                    // Start continuous CaseFeed processing to ensure all cases are processed
+                    chrome.runtime.sendMessage({
+                      action: 'startContinuousCaseFeedProcessing',
+                      connectionInfo: {
+                        serverUrl: 'https://orgcs.my.salesforce.com',
+                        sessionId: SESSION_ID
+                      },
+                      currentMode: currentMode,
+                      currentUserId: currentUserId,
+                      currentUserName: currentUserName
+                    }, function (continuousResponse) {
+                      if (chrome.runtime.lastError) {
+                        console.error('❌ Runtime error starting continuous processing:', chrome.runtime.lastError.message);
+                      } else if (continuousResponse && continuousResponse.success) {
+                        logger.info('cases.background.continuous.processing.started', { message: continuousResponse.message });
+                      }
+                    });
+                  }
+                });
               }
             });
 
@@ -657,6 +1248,7 @@ function getCaseDetails() {
               var totalCasesCount = 0;
               var pendingCasesCount = 0;
               var pendingCasesDetails = [];
+
               // Weekend SLA thresholds
               const isWeekendFlag = isCurrentlyWeekend();
               var minSev1 = isWeekendFlag ? 0 : 5;
@@ -827,17 +1419,17 @@ function getCaseDetails() {
                     const lastLog = routingLogs.records[0];
                     if (lastLog.Transfer_Reason__c === 'GEO Locate' || lastLog.Transfer_Reason__c === 'Dispatched' && filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
                       localStorage.setItem(caseId, 'true');
-                      console.log(`Auto-actioned case ${filteredRecords[x].CaseNumber} due to GEO Locate routing with Met SLA`);
+                      // Auto-actioned case due to GEO Locate routing with Met SLA
                     }
                   }
 
                   const isSLAM = filteredRecords[x].CaseRoutingTaxonomy__r.Name === 'Sales-Issues Developing for Salesforce Functions (Product)';
                   if (isSLAM && filteredRecords[x].support_available_timezone__c === '(GMT+09:00) Japan Standard Time (Asia/Tokyo)') {
                     localStorage.setItem(caseId, 'true');
-                    console.log(`Auto-actioned SLAM case ${filteredRecords[x].CaseNumber} due to Japan timezone`);
+                    // Auto-actioned SLAM case due to Japan timezone
                   }
 
-                  console.log('Processing case:', filteredRecords[x]);
+                  // Processing case
 
                   const meetsAlertCriteria = (filteredRecords[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') ||
                     (today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
@@ -999,11 +1591,7 @@ function getCaseDetails() {
                       initialResponseStatus: filteredRecords[x].SE_Initial_Response_Status__c
                     });
 
-                    console.log('Case pending alert criteria:', filteredRecords[x].CaseNumber,
-                      'Severity:', filteredRecords[x].Severity_Level__c,
-                      'Created:', new Date(filteredRecords[x].CreatedDate),
-                      'Time since creation:', minutesSinceCreation, 'minutes',
-                      'Remaining:', remainingMinutes, 'minutes');
+                    // Case pending alert criteria logged
                   }
                 }
 
@@ -1054,7 +1642,6 @@ function getCaseDetails() {
                       console.error('Runtime error opening tab:', chrome.runtime.lastError.message);
                       return;
                     }
-                    console.log('response-----' + response);
                   });
                 } else {
                   var data = 'openTabSilent';
@@ -1063,7 +1650,6 @@ function getCaseDetails() {
                       console.error('Runtime error opening tab silently:', chrome.runtime.lastError.message);
                       return;
                     }
-                    console.log('response-----' + response);
                   });
                 }
               } else {
@@ -1110,7 +1696,6 @@ function getCaseDetails() {
                     console.error('Runtime error opening tab silently (no cases):', chrome.runtime.lastError.message);
                     return;
                   }
-                  console.log('response-----' + response);
                 });
               }
             });
@@ -1118,6 +1703,35 @@ function getCaseDetails() {
       });
     }
   });
+}
+
+// Function to resume continuous processing when user becomes active
+function resumeContinuousProcessing(currentUserId, currentUserName, currentMode) {
+  try {
+    if (!SESSION_ID) {
+      console.log('No valid session, skipping continuous processing resume');
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      action: 'startContinuousCaseFeedProcessing',
+      connectionInfo: {
+        serverUrl: 'https://orgcs.my.salesforce.com',
+        sessionId: SESSION_ID
+      },
+      currentMode: currentMode,
+      currentUserId: currentUserId,
+      currentUserName: currentUserName
+    }, function (response) {
+      if (chrome.runtime.lastError) {
+        console.error('❌ Runtime error resuming continuous processing:', chrome.runtime.lastError.message);
+      } else if (response && response.success) {
+        logger.info('cases.background.continuous.processing.resumed', { message: response.message });
+      }
+    });
+  } catch (error) {
+    console.error('Error resuming continuous processing:', error);
+  }
 }
 
 
@@ -1135,15 +1749,6 @@ function checkGHOAlert() {
   const isEMEATime = Math.abs(currentTime - emeaAlertTime) <= 5;
   const isAMERTime = Math.abs(currentTime - amerAlertTime) <= 5;
 
-  console.log('GHO Alert Check:', {
-    currentTime: `${Math.floor(currentTime / 60)}:${(currentTime % 60).toString().padStart(2, '0')}`,
-    isAPACTime,
-    isEMEATime,
-    isAMERTime,
-    today,
-    currentUserName
-  });
-
   if (!(isAPACTime || isEMEATime || isAMERTime)) {
     return;
   }
@@ -1154,7 +1759,6 @@ function checkGHOAlert() {
   else if (isAMERTime) region = 'AMER';
 
   const alertKey = `gho_alert_${region}_${today}_${currentUserName}`;
-  console.log('GHO Alert Key:', alertKey, 'Already shown:', !!localStorage.getItem(alertKey));
 
   if (localStorage.getItem(alertKey)) {
     return;
@@ -1162,11 +1766,8 @@ function checkGHOAlert() {
 
   const preferredShiftValues = getPreferredShiftValues(region);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
-  console.log('GHO Alert Shift Condition:', shiftCondition);
 
   const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
-
-  console.log('GHO Query:', ghoQuery);
 
   if (!SESSION_ID) {
     console.error('SESSION_ID not available for GHO alert');
@@ -1179,19 +1780,12 @@ function checkGHOAlert() {
   });
 
   ghoConn.query(ghoQuery, function (err, result) {
-    console.log('GHO Alert Query Result:', {
-      error: err,
-      recordCount: result ? result.records.length : 0,
-      records: result ? result.records : null
-    });
-
     if (err) {
       console.error('GHO Alert Query Error:', err);
       return;
     }
 
     if (!result.records || result.records.length === 0) {
-      console.log('No GHO records found for region:', region);
       localStorage.setItem(alertKey, 'true');
       return;
     }
@@ -1218,7 +1812,6 @@ function checkGHOAlert() {
 
         const actionedCaseIds = new Set();
         if (commentResult.records) {
-          console.log('Checking comments for GHO triage actions:', commentResult.records.length, 'comments found');
           commentResult.records.forEach(comment => {
             if (comment.Body && comment.Body.includes('#GHOTriage')) {
               const commentDate = comment.LastModifiedDate || comment.CreatedDate;
@@ -1226,64 +1819,32 @@ function checkGHOAlert() {
               const commentShift = getShiftForDate(commentDate);
               const isSameGeo = commentShift === region;
 
-              console.log('GHO Alert - #GHOTriage comment analysis:', {
-                caseId: comment.ParentId,
-                commentDate,
-                isFromToday: isCommentFromToday,
-                commentShift,
-                currentRegion: region,
-                isSameGeo
-              });
-
               if (isCommentFromToday && isSameGeo) {
                 actionedCaseIds.add(comment.ParentId);
-                console.log('Found valid #GHOTriage comment for case:', comment.ParentId, 'Date:', commentDate, 'Shift:', commentShift);
 
                 if (currentUserId && comment.CreatedById === currentUserId) {
                   const caseRecord = result.records.find(c => c.Id === comment.ParentId);
-                  console.log('GHO alert - Case record for triage comment:', caseRecord);
                   if (caseRecord) {
                     const ghoTrackingKey = `gho_tracked_${caseRecord.Id}`;
                     if (!localStorage.getItem(ghoTrackingKey)) {
                       trackActionAndCount(comment.LastModifiedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
                       localStorage.setItem(ghoTrackingKey, 'true');
-                      console.log('GHO alert - triage action tracked for case:', caseRecord.CaseNumber, 'Date:', commentDate, 'Shift:', commentShift);
                     }
                   }
                 }
-              } else {
-                console.log('GHO Alert - #GHOTriage comment ignored - not from today/same GEO:', {
-                  caseId: comment.ParentId,
-                  isFromToday: isCommentFromToday,
-                  isSameGeo: isSameGeo,
-                  commentDate,
-                  commentShift,
-                  currentRegion: region
-                });
               }
             }
           });
-        } else {
-          console.log('No comments found for GHO cases');
         }
         const unactionedCases = result.records.filter(caseRecord => !actionedCaseIds.has(caseRecord.Id));
 
-        console.log('GHO Alert Cases Analysis:', {
-          totalCases: result.records.length,
-          actionedCaseIds: Array.from(actionedCaseIds),
-          unactionedCases: unactionedCases.length,
-          unactionedCaseNumbers: unactionedCases.map(c => c.CaseNumber)
-        });
-
         if (unactionedCases.length > 0) {
-          console.log('Showing GHO alert for region:', region, 'with', unactionedCases.length, 'cases');
           try {
             showGHOAlert(region, unactionedCases, alertKey);
           } catch (error) {
             console.error('Failed to show GHO alert:', error);
           }
         } else {
-          console.log('All GHO cases have been actioned - no alert needed');
           localStorage.setItem(alertKey, 'true');
         }
       });
@@ -1293,52 +1854,121 @@ function checkGHOAlert() {
 
 function showGHOAlert(region, ghoRecords, alertKey) {
   try {
-    console.log('showGHOAlert called with:', { region, recordCount: ghoRecords.length, alertKey });
-
     const alertTime = region === 'APAC' ? '7:30 AM' : region === 'EMEA' ? '2:30 PM' : '10:30 PM';
 
     let existingModal = document.getElementById('gho-alert-modal');
     if (existingModal) {
-      console.log('Removing existing GHO alert modal');
       existingModal.remove();
     }
 
+    // Inject scoped styles for the GHO alert modal if not already present
+    let existingStyles = document.getElementById('gho-alert-styles');
+    if (!existingStyles) {
+      const styleEl = document.createElement('style');
+      styleEl.id = 'gho-alert-styles';
+      styleEl.textContent = `
+        #gho-alert-modal { background: rgba(17, 24, 39, 0.50); backdrop-filter: blur(6px); }
+        #gho-alert-modal .modal-content { width: 100%; max-width: 680px; background: #ffffff; border-radius: 18px; overflow: hidden; box-shadow: 0 24px 55px rgba(2, 6, 23, 0.20), 0 10px 24px rgba(2, 6, 23, 0.12); border: 1px solid #e5e7eb; transform: translateY(10px) scale(.98); opacity: 0; transition: transform .28s cubic-bezier(.22,.61,.36,1), opacity .24s ease; }
+        #gho-alert-modal.modal-show .modal-content { transform: translateY(0) scale(1); opacity: 1; }
+        #gho-alert-modal .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; background: #fff7ed; color: #9a3412; border-bottom: 1px solid #fed7aa; }
+        #gho-alert-modal .modal-header h3 { display: flex; align-items: center; gap: 10px; font-size: 18px; margin: 0; }
+        #gho-alert-modal .modal-header h3 i { background: #ffedd5; border: 1px solid #fed7aa; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; box-shadow: inset 0 1px 0 rgba(255,255,255,.6); color: #b45309; }
+        #gho-alert-modal .modal-header .count-pill { background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+        #gho-alert-modal .modal-header .modal-close { color: #374151 !important; opacity: .9; transition: transform .15s ease, opacity .15s ease; }
+        #gho-alert-modal .modal-header .modal-close:hover { transform: scale(1.08); opacity: 1; }
+        #gho-alert-modal .modal-body { padding: 20px; background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%); }
+        #gho-alert-modal .intro { text-align: center; margin-bottom: 16px; }
+        #gho-alert-modal .intro h4 { color: #b45309; margin: 0 0 6px 0; font-size: 16px; }
+        #gho-alert-modal .intro p { color: #6b7280; font-size: 14px; margin: 0; }
+        #gho-alert-modal .case-wrap { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 12px; margin-bottom: 18px; }
+        #gho-alert-modal .case-wrap h5 { color: #9a3412; margin: 0 0 10px 0; font-size: 14px; }
+        #gho-alert-modal .case-list { max-height: 280px; overflow-y: auto; }
+        #gho-alert-modal .case-list::-webkit-scrollbar { width: 8px; }
+        #gho-alert-modal .case-list::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 999px; }
+        #gho-alert-modal .case-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px; border-bottom: 1px solid #fed7aa; border-radius: 10px; transition: background .15s ease; }
+        #gho-alert-modal .case-item:last-child { border-bottom: none; }
+        #gho-alert-modal .case-item:hover { background: rgba(255, 237, 213, .35); }
+        #gho-alert-modal .case-left { display: flex; align-items: center; gap: 10px; }
+        #gho-alert-modal .case-number { color: #9a3412; font-weight: 700; }
+        #gho-alert-modal .meta { color: #6b7280; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+        #gho-alert-modal .case-right { display: flex; align-items: center; gap: 12px; }
+        #gho-alert-modal .action-link { color: #4b5563; font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; transition: all .15s ease; }
+        #gho-alert-modal .action-link i { color: #0176d3; }
+        #gho-alert-modal .action-link:hover { color: #0176d3; background: #eef6fd; border-color: #d8ecfd; }
+        #gho-alert-modal .action-link:focus-visible { outline: 2px solid #bfdbfe; outline-offset: 2px; }
+        #gho-alert-modal .chip { background-color: #7c3aed; color: #fff; padding: 2px 6px; border-radius: 999px; font-size: 10px; font-weight: 700; margin-left: 4px; }
+        #gho-alert-modal .gho-badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; margin-left: 8px; border: 1px solid transparent; }
+        #gho-alert-modal .gho-badge.sev-1 { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+        #gho-alert-modal .gho-badge.sev-2 { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+        #gho-alert-modal .gho-badge.sev-3 { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+        #gho-alert-modal .gho-badge.sev-4 { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+        #gho-alert-modal .footer-actions { display: flex; gap: 12px; justify-content: center; }
+        #gho-alert-modal .btn-primary { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #fff; border: none; padding: 12px 20px; border-radius: 12px; font-weight: 700; box-shadow: 0 6px 16px rgba(245, 158, 11, 0.18); transition: transform .12s ease, box-shadow .12s ease; }
+        #gho-alert-modal .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(245, 158, 11, 0.24); }
+        #gho-alert-modal .btn-secondary { background: #6b7280; color: #fff; border: none; padding: 12px 20px; border-radius: 12px; font-weight: 600; transition: transform .12s ease, opacity .12s ease; }
+        #gho-alert-modal .btn-secondary:hover { transform: translateY(-1px); opacity: .96; }
+      `;
+      document.head.appendChild(styleEl);
+    }
+
+    const getSeverityClass = (sev) => {
+      const value = String(sev || '').toUpperCase();
+      if (value.includes('1')) return 'sev-1';
+      if (value.includes('2')) return 'sev-2';
+      if (value.includes('3')) return 'sev-3';
+      return 'sev-4';
+    };
+
     const modalHtml = `
       <div id="gho-alert-modal" class="modal-overlay" style="display: flex; z-index: 1001;">
-        <div class="modal-content" style="max-width: 600px;">
-          <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
-            <h3 style="color: white; margin: 0;">🚨 GHO Alert - ${region} Region</h3>
-            <span class="modal-close" id="gho-alert-close" style="color: white; cursor: pointer; font-size: 24px;">&times;</span>
+        <div class="modal-content" style="max-width: 640px;">
+          <div class="modal-header">
+            <h3>
+              <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+              <span>GHO Alert – ${region} Region</span>
+              <span class="count-pill">${ghoRecords.length}</span>
+            </h3>
+            <span class="modal-close" id="gho-alert-close" style="color: white; cursor: pointer; font-size: 24px;" aria-label="Close">&times;</span>
           </div>
           <div class="modal-body">
-            <div style="text-align: center; margin-bottom: 20px;">
-              <h4 style="color: #f59e0b; margin-bottom: 8px;">Daily GHO Check - ${alertTime} IST</h4>
-              <p style="color: #6b7280; font-size: 14px;">Found ${ghoRecords.length} GHO case${ghoRecords.length === 1 ? '' : 's'} requiring attention for ${region} shift</p>
+            <div class="intro">
+              <h4>Daily GHO Check – ${alertTime} IST</h4>
+              <p>Found ${ghoRecords.length} GHO case${ghoRecords.length === 1 ? '' : 's'} requiring attention for ${region} shift</p>
             </div>
-            
-            <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-              <h5 style="color: #9a3412; margin: 0 0 8px 0;">Cases Needing Action:</h5>
-              <div style="max-height: 200px; overflow-y: auto;">
+            <div class="case-wrap">
+              <h5>Cases Needing Action</h5>
+              <div class="case-list">
                 ${ghoRecords.map(caseRecord => `
-                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #fed7aa;">
-                    <div>
-                      <strong style="color: #9a3412;">${caseRecord.CaseNumber}</strong>
-                      <span style="color: #6b7280; margin-left: 8px;">${caseRecord.Severity_Level__c}</span>
-                      ${caseRecord.Contact && caseRecord.Contact.Is_MVP__c ? '<span style="background-color: #9333ea; color: white; padding: 1px 4px; border-radius: 4px; font-size: 10px; margin-left: 4px;">MVP</span>' : ''}
+                  <div class="case-item">
+                    <div class="case-left">
+                      <i class="fa fa-life-ring" aria-hidden="true" style="color: #f59e0b;"></i>
+                      <div>
+                        <div>
+                          <span class="case-number">${caseRecord.CaseNumber}</span>
+                          <span class="gho-badge ${getSeverityClass(caseRecord.Severity_Level__c)}">${caseRecord.Severity_Level__c || ''}</span>
+                          ${caseRecord.Contact && caseRecord.Contact.Is_MVP__c ? '<span class="chip">MVP</span>' : ''}
+                        </div>
+                      </div>
                     </div>
-                    <div style="color: #6b7280; font-size: 12px;">
-                      ${timeElapsed(new Date(caseRecord.CreatedDate))}
+                    <div class="case-right">
+                      <div class="meta">
+                        <i class="fa fa-clock-o" aria-hidden="true"></i>
+                        <span>${timeElapsed(new Date(caseRecord.CreatedDate))}</span>
+                      </div>
+                      <a class="action-link" target="_blank" href="https://orgcs.my.salesforce.com/lightning/r/Case/${caseRecord.Id}/view" title="View in Salesforce">
+                        <i class="fa fa-external-link" aria-hidden="true"></i>
+                        <span>View in Salesforce</span>
+                      </a>
                     </div>
                   </div>
                 `).join('')}
               </div>
             </div>
-            
-            <div style="display: flex; gap: 12px; justify-content: center;">
-              <button id="gho-alert-check" class="preview-btn" style="background: #f59e0b; border: none; padding: 12px 24px;">
+            <div class="footer-actions">
+              <button id="gho-alert-check" class="preview-btn btn-primary">
                 Check GHO Cases
               </button>
-              <button id="gho-alert-dismiss" class="preview-btn" style="background: #6b7280; border: none; padding: 12px 24px;">
+              <button id="gho-alert-dismiss" class="preview-btn btn-secondary">
                 Dismiss
               </button>
             </div>
@@ -1347,12 +1977,10 @@ function showGHOAlert(region, ghoRecords, alertKey) {
       </div>
     `;
 
-    console.log('Inserting GHO alert modal into DOM');
     document.body.insertAdjacentHTML('beforeend', modalHtml);
 
     const modal = document.getElementById('gho-alert-modal');
     if (modal) {
-      console.log('GHO alert modal successfully added to DOM');
       requestAnimationFrame(() => modal.classList.add('modal-show'));
       modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     } else {
@@ -1364,31 +1992,25 @@ function showGHOAlert(region, ghoRecords, alertKey) {
       const audio = new Audio('../assets/audio/ghoalert.wav');
       audio.volume = 1.0;
       audio.play().catch(e => {
-        console.log('Audio autoplay blocked or failed:', e);
+        // Audio autoplay blocked or failed
       });
     } catch (e) {
-      console.log('Could not play GHO alert sound:', e);
+      // Could not play GHO alert sound
     }
 
     document.getElementById('gho-alert-close').addEventListener('click', () => {
-      console.log('GHO alert close button clicked - modal closed but alert not dismissed');
       document.getElementById('gho-alert-modal').remove();
     });
 
     document.getElementById('gho-alert-dismiss').addEventListener('click', () => {
-      console.log('GHO alert dismiss button clicked - marking alert as acknowledged');
       document.getElementById('gho-alert-modal').remove();
       localStorage.setItem(alertKey, 'true');
-      console.log('GHO alert dismissed and flagged as shown:', alertKey);
     });
 
     document.getElementById('gho-alert-check').addEventListener('click', () => {
-      console.log('GHO alert check button clicked - opening GHO status without dismissing alert');
       document.getElementById('gho-alert-modal').remove();
       checkGHOStatus();
     });
-
-    console.log('GHO alert modal setup completed successfully');
   } catch (error) {
     console.error('Error showing GHO alert:', error);
     throw error;
@@ -1424,7 +2046,6 @@ async function ensureSingleTab() {
         console.error('Runtime error ensuring single tab:', chrome.runtime.lastError.message);
         return;
       }
-      console.log('Tab cleanup requested:', response);
     });
   } catch (error) {
     console.error('Error requesting tab cleanup:', error);
@@ -1452,6 +2073,15 @@ document.addEventListener('keydown', function (e) {
         }
         break;
 
+      case 'm':
+        e.preventDefault();
+        if (currentMode === 'signature') {
+          showGHOMappingModal();
+        } else {
+          showToast('GHO mapping is only available in Signature mode');
+        }
+        break;
+
       case 'r':
         e.preventDefault();
         const refreshIcon = document.querySelector('#refresh-button .fa-refresh');
@@ -1461,6 +2091,23 @@ document.addEventListener('keydown', function (e) {
         setTimeout(() => {
           window.location.reload();
         }, 500);
+        break;
+
+      case 'R':
+        e.preventDefault();
+        // If GHO modal is open, refresh GHO data; otherwise refresh page
+        const ghoModal = document.getElementById('gho-modal');
+        if (ghoModal && ghoModal.style.display === 'flex') {
+          forceRefreshGHOData();
+        } else {
+          const refreshIcon = document.querySelector('#refresh-button .fa-refresh');
+          if (refreshIcon) {
+            refreshIcon.classList.add('fa-spin');
+          }
+          setTimeout(() => {
+            window.location.reload();
+          }, 500);
+        }
         break;
 
       case 'i':
@@ -1536,8 +2183,16 @@ function showKeyboardShortcutsHelp() {
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + G</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Open GHO Mapping</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + M</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Refresh Data</span>
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + R</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+              <span style="font-weight: 600; color: #111827; font-size: 15px;">Refresh GHO Data</span>
+              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + Shift + R</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Signature Mode</span>
@@ -1608,9 +2263,17 @@ document.addEventListener("DOMContentLoaded", function () {
     firstContainer.classList.add('is-loading');
   }
   getSessionIds();
+
+
+
   initMouseActivityTracking();
   setInterval(checkGHOAlert, 60000);
   setTimeout(checkGHOAlert, 5000);
+
+  // Initialize default GHO mappings
+  // initializeDefaultMappings(); (removed)
+
+
 
   const savedFilter = localStorage.getItem('caseFilter');
   if (savedFilter) {
@@ -1699,6 +2362,11 @@ document.addEventListener("DOMContentLoaded", function () {
     updateGHOButtonVisibility();
     updateCICButtonVisibility();
 
+    // Update GHO cache status display if modal is open
+    if (document.getElementById('gho-modal') && document.getElementById('gho-modal').style.display === 'flex') {
+      updateGHOCacheStatus();
+    }
+
     // Clear search and filter when changing modes
     document.getElementById("search-input").value = "";
     document.getElementById("action-filter").value = "all";
@@ -1755,6 +2423,25 @@ document.addEventListener("DOMContentLoaded", function () {
     checkGHOStatus();
   });
 
+  // GHO Refresh Button Event Listener
+  document.getElementById("gho-refresh-btn").addEventListener("click", function () {
+    forceRefreshGHOData();
+  });
+
+  // GHO Refresh Button Hover Effects
+  document.getElementById("gho-refresh-btn").addEventListener("mouseover", function () {
+    this.style.transform = 'scale(1.05)';
+  });
+
+  document.getElementById("gho-refresh-btn").addEventListener("mouseout", function () {
+    this.style.transform = 'scale(1)';
+  });
+
+  // GHO Mapping Button Event Listener
+  document.getElementById("gho-mapping-btn").addEventListener("click", function () {
+    showGHOMappingModal();
+  });
+
   // Weekend Roster Button Event Listener
   document.getElementById("cic-button").addEventListener("click", function () {
     if (!DEV_FORCE_SHOW_WEEKEND_ROSTER && !isCurrentlyWeekend()) {
@@ -1768,24 +2455,135 @@ document.addEventListener("DOMContentLoaded", function () {
   document.getElementById("gho-modal-close").addEventListener("click", function () {
     const m = document.getElementById('gho-modal');
     m.classList.remove('modal-show');
-    setTimeout(() => { m.style.display = 'none'; }, 150);
+    setTimeout(() => {
+      m.style.display = 'none';
+      // Clear cache status update interval
+      if (m.dataset.cacheStatusInterval) {
+        clearInterval(parseInt(m.dataset.cacheStatusInterval));
+        delete m.dataset.cacheStatusInterval;
+      }
+    }, 150);
   });
 
   // GHO Filter Event Listener
-  document.getElementById("gho-taxonomy-filter").addEventListener("change", function () {
-    const filterValue = this.value;
-    if (ghoRecordsGlobal.length > 0 && ghoConnectionGlobal) {
-      // Reset pagination state on filter change
-      window.__ghoListState = null;
-      const modeCache = window.__ghoCache && window.__ghoCache[currentMode];
-      renderFilteredGHOCases(ghoRecordsGlobal, ghoConnectionGlobal, filterValue, modeCache ? { triageCaseIds: modeCache.triageCaseIds } : undefined);
-    }
-  });
+  const filterDropdown = document.getElementById("gho-taxonomy-filter");
+  if (filterDropdown) {
+    console.log('GHO filter dropdown found, adding event listener');
+    filterDropdown.addEventListener("change", function () {
+      const filterValue = this.value;
+      console.log('GHO filter changed to:', filterValue);
+      console.log('GHO records available:', ghoRecordsGlobal.length);
+      console.log('GHO connection available:', !!ghoConnectionGlobal);
+      console.log('Current mode:', currentMode);
+
+      if (ghoRecordsGlobal.length > 0 && ghoConnectionGlobal) {
+        // Reset pagination state on filter change
+        window.__ghoListState = null;
+        const modeCache = window.__ghoCache && window.__ghoCache[currentMode];
+        console.log('Mode cache available:', !!modeCache);
+        console.log('About to call renderFilteredGHOCases with:', {
+          recordsCount: ghoRecordsGlobal.length,
+          filterValue: filterValue,
+          hasCache: !!modeCache
+        });
+
+        // Always use cached data if available, regardless of filter
+        if (modeCache && modeCache.records) {
+          console.log('Using cached data for filtering');
+          renderFilteredGHOCases(modeCache.records, modeCache.conn, filterValue, {
+            triageCaseIds: modeCache.triageCaseIds,
+            mondayCaseIds: modeCache.mondayCaseIds,
+            noWocTemplateCaseIds: modeCache.noWocTemplateCaseIds,
+            userMap: modeCache.userMap,
+            fromCache: true
+          });
+        } else {
+          renderFilteredGHOCases(ghoRecordsGlobal, ghoConnectionGlobal, filterValue, modeCache ? { triageCaseIds: modeCache.triageCaseIds } : undefined);
+        }
+      } else {
+        console.warn('Cannot filter: missing GHO records or connection');
+        console.log('ghoRecordsGlobal:', ghoRecordsGlobal);
+        console.log('ghoConnectionGlobal:', ghoConnectionGlobal);
+      }
+    });
+  } else {
+    console.warn('GHO filter dropdown not found');
+  }
+
+
 
   document.getElementById("gho-modal").addEventListener("click", function (e) {
     if (e.target === this) {
       this.classList.remove('modal-show');
+      setTimeout(() => {
+        this.style.display = 'none';
+        // Clear cache status update interval
+        if (this.dataset.cacheStatusInterval) {
+          clearInterval(parseInt(this.dataset.cacheStatusInterval));
+          delete this.dataset.cacheStatusInterval;
+        }
+      }, 150);
+    }
+  });
+
+  // GHO Mapping Modal Event Listeners
+  document.getElementById("gho-mapping-modal-close").addEventListener("click", function () {
+    const m = document.getElementById('gho-mapping-modal');
+    m.classList.remove('modal-show');
+    setTimeout(() => { m.style.display = 'none'; }, 150);
+  });
+
+  document.getElementById("gho-mapping-modal").addEventListener("click", function (e) {
+    if (e.target === this) {
+      this.classList.remove('modal-show');
       setTimeout(() => { this.style.display = 'none'; }, 150);
+    }
+  });
+
+  document.getElementById("add-mapping-btn").addEventListener("click", function () {
+    addNewMapping();
+  });
+
+  document.getElementById("save-mappings-btn").addEventListener("click", function () {
+    showToast('Mappings are automatically saved when added or deleted', 'info');
+  });
+
+  document.getElementById("delete-all-mappings-btn").addEventListener("click", function () {
+    deleteAllMappings();
+  });
+
+  // Add event listeners for mapping modal links
+  document.addEventListener('click', function (e) {
+    if (e.target && e.target.matches('a[href="#"]')) {
+      e.preventDefault();
+      const text = e.target.textContent.trim();
+      if (text === 'View/Edit Mappings' || text === 'Configure Mappings') {
+        showGHOMappingModal();
+      }
+    }
+
+    // Handle mapping links with data-action attributes
+    if (e.target && e.target.matches('.mapping-link[data-action="view-mappings"]')) {
+      e.preventDefault();
+      showGHOMappingModal();
+    }
+
+    // Handle delete mapping buttons
+    if (e.target && e.target.matches('.delete-mapping-btn')) {
+      const index = parseInt(e.target.dataset.index);
+      if (!isNaN(index)) {
+        deleteMapping(index);
+      }
+    }
+
+    // Handle save mapping buttons
+    if (e.target && e.target.matches('.save-mapping-btn')) {
+      saveNewMapping(e.target);
+    }
+
+    // Handle cancel mapping buttons
+    if (e.target && e.target.matches('.cancel-mapping-btn')) {
+      cancelNewMapping(e.target);
     }
   });
 
@@ -1992,7 +2790,7 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
     if (snoozeTimeSelect.value === 'custom') {
       snoozeMinutes = parseInt(customInput.value);
       if (!snoozeMinutes || snoozeMinutes < 1 || snoozeMinutes > 1440) {
-        alert('Please enter a valid number of minutes (1-1440).');
+        showToast('Please enter a valid number of minutes (1-1440).', 'error');
         return;
       }
     } else {
@@ -2214,7 +3012,8 @@ function showCICManagers() {
   // Initialize daily counters scope for Premier (per-shift with AMER Sunday 20:30 rule)
   try { initPremierCounters(weekendDateStr, shift); } catch { }
 
-  googleSheetsGET(range, (resp) => {
+  // Use cached weekend roster data with 1-hour TTL
+  getWeekendRosterData(SHEET_SERVICE_CLOUD, shift, weekendDateStr, currentMode, (resp) => {
     try {
       const rows = resp.values || [];
       let foundRowIdx = -1;
@@ -2337,7 +3136,8 @@ function showCICManagers() {
         if (bodyElSales) {
           const salesRange = `'${SHEET_SALES_CLOUD}'!A:Z`;
           const salesSwarmCol = getSwarmLeadSalesColumnForShift(shift);
-          googleSheetsGET(salesRange, (rSales) => {
+          // Use cached weekend roster data for sales
+          getWeekendRosterData(SHEET_SALES_CLOUD, shift, weekendDateStr, currentMode, (rSales) => {
             try {
               const rowsSales = (rSales && rSales.values) ? rSales.values : [];
               let rowIdxSales = -1;
@@ -2446,7 +3246,8 @@ function showCICManagers() {
         if (industryContainer) {
           const industryRange = `'${SHEET_INDUSTRY_CLOUD}'!A:Z`;
           const industrySwarmCol = getPremierIndustrySwarmLeadColumn(shift);
-          googleSheetsGET(industryRange, (rInd) => {
+          // Use cached weekend roster data for industry
+          getWeekendRosterData(SHEET_INDUSTRY_CLOUD, shift, weekendDateStr, currentMode, (rInd) => {
             try {
               const rowsInd = (rInd && rInd.values) ? rInd.values : [];
               let rowIdxInd = -1;
@@ -2513,7 +3314,8 @@ function showCICManagers() {
         const dataContainer = document.getElementById('sig-data-section-content');
         if (dataContainer) {
           const dataRange = `'${SHEET_DATA_CLOUD_AF}'!A:Z`;
-          googleSheetsGET(dataRange, (rData) => {
+          // Use cached weekend roster data for data cloud
+          getWeekendRosterData(SHEET_DATA_CLOUD_AF, shift, weekendDateStr, currentMode, (rData) => {
             try {
               const rowsD = (rData && rData.values) ? rData.values : [];
               let rowIdxD = -1;
@@ -2597,7 +3399,8 @@ function showCICManagers() {
               ? getPremierIndustryTEColumn(shift)
               : getTEColumnForShift(shift);
             const teRange = `'${sheetName}'!A:Z`;
-            googleSheetsGET(teRange, (r2) => {
+            // Use cached weekend roster data for TE
+            getWeekendRosterData(sheetName, shift, weekendDateStr, currentMode, (r2) => {
               try {
                 const rows2 = r2.values || [];
                 let rowIdx2 = -1;
@@ -2611,7 +3414,7 @@ function showCICManagers() {
                   if (!aVal2) continue;
                   const aStr2 = String(aVal2).trim();
                   if (aStr2 === targetDatePadded || aStr2 === targetDateAlt) { rowIdx2 = i; break; }
-                  const dt2 = new Date(aStr2);
+                  const dt2 = new Date(aVal2);
                   if (!isNaN(dt2.getTime())) {
                     const am2 = dt2.getMonth() + 1, ad2 = dt2.getDate(), ay2 = dt2.getFullYear();
                     if (am2 === mNumTarget && ad2 === dNumTarget && ay2 === yNumTarget) { rowIdx2 = i; break; }
@@ -2736,8 +3539,8 @@ function showCICManagers() {
               emailInp.value = em || '';
               newNameInp.value = sel || '';
             };
-            blockSel.onchange = refreshNames;
-            nameSel.onchange = () => {
+            blockSel.addEventListener('change', refreshNames);
+            nameSel.addEventListener('change', () => {
               const b = currentPremierBlocks.find(x => x.blockId === blockSel.value);
               const sel = nameSel.value;
               const rows = b && b.mount ? Array.from(b.mount.querySelectorAll('.pc-row')) : [];
@@ -2746,9 +3549,9 @@ function showCICManagers() {
               const em = mailBtn ? (mailBtn.getAttribute('data-email') || '') : '';
               emailInp.value = em || '';
               newNameInp.value = sel || '';
-            };
+            });
             refreshNames();
-            dlg.querySelector('#pe-search').onclick = async () => {
+            dlg.querySelector('#pe-search').addEventListener('click', async () => {
               const qname = (newNameInp.value || '').trim();
               const resultsEl = dlg.querySelector('#pe-results');
               resultsEl.style.display = 'none';
@@ -2798,9 +3601,9 @@ function showCICManagers() {
                 resultsEl.style.display = 'block';
                 resultsEl.innerHTML = `<div style=\"color:#b91c1c; font-size:12px;\">Search error</div>`;
               }
-            };
-            dlg.querySelector('#pe-cancel').onclick = () => dlg.remove();
-            dlg.querySelector('#pe-save').onclick = async () => {
+            });
+            dlg.querySelector('#pe-cancel').addEventListener('click', () => dlg.remove());
+            dlg.querySelector('#pe-save').addEventListener('click', async () => {
               const bId = blockSel.value;
               const original = nameSel.value;
               const newName = (newNameInp.value || '').trim() || original;
@@ -2818,7 +3621,7 @@ function showCICManagers() {
               // Re-render current view
               const v = select.value; if (v === 'sales') await renderSales(); else if (v === 'service') await renderService(); else if (v === 'industry') await renderIndustry(); else await renderData();
               dlg.remove();
-            };
+            });
           };
           if (editBtn) {
             editBtn.addEventListener('click', openPremierEditDialog);
@@ -2828,7 +3631,8 @@ function showCICManagers() {
             currentPremierBlocks = [];
             // 3 cells from Sales Cloud sheet
             const rangePS = `'${SHEET_SALES_CLOUD}'!A:Z`;
-            googleSheetsGET(rangePS, (r) => {
+            // Use cached weekend roster data for Premier Sales
+            getWeekendRosterData(SHEET_SALES_CLOUD, shift, weekendDateStr, currentMode, (r) => {
               const rowsPS = r.values || [];
               let rowIdx = -1;
               const targetDatePadded = weekendDateStr;
@@ -2900,7 +3704,8 @@ function showCICManagers() {
             currentPremierBlocks = [];
             // 3 cells from Service Cloud sheet
             const rangePSe = `'${SHEET_SERVICE_CLOUD}'!A:Z`;
-            googleSheetsGET(rangePSe, (r) => {
+            // Use cached weekend roster data for Premier Service
+            getWeekendRosterData(SHEET_SERVICE_CLOUD, shift, weekendDateStr, currentMode, (r) => {
               const rowsPS = r.values || [];
               let rowIdx = -1;
               const targetDatePadded = weekendDateStr;
@@ -2972,7 +3777,8 @@ function showCICManagers() {
             currentPremierBlocks = [];
             // 2 cells: Industry TEs, Swarm Lead from Industry Cloud sheet
             const rangePI = `'${SHEET_INDUSTRY_CLOUD}'!A:Z`;
-            googleSheetsGET(rangePI, (r) => {
+            // Use cached weekend roster data for Premier Industry
+            getWeekendRosterData(SHEET_INDUSTRY_CLOUD, shift, weekendDateStr, currentMode, (r) => {
               const rowsPI = r.values || [];
               let rowIdx = -1;
               const targetDatePadded = weekendDateStr;
@@ -3036,7 +3842,8 @@ function showCICManagers() {
             currentPremierBlocks = [];
             // 2 cells from Data Cloud and AF sheet: DataCloud {Shift}, Agentforce {Shift}
             const rangePD = `'${SHEET_DATA_CLOUD_AF}'!A:Z`;
-            googleSheetsGET(rangePD, (r) => {
+            // Use cached weekend roster data for Premier Data
+            getWeekendRosterData(SHEET_DATA_CLOUD_AF, shift, weekendDateStr, currentMode, (r) => {
               const rowsPD = r.values || [];
               let rowIdx = -1;
               const targetDatePadded = weekendDateStr;
@@ -3197,19 +4004,174 @@ function clearSnoozedCases() {
 }
 
 // GHO Functions
-function checkGHOStatus() {
+function forceRefreshGHOData() {
+  // Clear the GHO cache for the current mode to force a fresh query
+  if (window.__ghoCache && window.__ghoCache[currentMode]) {
+    delete window.__ghoCache[currentMode];
+    // GHO cache cleared for mode - forcing fresh data fetch
+    // Save updated cache to persistent storage
+    saveGHOCache();
+  }
+
+  // Clear global GHO variables
+  ghoRecordsGlobal = [];
+  ghoConnectionGlobal = null;
+
+  // Reset GHO list state
+  window.__ghoListState = null;
+
+  // Show toast notification
+  showToast('GHO cache cleared - fetching fresh data...', 'info');
+
+  // If GHO modal is open, refresh the data
+  const modal = document.getElementById('gho-modal');
+  if (modal && modal.style.display === 'flex') {
+    // Add spinning animation to refresh button
+    const refreshBtn = document.getElementById('gho-refresh-btn');
+    if (refreshBtn) {
+      const icon = refreshBtn.querySelector('.fa-refresh');
+      if (icon) {
+        icon.classList.add('fa-spin');
+      }
+      // Add visual feedback that refresh is in progress
+      refreshBtn.style.background = 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)';
+      refreshBtn.style.color = 'white';
+      refreshBtn.style.transform = 'scale(1.05)';
+    }
+
+    // Force refresh by calling checkGHOStatus with cache bypass
+    checkGHOStatus(true);
+  } else {
+    // If modal is not open, just clear cache for next time
+    showToast('GHO cache cleared - will fetch fresh data on next open', 'info');
+  }
+}
+
+function stopGHORefreshSpinning() {
+  const refreshBtn = document.getElementById('gho-refresh-btn');
+  if (refreshBtn) {
+    const icon = refreshBtn.querySelector('.fa-refresh');
+    if (icon) {
+      icon.classList.remove('fa-spin');
+    }
+    // Reset button styling to default
+    refreshBtn.style.background = '';
+    refreshBtn.style.color = '';
+    refreshBtn.style.transform = '';
+  }
+}
+
+function updateGHOCacheStatus() {
+  const cacheInfo = document.getElementById('gho-cache-info');
+  const cacheTime = document.getElementById('gho-cache-time');
+
+  if (!cacheInfo || !cacheTime) return;
+
+  const currentModeCache = window.__ghoCache && window.__ghoCache[currentMode];
+
+  // Build cache status for current mode only
+  let statusText = 'Cache status: ';
+  let timeText = '';
+  let statusColor = '#6b7280';
+
+  if (currentModeCache && currentModeCache.fetchedAt) {
+    const now = Date.now();
+    const age = now - currentModeCache.fetchedAt;
+    const ageMinutes = Math.floor(age / (1000 * 60));
+    const ageSeconds = Math.floor((age % (1000 * 60)) / 1000);
+
+    if (age < GHO_CACHE_TTL) {
+      const remaining = GHO_CACHE_TTL - age;
+      const remainingMinutes = Math.floor(remaining / (1000 * 60));
+      const remainingSeconds = Math.floor((remaining % (1000 * 60)) / 1000);
+
+      statusText = `Cache status: ${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} mode - Fresh (${ageMinutes}m ${ageSeconds}s old)`;
+      statusColor = '#059669';
+      timeText = `Expires in: ${remainingMinutes}m ${remainingSeconds}s`;
+    } else {
+      statusText = `Cache status: ${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} mode - Expired`;
+      statusColor = '#dc2626';
+      timeText = 'Data needs refresh';
+    }
+  } else {
+    statusText = `Cache status: ${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} mode - No cached data`;
+    statusColor = '#6b7280';
+    timeText = 'Data will be fetched fresh';
+  }
+
+  // Update the display
+  cacheInfo.textContent = statusText;
+  cacheInfo.style.color = statusColor;
+  cacheTime.textContent = timeText;
+  cacheTime.style.color = statusColor;
+
+  // Add persistent cache info
+  try {
+    const persistentCache = localStorage.getItem(GHO_CACHE_STORAGE_KEY);
+    if (persistentCache) {
+      const parsed = JSON.parse(persistentCache);
+      const hasPersistentData = parsed && (parsed.signature || parsed.premier);
+      if (hasPersistentData) {
+        cacheInfo.textContent += ' (Persistent)';
+      }
+    }
+  } catch (e) {
+    // Ignore errors in cache status display
+  }
+
+  // Update detailed cache information
+  updateDetailedCacheInfo();
+}
+
+// Function to update detailed cache information display
+function updateDetailedCacheInfo() {
+  const currentModeDetail = document.getElementById('current-mode-cache-detail');
+
+  if (!currentModeDetail) return;
+
+  const currentModeCache = window.__ghoCache && window.__ghoCache[currentMode];
+
+  if (currentModeCache && currentModeCache.fetchedAt) {
+    const age = Date.now() - currentModeCache.fetchedAt;
+    const ageMinutes = Math.floor(age / (1000 * 60));
+    const isExpired = age >= GHO_CACHE_TTL;
+
+    currentModeDetail.innerHTML = `
+      <strong>${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} Mode Cache:</strong> ${isExpired ? 'Expired' : 'Fresh'} 
+      (${ageMinutes}m old)<br>
+      <small>${currentModeCache.records?.length || 0} cases, ${currentModeCache.triageCaseIds?.size || 0} triage, ${currentModeCache.mondayCaseIds?.size || 0} Monday cases</small>
+    `;
+    currentModeDetail.style.color = isExpired ? '#dc2626' : '#059669';
+  } else {
+    currentModeDetail.innerHTML = `<strong>${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)} Mode:</strong> No cached data`;
+    currentModeDetail.style.color = '#6b7280';
+  }
+}
+
+function checkGHOStatus(forceRefresh = false) {
   const modal = document.getElementById('gho-modal');
   const container = document.getElementById('gho-cases-container');
   const filterDropdown = document.getElementById('gho-taxonomy-filter');
 
-  // Reset filter to "All" when opening modal
+  // Don't reset filter when opening modal - keep user's selection
+  // This allows filtering to work properly with cached data
   if (filterDropdown) {
-    filterDropdown.value = 'All';
+    console.log('Current filter value when opening modal:', filterDropdown.value);
   }
 
   // Show modal and loading state
   modal.style.display = 'flex';
   requestAnimationFrame(() => modal.classList.add('modal-show'));
+
+  // Update cache status display
+  updateGHOCacheStatus();
+
+  // Start periodic cache status updates
+  const cacheStatusInterval = setInterval(updateGHOCacheStatus, 1000);
+
+  // Store the interval ID to clear it later
+  modal.dataset.cacheStatusInterval = cacheStatusInterval;
+
   container.innerHTML = `
     <div class="loading-message" style="animation: fadeUp 300ms ease;">
       <div class="spinner"></div>
@@ -3219,16 +4181,33 @@ function checkGHOStatus() {
   `;
 
   // Use cached results if within TTL and for same shift to avoid repeated network & comment queries
+  // Skip cache if forceRefresh is true
   const nowTs = Date.now();
   const currentShiftLive = getCurrentShift();
   const modeCache = window.__ghoCache[currentMode];
-  if (modeCache && (nowTs - modeCache.fetchedAt < GHO_CACHE_TTL) && modeCache.shift === currentShiftLive) {
+  if (!forceRefresh && modeCache && (nowTs - modeCache.fetchedAt < GHO_CACHE_TTL) && modeCache.shift === currentShiftLive) {
     try {
       ghoRecordsGlobal = modeCache.records;
       ghoConnectionGlobal = modeCache.conn;
+
+      console.log('Using cached GHO data:', {
+        records: modeCache.records?.length || 0,
+        triageCaseIds: modeCache.triageCaseIds?.size || 0,
+        mondayCaseIds: modeCache.mondayCaseIds?.size || 0,
+        mondayCaseIdsContent: Array.from(modeCache.mondayCaseIds || []),
+        noWocTemplateCaseIds: modeCache.noWocTemplateCaseIds?.size || 0,
+        noWocTemplateCaseIdsContent: Array.from(modeCache.noWocTemplateCaseIds || [])
+      });
+
       // Re-render with cached comment/user resolution
-      renderFilteredGHOCases(modeCache.records, modeCache.conn, 'All', {
+      // Use current filter value instead of hardcoded 'All'
+      const currentFilterValue = document.getElementById('gho-taxonomy-filter')?.value || 'All';
+      console.log('Rendering cached data with current filter:', currentFilterValue);
+
+      renderFilteredGHOCases(modeCache.records, modeCache.conn, currentFilterValue, {
         triageCaseIds: modeCache.triageCaseIds,
+        mondayCaseIds: modeCache.mondayCaseIds,
+        noWocTemplateCaseIds: modeCache.noWocTemplateCaseIds,
         userMap: modeCache.userMap,
         fromCache: true
       });
@@ -3254,6 +4233,10 @@ function checkGHOStatus() {
   ghoConn.query(ghoQuery, function (err, result) {
     if (err) {
       console.error('GHO Query Error:', err);
+
+      // Stop refresh button spinning animation on error
+      stopGHORefreshSpinning();
+
       container.innerHTML = `
         <div class="no-cases-message" style="background: linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%); border: 1.5px solid #fecaca; animation: fadeUp 300ms ease;">
           <h4 class="no-cases-title" style="color: #dc2626;">Error Loading GHO Cases</h4>
@@ -3264,11 +4247,13 @@ function checkGHOStatus() {
       return;
     }
 
-    // For Premier (log-based) flow: hydrate full Case records before continuing existing pipeline logic.
+    // Hydrate full Case records for Premier flow
     if (currentMode === 'premier' && result && Array.isArray(result.records)) {
       const caseIds = Array.from(new Set(result.records.map(r => r.Case__c))).filter(Boolean);
       if (caseIds.length === 0) {
         // No qualifying cases
+        stopGHORefreshSpinning();
+        updateGHOCacheStatus();
         showGHOStatusModal([], ghoConn);
         return;
       }
@@ -3276,6 +4261,10 @@ function checkGHOStatus() {
       return ghoConn.query(detailQuery, (detailErr, detailRes) => {
         if (detailErr) {
           console.error('Premier detail fetch error:', detailErr);
+
+          // Stop refresh button spinning animation on error
+          stopGHORefreshSpinning();
+
           container.innerHTML = `<div class=\"no-cases-message\" style=\"background:linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%); border:1.5px solid #fecaca; padding:20px;\"><h4 style=\"color:#dc2626; margin:0 0 8px;\">Error Hydrating Premier GHO Cases</h4><p style=\"margin:0; font-size:14px; color:#6b7280;\">${detailErr.message}</p></div>`;
           return;
         }
@@ -3290,35 +4279,101 @@ function checkGHOStatus() {
 
   //Premier GHO processing
   function proceedWithGHOCaseProcessing(result) {
-    if (!result) { showGHOStatusModal([], ghoConn); return; }
+    if (!result) {
+      stopGHORefreshSpinning();
+      updateGHOCacheStatus();
+      showGHOStatusModal([], ghoConn);
+      return;
+    }
     if (result.records.length === 0) {
+      stopGHORefreshSpinning();
+      updateGHOCacheStatus();
       showGHOStatusModal(result.records || [], ghoConn);
       return;
     }
     const caseIds = result.records.map(r => r.Id);
-    const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+    // Query comments for all cases, we'll limit to 5 per case in JavaScript
+    const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost' ORDER BY CreatedDate DESC`;
     Promise.all([
       new Promise(res => ghoConn.query(commentQuery, (e, r) => res({ e, r }))),
       new Promise(res => ghoConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`, (e, r) => res({ e, r })))
     ]).then(([commentResp, userResp]) => {
       let triageCaseIds = new Set();
+      let mondayCaseIds = new Set();
+      let noWocTemplateCaseIds = new Set();
       let currentUserId = null;
       if (!userResp.e && userResp.r.records && userResp.r.records.length > 0) currentUserId = userResp.r.records[0].Id;
-      if (!commentResp.e && commentResp.r.records && currentUserId) {
+      if (!commentResp.e && commentResp.r.records) {
+        // Group comments by case ID and limit to 5 most recent per case
+        const commentsByCase = {};
         commentResp.r.records.forEach(c => {
-          if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === currentUserId) {
-            const cDate = c.LastModifiedDate || c.CreatedDate;
-            if (isToday(cDate) && getShiftForDate(cDate) === currentShiftLive) {
-              const caseRecord = result.records.find(rec => rec.Id === c.ParentId);
-              if (caseRecord) {
-                const gKey = `gho_tracked_${caseRecord.Id}`;
-                if (!localStorage.getItem(gKey)) {
-                  trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
-                  localStorage.setItem(gKey, 'true');
+          if (!commentsByCase[c.ParentId]) {
+            commentsByCase[c.ParentId] = [];
+          }
+          // Only keep the 5 most recent comments per case
+          if (commentsByCase[c.ParentId].length < 5) {
+            commentsByCase[c.ParentId].push(c);
+          }
+        });
+
+        // Check each case for GHO triage and Monday mentions
+        Object.keys(commentsByCase).forEach(caseId => {
+          const caseComments = commentsByCase[caseId];
+
+          // Check for GHO triage comments
+          caseComments.forEach(c => {
+            if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === currentUserId) {
+              const cDate = c.LastModifiedDate || c.CreatedDate;
+              if (isToday(cDate) && getShiftForDate(cDate) === currentShiftLive) {
+                const caseRecord = result.records.find(rec => rec.Id === c.ParentId);
+                if (caseRecord) {
+                  const gKey = `gho_tracked_${caseRecord.Id}`;
+                  if (!localStorage.getItem(gKey)) {
+                    trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRecord.CaseNumber, caseRecord.Severity_Level__c, 'GHO', caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0], currentMode, currentUserName, 'QB');
+                    localStorage.setItem(gKey, 'true');
+                  }
                 }
+                triageCaseIds.add(c.ParentId);
               }
-              triageCaseIds.add(c.ParentId);
             }
+          });
+
+          // Check for Monday mentions in the 5 most recent comments
+          const hasMondayInComments = caseComments.some(comment => {
+            if (!comment.Body) return false;
+            // Strip HTML tags and check for Monday (case insensitive)
+            const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
+            // Check for "Monday" or "TO: {Any word} Monday" pattern
+            const hasMonday = cleanBody.includes('monday') ||
+              /to:\s*\w+\s+monday/i.test(cleanBody);
+            console.log(`Comment check for case ${caseId}: Original="${comment.Body}", Cleaned="${cleanBody}", HasMonday=${hasMonday}`);
+            return hasMonday;
+          });
+          if (hasMondayInComments) {
+            mondayCaseIds.add(caseId);
+            console.log(`GHO Monday case detected: ${caseId} - found "monday" in 5 latest comments`);
+          } else {
+            console.log(`No Monday detected for case ${caseId} - comments:`, caseComments.map(c => c.Body));
+          }
+
+          // Check for "No {currentShift} GHO template" mentions in the 5 most recent comments
+          const hasNoWocTemplateInComments = caseComments.some(comment => {
+            if (!comment.Body) return false;
+            // Strip HTML tags and check for "No {currentShift} GHO template" pattern (case insensitive)
+            const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
+            const currentShiftLower = currentShiftLive.toLowerCase();
+            // More flexible pattern: "no" + any case shift + "gho" + "template" with word boundaries
+            const noWocPattern = new RegExp(`\\bno\\s+${currentShiftLower}\\s+gho\\s+template\\b`, 'i');
+            const hasNoWocTemplate = noWocPattern.test(cleanBody);
+            console.log(`No WOC Template check for case ${caseId}: Original="${comment.Body}", Cleaned="${cleanBody}", HasNoWocTemplate=${hasNoWocTemplate}, Pattern="${noWocPattern.source}", CurrentShift="${currentShiftLive}"`);
+            return hasNoWocTemplate;
+          });
+
+          if (hasNoWocTemplateInComments) {
+            noWocTemplateCaseIds.add(caseId);
+            console.log(`No WOC Template case detected: ${caseId} - found "No ${currentShiftLive} GHO template" in 5 latest comments`);
+          } else {
+            console.log(`No WOC Template not detected for case ${caseId} - comments:`, caseComments.map(c => c.Body));
           }
         });
       }
@@ -3326,14 +4381,33 @@ function checkGHOStatus() {
       window.__ghoCache[currentMode] = {
         records: result.records,
         triageCaseIds,
+        mondayCaseIds,
+        noWocTemplateCaseIds,
         userMap: {},
         fetchedAt: Date.now(),
         shift: currentShiftLive,
         conn: ghoConn
       };
-      showGHOStatusModal(result.records, ghoConn, { triageCaseIds, fromCache: false });
+
+      // Save cache to persistent storage
+      saveGHOCache();
+
+      // Stop refresh button spinning animation
+      stopGHORefreshSpinning();
+
+      // Update cache status display
+      updateGHOCacheStatus();
+
+      showGHOStatusModal(result.records, ghoConn, { triageCaseIds, mondayCaseIds, fromCache: false });
     }).catch(errAll => {
       console.warn('Parallel GHO enrichment failed, rendering basic list', errAll);
+
+      // Stop refresh button spinning animation even on error
+      stopGHORefreshSpinning();
+
+      // Update cache status display
+      updateGHOCacheStatus();
+
       showGHOStatusModal(result.records, ghoConn);
     });
   }
@@ -3397,6 +4471,9 @@ function showGHOStatusModal(ghoRecords, conn, opts) {
 
   const container = document.getElementById('gho-cases-container');
   const currentShift = getCurrentShift();
+
+  // Update mapping button with count
+  updateMappingButtonCount();
   try {
     const modalBody = document.querySelector('#gho-modal .modal-body');
     if (modalBody && !modalBody.classList.contains('gho-modern-enabled')) {
@@ -3416,6 +4493,23 @@ function showGHOStatusModal(ghoRecords, conn, opts) {
       }
       badge.textContent = modeLabel + ' Mode';
       badge.style.background = currentMode === 'premier' ? '#065f46' : '#1e3a8a';
+
+      // Add mapping status indicator
+      let mappingIndicator = header.querySelector('.gho-mapping-indicator');
+      if (!mappingIndicator) {
+        mappingIndicator = document.createElement('span');
+        mappingIndicator.className = 'gho-mapping-indicator';
+        mappingIndicator.style.cssText = 'margin-left:8px;font-size:10px; letter-spacing:.3px; background:#10b981; color:#fff; padding:2px 6px; border-radius:999px; text-transform:uppercase; box-shadow:0 1px 3px rgba(0,0,0,0.1);';
+        header.appendChild(mappingIndicator);
+      }
+
+      const mappings = loadGHOMappings();
+      if (mappings.length > 0) {
+        mappingIndicator.textContent = `${mappings.length} Mapping${mappings.length > 1 ? 's' : ''}`;
+        mappingIndicator.style.display = 'inline-block';
+      } else {
+        mappingIndicator.style.display = 'none';
+      }
     }
   } catch (e) { }
 
@@ -3458,19 +4552,37 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
   let filteredRecords = ghoRecords;
   if (filterValue !== 'All') {
     const aliases = {
-      'data': ['data cloud', 'data'],
-      'sales': ['sales'],
-      'service': ['service'],
-      'industry': ['industry']
+      'Data': ['data cloud', 'data'],
+      'Sales': ['sales'],
+      'Service': ['service'],
+      'Industry': ['industry']
     };
-    const selected = (filterValue || '').toLowerCase();
-    const targets = aliases[selected] || [selected];
+    const selected = filterValue; // Keep original case
+    const targets = aliases[selected] || [selected.toLowerCase()];
+
+    console.log(`Filtering with value: "${filterValue}", targets: ${targets}`);
 
     filteredRecords = ghoRecords.filter(record => {
-      const rawName = (record.CaseRoutingTaxonomy__r?.Name || '').toLowerCase().trim();
+      // Both modes should have CaseRoutingTaxonomy__r.Name after hydration
+      const taxonomyName = record.CaseRoutingTaxonomy__r?.Name || '';
+      const rawName = taxonomyName.toLowerCase().trim();
+
+      if (!rawName) {
+        console.log('No taxonomy name found for record:', record.Id, record);
+        return false;
+      }
+
       const group = rawName.split(/[\-–—]/)[0].trim();
-      return targets.includes(group);
+      const matches = targets.includes(group);
+
+      if (filterValue !== 'All') {
+        console.log(`Filtering record ${record.Id}: taxonomy="${taxonomyName}", group="${group}", targets="${targets}", matches=${matches}`);
+      }
+
+      return matches;
     });
+
+    console.log(`Filtered ${ghoRecords.length} records to ${filteredRecords.length} records`);
   }
 
   if (filteredRecords.length === 0) {
@@ -3511,40 +4623,107 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
 
   // If we have precomputed triage ids (from cache or upstream), re-use; else perform a comment query
   if (pre && pre.triageCaseIds instanceof Set) {
-    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, pre.triageCaseIds);
+    console.log('Using precomputed cache data for rendering:', {
+      triageCaseIds: pre.triageCaseIds?.size || 0,
+      mondayCaseIds: pre.mondayCaseIds?.size || 0,
+      mondayCaseIdsContent: Array.from(pre.mondayCaseIds || []),
+      noWocTemplateCaseIds: pre.noWocTemplateCaseIds?.size || 0,
+      noWocTemplateCaseIdsContent: Array.from(pre.noWocTemplateCaseIds || [])
+    });
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, pre.triageCaseIds, pre.mondayCaseIds || new Set(), pre.noWocTemplateCaseIds || new Set());
     return;
   }
 
   const caseIds = filteredRecords.map(record => record.Id);
   if (caseIds.length === 0) {
-    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set());
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set(), new Set(), new Set());
     return;
   }
-  const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost'`;
+  // Query comments for all cases, we'll limit to 5 per case in JavaScript
+  const commentQuery = `SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility = 'InternalUsers' AND ParentId IN ('${caseIds.join("','")}') AND Type = 'TextPost' ORDER BY CreatedDate DESC`;
   conn.query(commentQuery, function (commentErr, commentResult) {
     if (commentErr) {
       console.error('Error querying GHO comments:', commentErr);
-      renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set());
+      renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, new Set(), new Set(), new Set());
       return;
     }
     const ghoTriageCommentCases = new Set();
+    const ghoMondayCases = new Set();
+    const ghoNoWocTemplateCases = new Set();
+
     if (commentResult.records) {
+      // Group comments by case ID and limit to 5 most recent per case
+      const commentsByCase = {};
       commentResult.records.forEach(comment => {
-        if (comment.Body && comment.Body.includes('#GHOTriage')) {
-          const commentDate = comment.LastModifiedDate || comment.CreatedDate;
-          const isCommentFromToday = isToday(commentDate);
-          const commentShift = getShiftForDate(commentDate);
-          const isSameGeo = commentShift === currentShift;
-          if (isCommentFromToday && isSameGeo) ghoTriageCommentCases.add(comment.ParentId);
+        if (!commentsByCase[comment.ParentId]) {
+          commentsByCase[comment.ParentId] = [];
+        }
+        // Only keep the 5 most recent comments per case
+        if (commentsByCase[comment.ParentId].length < 5) {
+          commentsByCase[comment.ParentId].push(comment);
+        }
+      });
+
+      // Check each case for GHO triage and Monday mentions
+      Object.keys(commentsByCase).forEach(caseId => {
+        const caseComments = commentsByCase[caseId];
+
+        // Check for GHO triage comments
+        caseComments.forEach(comment => {
+          if (comment.Body && comment.Body.includes('#GHOTriage')) {
+            const commentDate = comment.LastModifiedDate || comment.CreatedDate;
+            const isCommentFromToday = isToday(commentDate);
+            const commentShift = getShiftForDate(commentDate);
+            const isSameGeo = commentShift === currentShift;
+            if (isCommentFromToday && isSameGeo) ghoTriageCommentCases.add(comment.ParentId);
+          }
+        });
+
+        // Check for Monday mentions in the 5 most recent comments
+        const hasMondayInComments = caseComments.some(comment => {
+          if (!comment.Body) return false;
+          // Strip HTML tags and check for Monday (case insensitive)
+          const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
+          // Check for "Monday" or "TO: {Any word} Monday" pattern
+          const hasMonday = cleanBody.includes('monday') ||
+            /to:\s*\w+\s+monday/i.test(cleanBody);
+          console.log(`Comment check for case ${caseId}: Original="${comment.Body}", Cleaned="${cleanBody}", HasMonday=${hasMonday}`);
+          return hasMonday;
+        });
+        if (hasMondayInComments) {
+          ghoMondayCases.add(caseId);
+          console.log(`GHO Monday case detected (filtered): ${caseId} - found "monday" in 5 latest comments`);
+        } else {
+          console.log(`No Monday detected for case ${caseId} - comments:`, caseComments.map(c => c.Body));
+        }
+
+        // Check for "No {currentShift} GHO template" mentions in the 5 most recent comments
+        const hasNoWocTemplateInComments = caseComments.some(comment => {
+          if (!comment.Body) return false;
+          // Strip HTML tags and check for "No {currentShift} GHO template" pattern (case insensitive)
+          const cleanBody = comment.Body.replace(/<[^>]*>/g, '').toLowerCase();
+          const currentShiftLower = currentShift.toLowerCase();
+          // More flexible pattern: "no" + any case shift + "gho" + "template" with word boundaries
+          const noWocPattern = new RegExp(`\\bno\\s+${currentShiftLower}\\s+gho\\s+template\\b`, 'i');
+          const hasNoWocTemplate = noWocPattern.test(cleanBody);
+          console.log(`No WOC Template check for case ${caseId}: Original="${comment.Body}", Cleaned="${cleanBody}", HasNoWocTemplate=${hasNoWocTemplate}, Pattern="${noWocPattern.source}", CurrentShift="${currentShift}"`);
+          return hasNoWocTemplate;
+        });
+
+        if (hasNoWocTemplateInComments) {
+          ghoNoWocTemplateCases.add(caseId);
+          console.log(`No WOC Template case detected (filtered): ${caseId} - found "No ${currentShift} GHO template" in 5 latest comments`);
+        } else {
+          console.log(`No WOC Template not detected for case ${caseId} - comments:`, caseComments.map(c => c.Body));
         }
       });
     }
-    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases);
+    renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases, ghoMondayCases, ghoNoWocTemplateCases);
   });
 }
 
 // Helper function to render GHO cases with comment information
-function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases) {
+function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filterValue, ghoTriageCommentCases, ghoMondayCases = new Set(), ghoNoWocTemplateCases = new Set()) {
   const container = document.getElementById('gho-cases-container');
 
   // Collect all unique user IDs from routing logs
@@ -3569,6 +4748,8 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
     try {
       if (window.__ghoCache[currentMode] && window.__ghoCache[currentMode].shift === currentShift) {
         window.__ghoCache[currentMode].userMap = userMap;
+        // Save updated cache to persistent storage
+        saveGHOCache();
       }
       // also persist to localStorage day-cache
       const existing = loadUserMapCache();
@@ -3578,16 +4759,149 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
     // Count cases with QB mentions
     const qbMentionedCount = Array.from(ghoTriageCommentCases).length;
 
+    // Count cases with suggested assignees
+    const suggestedAssigneeCount = filteredRecords.filter(record =>
+      getSuggestedAssignee(record, userMap)
+    ).length;
+
+    // Get mappings for display
+    const mappings = loadGHOMappings();
+
     const headerHtml = `
-      <div class="gho-summary" style="animation: fadeUp 260ms ease;">
-        <h4>Found ${filteredRecords.length} ${filterValue === 'All' ? '' : filterValue + ' '}GHO Case${filteredRecords.length === 1 ? '' : 's'}</h4>
-        <p>Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift</p>
-        ${qbMentionedCount > 0 ? `<p><span class="badge-soft badge-soft--success">${qbMentionedCount}</span> case${qbMentionedCount === 1 ? ' has' : 's have'} QB mentioned (#GHOTriage)</p>` : ''}
-        <div class="gho-summary-meta">
-          <strong>Current Shift:</strong> ${currentShift} | 
-          <strong>Time:</strong> ${new Date().toLocaleTimeString()} |
-          <strong>Shifts:</strong> APAC (5:30AM-2:30PM), EMEA (12:30PM-9:30PM), AMER (8:30PM-5:30AM)
+      <div class="gho-summary-modern" style="animation: fadeUp 260ms ease;">
+        <div class="gho-summary-header">
+          <div class="gho-summary-icon">
+            <i class="fa fa-list-alt" style="font-size: 24px; color: #6366f1;"></i>
+          </div>
+          <div class="gho-summary-title-section">
+            <h4 class="gho-summary-title">${filteredRecords.length} ${filterValue === 'All' ? '' : filterValue + ' '}GHO Case${filteredRecords.length === 1 ? '' : 's'} Found</h4>
+            <p class="gho-summary-subtitle">Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift</p>
+          </div>
+          <div class="gho-summary-stats">
+            <div class="gho-stat-item">
+              <span class="gho-stat-number">${filteredRecords.length}</span>
+              <span class="gho-stat-label">Total</span>
+            </div>
+          </div>
         </div>
+        
+        <div class="gho-summary-metrics">
+          ${qbMentionedCount > 0 ? `
+            <div class="gho-metric-card gho-metric-card--success">
+              <div class="gho-metric-icon">
+                <i class="fa fa-check-circle" style="color: #10b981;"></i>
+              </div>
+              <div class="gho-metric-content">
+                <span class="gho-metric-number">${qbMentionedCount}</span>
+                <span class="gho-metric-label">QB Mentioned (#GHOTriage)</span>
+              </div>
+            </div>
+          ` : ''}
+          
+          ${ghoMondayCases.size > 0 ? `
+            <div class="gho-metric-card gho-metric-card--monday gho-metric-card--compact">
+              <div class="gho-metric-icon gho-metric-icon--small">
+                <i class="fa fa-calendar" style="color: #10b981; font-size: 14px;"></i>
+              </div>
+              <div class="gho-metric-content">
+                <span class="gho-metric-number gho-metric-number--small">${ghoMondayCases.size}</span>
+                <span class="gho-metric-label gho-metric-label--small">Monday</span>
+              </div>
+            </div>
+          ` : ''}
+          
+          ${ghoNoWocTemplateCases.size > 0 ? `
+            <div class="gho-metric-card gho-metric-card--woc">
+              <div class="gho-metric-icon">
+                <i class="fa fa-file-text-o" style="color: #f59e0b;"></i>
+              </div>
+              <div class="gho-metric-content">
+                <span class="gho-metric-number">${ghoNoWocTemplateCases.size}</span>
+                <span class="gho-metric-label">No WOC Template</span>
+              </div>
+            </div>
+          ` : ''}
+          
+          ${suggestedAssigneeCount > 0 ? `
+            <div class="gho-metric-card gho-metric-card--info">
+              <div class="gho-metric-icon">
+                <i class="fa fa-lightbulb-o" style="color: #3b82f6;"></i>
+              </div>
+              <div class="gho-metric-content">
+                <span class="gho-metric-number">${suggestedAssigneeCount}</span>
+                <span class="gho-metric-label">Suggested Assignee${suggestedAssigneeCount > 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        
+        <div class="gho-summary-info-grid">
+          <div class="gho-info-card gho-info-card--shift">
+            <div class="gho-info-icon">
+              <i class="fa fa-clock-o" style="color: #f59e0b;"></i>
+            </div>
+            <div class="gho-info-content">
+              <span class="gho-info-label">Current Shift</span>
+              <span class="gho-info-value">${currentShift}</span>
+            </div>
+          </div>
+          
+          <div class="gho-info-card gho-info-card--time">
+            <div class="gho-info-icon">
+              <i class="fa fa-calendar-check-o" style="color: #10b981;"></i>
+            </div>
+            <div class="gho-info-content">
+              <span class="gho-info-label">Current Time</span>
+              <span class="gho-info-value">${new Date().toLocaleTimeString()}</span>
+            </div>
+          </div>
+          
+          <div class="gho-info-card gho-info-card--mappings">
+            <div class="gho-info-icon">
+              <i class="fa fa-exchange" style="color: #6366f1;"></i>
+            </div>
+            <div class="gho-info-content">
+              <span class="gho-info-label">Active Mappings</span>
+              <span class="gho-info-value">${mappings.length}</span>
+            </div>
+          </div>
+        </div>
+        
+
+        
+        ${mappings.length > 0 ? `
+          <div class="gho-summary-mapping-status gho-summary-mapping-status--active">
+            <div class="gho-mapping-status-icon">
+              <i class="fa fa-check-circle" style="color: #10b981;"></i>
+            </div>
+            <div class="gho-mapping-status-content">
+              <span class="gho-mapping-status-title">Mapping System Active</span>
+              <span class="gho-mapping-status-description">
+                ${suggestedAssigneeCount > 0 ? `${suggestedAssigneeCount} case${suggestedAssigneeCount > 1 ? 's' : ''} have suggested assignee${suggestedAssigneeCount > 1 ? 's' : ''}` : 'No cases currently match your mappings'}
+              </span>
+              <a href="#" class="gho-mapping-status-link mapping-link" data-action="view-mappings">
+                <i class="fa fa-cog" style="margin-right: 6px;"></i>
+                View/Edit Mappings
+              </a>
+            </div>
+          </div>
+        ` : `
+          <div class="gho-summary-mapping-status gho-summary-mapping-status--inactive">
+            <div class="gho-mapping-status-icon">
+              <i class="fa fa-lightbulb-o" style="color: #f59e0b;"></i>
+            </div>
+            <div class="gho-mapping-status-content">
+              <span class="gho-mapping-status-title">No Mappings Configured</span>
+              <span class="gho-mapping-status-description">
+                Set up GHO transfer mappings to get suggested assignees for cases
+              </span>
+              <a href="#" class="gho-mapping-status-link mapping-link" data-action="view-mappings">
+                <i class="fa fa-plus" style="margin-right: 6px;"></i>
+                Configure Mappings
+              </a>
+            </div>
+          </div>
+        `}
       </div>
       <div id="gho-items"></div>
     `;
@@ -3601,6 +4915,8 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
       total: filteredRecords.length,
       userMap,
       triageCaseIds: ghoTriageCommentCases,
+      mondayCaseIds: ghoMondayCases,
+      noWocTemplateCaseIds: ghoNoWocTemplateCases,
       currentShift,
       filterValue,
       conn
@@ -3650,10 +4966,15 @@ function setupGhoInfiniteScroll() {
   } catch (e) { console.warn('setupGhoInfiniteScroll failed', e); }
 }
 
-function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, currentShift) {
+function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, currentShift, ghoMondayCases = new Set(), ghoNoWocTemplateCases = new Set()) {
   const caseId = caseRecord.Id;
   const isMVP = caseRecord.Contact && caseRecord.Contact.Is_MVP__c === true;
   const hasGHOTriage = ghoTriageCommentCases.has(caseId);
+  const hasMondayMention = ghoMondayCases.has(caseId);
+  const hasNoWocTemplate = ghoNoWocTemplateCases.has(caseId);
+
+  // Get suggested assignee based on mapping
+  const suggestedAssignee = getSuggestedAssignee(caseRecord, userMap);
 
   // Build routing log HTML and GHO transfer information
   let routingLogHtml = '';
@@ -3697,6 +5018,15 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
           const ghoFrom = transfer.Preferred_Shift_Old_Value__c || 'N/A';
           const ghoTo = transfer.Preferred_Shift_New_Value__c || 'N/A';
 
+          // Check if this transfer triggers a mapping
+          const mappings = loadGHOMappings();
+          const mapping = mappings.find(m => m.from.toLowerCase() === userName.toLowerCase());
+          const mappingBadge = mapping ? `
+            <span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; margin-left: 8px;">
+              <i class="fa fa-exchange" style="margin-right: 2px;"></i>Maps to ${mapping.to}
+            </span>
+          ` : '';
+
           nestedListHtml += `
             <div class="gho-transfer-item gho-transfer-item--current">
               <div class="gho-transfer-title">
@@ -3707,7 +5037,10 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
                 <span><strong>GHO FROM:</strong> ${ghoFrom}</span>
                 <span><strong>GHO TO:</strong> ${ghoTo}</span>
               </div>
-              <div class="gho-transfer-meta">${timeElapsed(transferTime)} ago</div>
+              <div class="gho-transfer-meta">
+                ${timeElapsed(transferTime)} ago
+                ${mappingBadge}
+              </div>
             </div>
           `;
         });
@@ -3753,6 +5086,12 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
           <div class="gho-transfer-heading">
             <span class="checkmark">✓</span>
             <span>GHO Transfer History (${allGhoTransfers.length} transfer${allGhoTransfers.length > 1 ? 's' : ''}):</span>
+            ${suggestedAssignee ? `
+            <div style="margin-left: 20px; font-size: 12px; color: #166534; font-weight: 600;">
+              <i class="fa fa-lightbulb-o" style="margin-right: 4px;"></i>
+              Next suggested: ${suggestedAssignee}
+            </div>
+            ` : ''}
           </div>
           <div class="gho-transfer-section">
             ${nestedListHtml}
@@ -3776,6 +5115,8 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
         <div class="gho-card-header-main">
           <div class="gho-card-badges">
             <span class="badge-soft badge-soft--amber">GHO</span>
+            ${hasMondayMention ? '<span class="badge-soft badge-soft--monday">GHO Monday</span>' : ''}
+            ${hasNoWocTemplate ? '<span class="badge-soft badge-soft--woc">No WOC Template</span>' : ''}
             ${isMVP ? '<span class="badge-soft badge-soft--purple">MVP</span>' : ''}
             ${hasGHOTriage ? '<span class="badge-soft badge-soft--success">QB Mentioned</span>' : ''}
           </div>
@@ -3788,6 +5129,12 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
         <div class="gho-meta-item"><span class="gho-meta-label">Account</span><span class="gho-meta-value">${caseRecord.Account.Name}</span></div>
         <div class="gho-meta-item"><span class="gho-meta-label">Owner</span><span class="gho-meta-value">${caseRecord.Owner.Name}</span></div>
         <div class="gho-meta-item"><span class="gho-meta-label">Cloud</span><span class="gho-meta-value">${caseRecord.CaseRoutingTaxonomy__r.Name}</span></div>
+        ${suggestedAssignee ? `
+        <div class="gho-suggested-assignee" style="grid-column: 1 / -1;" title="Based on GHO transfer mapping: ${getMappingSource(caseRecord, userMap)} → ${suggestedAssignee}">
+          <div class="suggested-label">Suggested Assignee</div>
+          <div class="suggested-name">${suggestedAssignee}</div>
+        </div>
+        ` : ''}
         <div class="gho-meta-item--severity-row">
           <div class="gho-severity-wrap">
             <span class="gho-meta-label">Severity</span>
@@ -3812,7 +5159,7 @@ function loadMoreGhoCases() {
     const nextEnd = Math.min(state.renderedCount + GHO_PAGE_SIZE, state.total);
     let buf = '';
     for (let i = state.renderedCount; i < nextEnd; i++) {
-      buf += renderSingleGhoCaseHTML(state.allRecords[i], state.userMap, state.triageCaseIds, state.currentShift);
+      buf += renderSingleGhoCaseHTML(state.allRecords[i], state.userMap, state.triageCaseIds, state.currentShift, state.mondayCaseIds, state.noWocTemplateCaseIds);
     }
     listEl.insertAdjacentHTML('beforeend', buf);
     state.renderedCount = nextEnd;
@@ -3847,81 +5194,331 @@ function toggleGhoTransfers(caseUniqueId) {
   }
 }
 
-// Debug function to check persistent case set status
-function debugPersistentCases() {
-  console.log('Requesting persistent case details...');
+// (debug functions removed for production)
 
-  chrome.runtime.sendMessage({ action: 'getPersistentCaseDetails' }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('Runtime error:', chrome.runtime.lastError);
-      return;
+// Function to clear GHO cache for a specific mode
+function clearGHOCacheForMode(mode) {
+  try {
+    if (!mode || !['signature', 'premier'].includes(mode)) {
+      console.warn('Invalid mode specified for cache clearing:', mode);
+      return false;
     }
 
-    console.log('Response received:', response);
-
-    if (response && typeof response.count !== 'undefined') {
-      console.log(`✅ Persistent Case Set Status: ${response.count} cases being tracked`);
-      if (response.cases && response.cases.length > 0) {
-        console.log('📊 Case Details:');
-        console.table(response.cases);
-      } else if (response.count === 0) {
-        console.log('📭 No cases currently being tracked');
-      }
-    } else {
-      console.warn('⚠️ No response received or invalid response format');
+    // Clear in-memory cache for specific mode
+    if (window.__ghoCache && window.__ghoCache[mode]) {
+      delete window.__ghoCache[mode];
+      console.log(`GHO cache cleared for ${mode} mode`);
     }
-  });
+
+    // Update persistent cache (remove the specific mode)
+    saveGHOCache();
+
+    // Clear global variables if clearing current mode
+    if (mode === currentMode) {
+      ghoRecordsGlobal = [];
+      ghoConnectionGlobal = null;
+      window.__ghoListState = null;
+    }
+
+    showToast(`${mode.charAt(0).toUpperCase() + mode.slice(1)} mode GHO cache cleared`, 'info');
+    return true;
+  } catch (error) {
+    console.error(`Failed to clear GHO cache for ${mode} mode:`, error);
+    showToast(`Failed to clear ${mode} mode cache`, 'error');
+    return false;
+  }
 }
 
-// Alternative simple debug function
-function debugPersistentCasesSimple() {
-  chrome.runtime.sendMessage({ action: 'getPersistentCaseCount' }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('Runtime error:', chrome.runtime.lastError);
-      return;
-    }
-    console.log('Persistent cases count:', response ? response.count : 'undefined');
-  });
+// Function to clear all GHO cache
+// (debug cache clear function removed for production)
+
+// Function to manually save current cache to persistent storage
+// (debug cache save function removed for production)
+
+// Function to get comprehensive cache statistics for both modes
+// (debug cache stats function removed for production)
+
+// Function to show cache debugging information
+// (debug cache inspection functions removed for production)
+
+// Debug helper: open the GHO Alert modal with mock data
+// (debug alert helper removed for production)
+
+// Add a quick cache status function for debugging
+// (debug cache status function removed for production)
+
+// Test function to verify GHO Monday cache
+// (debug test helper removed for production)
+
+// Test function to verify No WOC Template pattern matching
+// (debug test helper removed for production)
+
+// Test function for the specific EMEA example
+// (debug test helper removed for production)
+
+// GHO Mapping Functions
+function loadGHOMappings() {
+  try {
+    const raw = localStorage.getItem(GHO_MAPPING_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('Failed to load GHO mappings:', error);
+    return [];
+  }
 }
 
-// Debug function to clear GHO alert flags
-function clearGHOAlertFlags() {
-  const today = new Date().toDateString();
-  const currentUser = currentUserName || 'unknown';
+// (initializeDefaultMappings removed as unused)
 
-  console.log('Clearing GHO alert flags for today:', today, 'user:', currentUser);
+function saveGHOMappings(mappings) {
+  try {
+    localStorage.setItem(GHO_MAPPING_STORAGE_KEY, JSON.stringify(mappings));
+    return true;
+  } catch (error) {
+    console.error('Failed to save GHO mappings:', error);
+    return false;
+  }
+}
 
-  const regions = ['APAC', 'EMEA', 'AMER'];
-  let clearedCount = 0;
-
-  regions.forEach(region => {
-    const alertKey = `gho_alert_${region}_${today}_${currentUser}`;
-    if (localStorage.getItem(alertKey)) {
-      localStorage.removeItem(alertKey);
-      clearedCount++;
-      console.log(`Cleared dismissed flag for ${region}:`, alertKey);
+function getSuggestedAssignee(caseRecord, userMap) {
+  try {
+    if (!caseRecord.Case_Routing_Logs__r || caseRecord.Case_Routing_Logs__r.records.length === 0) {
+      return null;
     }
-  });
 
-  const allKeys = Object.keys(localStorage);
-  const ghoKeys = allKeys.filter(key => key.startsWith('gho_alert_') || key.startsWith('gho_tracked_'));
+    // Find the latest GHO transfer
+    const ghoTransfers = caseRecord.Case_Routing_Logs__r.records.filter(log =>
+      log.Transfer_Reason__c === 'GHO'
+    ).sort((a, b) => new Date(b.CreatedDate) - new Date(a.CreatedDate));
 
-  console.log(`Found ${ghoKeys.length} GHO-related localStorage keys`);
-  console.log(`Cleared ${clearedCount} dismissed alert flags for today`);
+    if (ghoTransfers.length === 0) {
+      return null;
+    }
 
-  if (clearedCount > 0) {
-    console.log('✅ GHO alert flags cleared. Alerts will now reappear at designated times until properly dismissed.');
-  } else {
-    console.log('ℹ️ No dismissed alert flags found for today to clear.');
+    const latestTransfer = ghoTransfers[0];
+    const transferUserId = latestTransfer.CreatedById;
+    const transferUserName = userMap[transferUserId];
+
+    if (!transferUserName) {
+      return null;
+    }
+
+    // Load mappings and find a match
+    const mappings = loadGHOMappings();
+    const mapping = mappings.find(m =>
+      m.from.toLowerCase() === transferUserName.toLowerCase()
+    );
+
+    if (mapping) {
+      return mapping.to;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error getting suggested assignee:', error);
+    return null;
+  }
+}
+
+function getMappingSource(caseRecord, userMap) {
+  try {
+    if (!caseRecord.Case_Routing_Logs__r || caseRecord.Case_Routing_Logs__r.records.length === 0) {
+      return null;
+    }
+
+    // Find the latest GHO transfer
+    const ghoTransfers = caseRecord.Case_Routing_Logs__r.records.filter(log =>
+      log.Transfer_Reason__c === 'GHO'
+    ).sort((a, b) => new Date(b.CreatedDate) - new Date(a.CreatedDate));
+
+    if (ghoTransfers.length === 0) {
+      return null;
+    }
+
+    const latestTransfer = ghoTransfers[0];
+    const transferUserId = latestTransfer.CreatedById;
+    const transferUserName = userMap[transferUserId];
+
+    return transferUserName || 'Unknown User';
+  } catch (error) {
+    console.error('Error getting mapping source:', error);
+    return null;
+  }
+}
+
+function showGHOMappingModal() {
+  const modal = document.getElementById('gho-mapping-modal');
+  if (!modal) return;
+
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('modal-show'));
+
+  // Load and display existing mappings
+  renderMappingList();
+}
+
+function renderMappingList() {
+  const mappingList = document.getElementById('mapping-list');
+  if (!mappingList) return;
+
+  const mappings = loadGHOMappings();
+
+  if (mappings.length === 0) {
+    mappingList.innerHTML = `
+      <div style="text-align: center; padding: 20px; color: #6b7280;">
+        <i class="fa fa-info-circle" style="font-size: 24px; margin-bottom: 8px; display: block;"></i>
+        <p>No mappings configured yet.</p>
+        <p style="font-size: 12px;">Click "Add New Mapping" to get started.</p>
+      </div>
+    `;
+    return;
   }
 
-  console.log('💡 Remember: Alerts will only be marked as "shown" when you click the DISMISS button, not just close or check buttons.');
-
-  return { clearedAlertFlags: clearedCount, totalGHOKeys: ghoKeys.length };
+  mappingList.innerHTML = mappings.map((mapping, index) => `
+      <div class="mapping-item" style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; background: #f9fafb;">
+        <div style="flex: 1; display: flex; align-items: center; gap: 8px;">
+          <span style="font-weight: 600; color: #374151;">${mapping.from}</span>
+          <i class="fa fa-arrow-right" style="color: #6b7280; font-size: 12px;"></i>
+          <span style="font-weight: 600; color: #374151;">${mapping.to}</span>
+        </div>
+        <button class="btn-secondary delete-mapping-btn" data-index="${index}" style="padding: 6px 10px; font-size: 11px; background: #fee2e2; color: #dc2626; border-color: #fecaca;">
+          <i class="fa fa-trash" aria-hidden="true"></i>
+        </button>
+      </div>
+    `).join('');
 }
-window.debugPersistentCases = debugPersistentCases;
-window.debugPersistentCasesSimple = debugPersistentCasesSimple;
-window.clearGHOAlertFlags = clearGHOAlertFlags;
+
+function addNewMapping() {
+  const mappingList = document.getElementById('mapping-list');
+  if (!mappingList) return;
+
+  const newMappingHtml = `
+    <div class="mapping-item new-mapping" style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 2px solid #3b82f6; border-radius: 8px; margin-bottom: 8px; background: #eff6ff;">
+      <div style="flex: 1; display: flex; align-items: center; gap: 8px;">
+        <input type="text" class="mapping-from" placeholder="From user name" 
+               style="flex: 1; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;">
+        <i class="fa fa-arrow-right" style="color: #3b82f6; font-size: 12px;"></i>
+        <input type="text" class="mapping-to" placeholder="To user name" 
+               style="flex: 1; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;">
+      </div>
+      <button class="btn-primary save-mapping-btn" style="padding: 6px 10px; font-size: 11px;">
+        <i class="fa fa-check" aria-hidden="true"></i>
+      </button>
+      <button class="btn-secondary cancel-mapping-btn" style="padding: 6px 10px; font-size: 11px; background: #f3f4f6; color: #6b7280; border-color: #d1d5db;">
+        <i class="fa fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+  `;
+
+  mappingList.insertAdjacentHTML('beforeend', newMappingHtml);
+
+  // Focus on the first input
+  const firstInput = mappingList.querySelector('.new-mapping .mapping-from');
+  if (firstInput) {
+    firstInput.focus();
+  }
+}
+
+function saveNewMapping(button) {
+  const mappingItem = button.closest('.mapping-item');
+  const fromInput = mappingItem.querySelector('.mapping-from');
+  const toInput = mappingItem.querySelector('.mapping-to');
+
+  const from = fromInput.value.trim();
+  const to = toInput.value.trim();
+
+  if (!from || !to) {
+    showToast('Please fill in both fields', 'warning');
+    return;
+  }
+
+  const mappings = loadGHOMappings();
+
+  // Check for duplicates
+  if (mappings.some(m => m.from.toLowerCase() === from.toLowerCase())) {
+    showToast(`Mapping for "${from}" already exists`, 'warning');
+    return;
+  }
+
+  mappings.push({ from, to });
+
+  if (saveGHOMappings(mappings)) {
+    showToast(`Mapping added: ${from} → ${to}`, 'success');
+    renderMappingList();
+  } else {
+    showToast('Failed to save mapping', 'error');
+  }
+}
+
+function deleteMapping(index) {
+  const mappings = loadGHOMappings();
+  if (index >= 0 && index < mappings.length) {
+    const deleted = mappings.splice(index, 1)[0];
+    if (saveGHOMappings(mappings)) {
+      showToast(`Mapping deleted: ${deleted.from} → ${deleted.to}`, 'success');
+      renderMappingList();
+    } else {
+      showToast('Failed to delete mapping', 'error');
+    }
+  }
+}
+
+function cancelNewMapping(button) {
+  const mappingItem = button.closest('.mapping-item');
+  mappingItem.remove();
+}
+
+function deleteAllMappings() {
+  const mappings = loadGHOMappings();
+
+  if (mappings.length === 0) {
+    showToast('No mappings to delete', 'info');
+    return;
+  }
+
+  // Show confirmation dialog
+  if (confirm(`Are you sure you want to delete all ${mappings.length} mapping${mappings.length > 1 ? 's' : ''}? This action cannot be undone.`)) {
+    // Clear all mappings
+    saveGHOMappings([]);
+
+    // Refresh the mapping list display
+    renderMappingList();
+
+    // Update the mapping button count
+    updateMappingButtonCount();
+
+    // Show success message
+    showToast(`All ${mappings.length} mapping${mappings.length > 1 ? 's' : ''} deleted successfully`, 'success');
+
+    // All GHO mappings deleted
+  }
+}
+
+// Functions are now handled through event delegation
+
+function updateMappingButtonCount() {
+  const mappingBtn = document.getElementById('gho-mapping-btn');
+  if (!mappingBtn) return;
+
+  const mappings = loadGHOMappings();
+  const count = mappings.length;
+
+  if (count > 0) {
+    mappingBtn.innerHTML = `<i class="fa fa-exchange" aria-hidden="true"></i> Mapping (${count})`;
+    mappingBtn.style.background = 'linear-gradient(180deg, #10b981 0%, #059669 100%)';
+    mappingBtn.style.color = 'white';
+
+    // Add tooltip with mapping preview
+    const tooltipText = mappings.slice(0, 3).map(m => `${m.from} → ${m.to}`).join('\n');
+    mappingBtn.title = `Active Mappings:\n${tooltipText}${mappings.length > 3 ? `\n... and ${mappings.length - 3} more` : ''}`;
+  } else {
+    mappingBtn.innerHTML = `<i class="fa fa-exchange" aria-hidden="true"></i> Mapping`;
+    mappingBtn.style.background = '';
+    mappingBtn.style.color = '';
+    mappingBtn.title = 'Configure GHO transfer mappings';
+  }
+}
 
 // Helper Fn: process CaseHistory and track 'New Case'
 
@@ -4002,7 +5599,7 @@ async function trackNewCaseFromHistory(conn, params) {
   }
 }
 
-// Helper Fn: detect if cases have been assigned by ANY user (owner change or manual assignment), no tracking/logging, used to safely remove missing ones.
+// Detect if cases have been assigned by ANY user (no tracking/logging)
 async function detectAssignmentsForCases(conn, params) {
   const { caseIds } = params || {};
   try {
@@ -4374,4 +5971,100 @@ function startPendingLiveUpdater() {
 
 // ================= Helper Rendering Functions (extracted for DRY) =================
 // (pending section builders moved to modules/pending.js)
+// ================================================================================
+
+// Debug functions removed for production
+
+// ================= Weekend Roster Cache Management =================
+
+// Cache management functions (production version - no debug output)
+function getWeekendRosterCacheStats() {
+  try {
+    const keys = Object.keys(sessionStorage);
+    const cacheKeys = keys.filter(key => key.startsWith(WEEKEND_ROSTER_CACHE_PREFIX));
+    const now = Date.now();
+    let totalEntries = 0;
+    let expiredEntries = 0;
+    let validEntries = 0;
+    let totalSize = 0;
+
+    for (const key of cacheKeys) {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(key));
+        totalEntries++;
+        totalSize += JSON.stringify(cached).length;
+
+        if (!cached.timestamp || (now - cached.timestamp) > WEEKEND_ROSTER_CACHE_TTL) {
+          expiredEntries++;
+        } else {
+          validEntries++;
+        }
+      } catch {
+        totalEntries++;
+      }
+    }
+
+    return {
+      totalEntries,
+      validEntries,
+      expiredEntries,
+      totalSizeBytes: totalSize,
+      cacheTTLHours: WEEKEND_ROSTER_CACHE_TTL / (1000 * 60 * 60)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function clearWeekendRosterCache() {
+  try {
+    const keys = Object.keys(sessionStorage);
+    const cacheKeys = keys.filter(key => key.startsWith(WEEKEND_ROSTER_CACHE_PREFIX));
+    let clearedCount = 0;
+
+    for (const key of cacheKeys) {
+      sessionStorage.removeItem(key);
+      clearedCount++;
+    }
+
+    return clearedCount;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function refreshWeekendRosterCache(sheetName, shift, weekendDateStr, mode) {
+  try {
+    const cacheKey = getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode);
+    sessionStorage.removeItem(cacheKey);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function startWeekendRosterCacheCleanup() {
+  try {
+    // Clean up expired cache entries every 15 minutes
+    setInterval(() => {
+      cleanupWeekendRosterCache();
+    }, 15 * 60 * 1000);
+
+    // Also clean up when the page becomes visible again
+    if (!window._weekendRosterCacheVisHandlerAdded) {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          cleanupWeekendRosterCache();
+        }
+      });
+      window._weekendRosterCacheVisHandlerAdded = true;
+    }
+  } catch (error) {
+    // Handle error silently
+  }
+}
+
+// Initialize cache cleanup on page load
+startWeekendRosterCacheCleanup();
+
 // ================================================================================

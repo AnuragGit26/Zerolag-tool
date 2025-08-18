@@ -6,33 +6,45 @@ let __usageFetchInFlight = false;
 
 
 function getAuthToken(callback) {
+    console.log('getAuthToken called, requesting token...');
     chrome.identity.getAuthToken({ interactive: true }, function (token) {
+        console.log('getAuthToken callback executed, token received:', token ? 'Yes' : 'No');
         if (chrome.runtime.lastError) {
             const msg = chrome.runtime.lastError && chrome.runtime.lastError.message || '';
             console.error('Auth error (first attempt):', msg);
 
+            console.log('Clearing cached auth tokens and retrying...');
             chrome.identity.clearAllCachedAuthTokens(() => {
+                console.log('Cached tokens cleared, requesting new token...');
                 chrome.identity.getAuthToken({ interactive: true }, function (token2) {
                     if (chrome.runtime.lastError) {
                         console.error('Auth error (after cache clear):', chrome.runtime.lastError.message);
                         if (/disabled/i.test(chrome.runtime.lastError.message)) {
                             console.error('Hint: This often means your Google Workspace admin has disabled this service/app or the API is disabled in the OAuth client\'s GCP project. See extension README or ask admin to allow Google Sheets API and this app.');
                         }
+                        console.log('No token available after retry');
                         return;
                     }
+                    console.log('Token received after retry:', token2 ? 'Yes' : 'No');
                     callback(token2);
                 });
             });
             return;
         }
+        console.log('Token received on first attempt, calling callback');
         callback(token);
     });
 }
 
-export function trackAction(dateofAction, caseNumber, severity, actionType, cloud, currentMode, currentUserName, assignedTo = '') {
+export function trackAction(dateofAction, caseNumber, severity, actionType, cloud, currentMode, currentUserName, assignedTo = '', onSuccessCallback = null) {
+    console.log(`trackAction called for case ${caseNumber} with callback: ${onSuccessCallback ? 'Yes' : 'No'}`);
+    console.log('trackAction params:', { dateofAction, caseNumber, severity, actionType, cloud, currentMode, currentUserName, assignedTo });
+
     getAuthToken(function (token) {
+        console.log('getAuthToken callback executed with token:', token ? 'Yes' : 'No');
         if (!token) {
             console.error('No OAuth token available; skipping Sheets update');
+            console.log('No success callback executed due to missing OAuth token');
             return;
         }
 
@@ -74,41 +86,58 @@ export function trackAction(dateofAction, caseNumber, severity, actionType, clou
 
         const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}:append?valueInputOption=USER_ENTERED`;
 
-        const send = (bearer, attempt = 1) => fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Bearer ' + bearer,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(body)
-        }).then(async response => {
-            if (!response.ok) {
-                let errText;
-                try { errText = await response.text(); } catch (e) { errText = String(e); }
-                console.error(`Sheets API error (status ${response.status}):`, errText);
-                if ((response.status === 401 || response.status === 403) && attempt === 1) {
-                    chrome.identity.clearAllCachedAuthTokens(() => {
-                        chrome.identity.getAuthToken({ interactive: true }, function (token3) {
-                            if (chrome.runtime.lastError) {
-                                console.error('Re-auth failed after API error:', chrome.runtime.lastError.message);
-                                return;
-                            }
-                            send(token3, attempt + 1);
+        const send = (bearer, attempt = 1) => {
+            console.log(`Sending request to Google Sheets API for case ${caseNumber}, attempt ${attempt}`);
+            return fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + bearer,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            }).then(async response => {
+                if (!response.ok) {
+                    let errText;
+                    try { errText = await response.text(); } catch (e) { errText = String(e); }
+                    console.error(`Sheets API error (status ${response.status}):`, errText);
+                    console.log('No success callback executed due to API error');
+                    if ((response.status === 401 || response.status === 403) && attempt === 1) {
+                        chrome.identity.clearAllCachedAuthTokens(() => {
+                            chrome.identity.getAuthToken({ interactive: true }, function (token3) {
+                                if (chrome.runtime.lastError) {
+                                    console.error('Re-auth failed after API error:', chrome.runtime.lastError.message);
+                                    return;
+                                }
+                                send(token3, attempt + 1);
+                            });
                         });
-                    });
+                    }
+                    return;
                 }
-                return;
-            }
-            return response.json();
-        })
-            .then(data => {
-                if (data) {
-                    console.log('Sheet updated:', data);
-                }
+                console.log(`Google Sheets API response status: ${response.status}, ok: ${response.ok}`);
+                return response.json();
             })
-            .catch(error => {
-                console.error('Network error updating sheet:', error);
-            });
+                .then(data => {
+                    console.log('Sheet updated:', data);
+                    if (onSuccessCallback && typeof onSuccessCallback === 'function') {
+                        try {
+                            console.log('Executing success callback for case tracking...');
+                            console.log('Success callback function:', onSuccessCallback);
+                            onSuccessCallback();
+                            console.log('Success callback executed successfully');
+                        } catch (callbackError) {
+                            console.error('Error in success callback:', callbackError);
+                            console.error('Callback error stack:', callbackError.stack);
+                        }
+                    } else {
+                        console.log('No success callback provided for case tracking');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error parsing response or executing callback:', error);
+                    console.log('No success callback executed due to response parsing error');
+                });
+        };
 
         send(token);
     });
@@ -138,7 +167,6 @@ export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, l
             const lastActive = lastActiveISO ? new Date(lastActiveISO) : new Date();
             const lastActivePST = lastActive.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
             const lastActiveIST = lastActive.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-            // Required columns: Date, Name, Active Time (Minutes), Last Active Time(PST), Last Active Time(IST), Actioned Cases
             const rowValues = [dateLocalString, normalizedName, totalActiveMinutes, lastActivePST, lastActiveIST, actionedCases];
 
             const doUpdate = (rowNumber) => {
@@ -176,17 +204,16 @@ export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, l
                 }
             };
 
-            // Acquire a short-lived local lock to avoid concurrent writes from multiple popups
+            // Acquire local lock to avoid concurrent writes
             const nowMs = Date.now();
             let existingLock = null;
             try { existingLock = JSON.parse(localStorage.getItem(lockKey) || 'null'); } catch { existingLock = null; }
             if (existingLock && (nowMs - (existingLock.at || 0)) < 15000) {
-                // Another writer recently updated this row; skip this tick
                 return;
             }
             try { localStorage.setItem(lockKey, JSON.stringify({ at: nowMs })); } catch { /* noop */ }
 
-            // Always fetch the latest rows before deciding update vs append to reduce duplicates
+            // Fetch latest rows to decide update vs append
             let rows = await fetchRowsFresh();
             rows = rows && rows.length ? rows : (__usageLogsCache.rows || []);
             let startIndex = 0;
@@ -206,9 +233,8 @@ export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, l
             if (targetRowNumber) {
                 await doUpdate(targetRowNumber);
                 if (__usageLogsCache.rows) __usageLogsCache.rows[targetRowNumber - 1] = rowValues;
-                // Note: We intentionally do not delete duplicates here to avoid needing sheetId; optional cleanup can be done manually.
             } else {
-                // Double-check immediately before append with a tiny randomized backoff to avoid race duplicates
+                // Double-check before append with randomized backoff
                 await new Promise(r => setTimeout(r, Math.floor(100 + Math.random() * 300)));
                 rows = await fetchRowsFresh();
                 startIndex = 0;
@@ -228,7 +254,7 @@ export function logUsageDaily({ dateLocalString, userName, totalActiveMinutes, l
                     if (__usageLogsCache.rows) __usageLogsCache.rows[targetRowNumber - 1] = rowValues;
                 } else {
                     await appendNew();
-                    __usageLogsCache.fetchedAt = 0; // invalidate
+                    __usageLogsCache.fetchedAt = 0;
                 }
             }
 
