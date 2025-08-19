@@ -152,7 +152,7 @@ let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70iXfT-MVfhPs';
 
-const DEV_FORCE_SHOW_WEEKEND_ROSTER = true;
+const DEV_FORCE_SHOW_WEEKEND_ROSTER = false;
 
 // ================================================
 // Section: 4) GHO Caching Keys and Defaults
