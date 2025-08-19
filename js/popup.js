@@ -1,3 +1,25 @@
+// ================================================
+// Popup.js
+// ================================================
+// Table of Contents (comments only, no functional impact)
+//  1) Imports and External Modules
+//  2) Error & Network Interceptors
+//  3) Global State & Config
+//  4) GHO Cache Keys & Defaults
+//  5) Weekend Roster Cache (sessionStorage with TTL)
+//  6) Google Sheets API Helper (with optional cache)
+//  7) GHO User Map Cache (localStorage)
+//  8) Salesforce User Email Cache (localStorage)
+//  9) User Activity Tracking (mouse/keyboard)
+// 10) Identity & Session (cookies, jsforce)
+// 11) DOMContentLoaded Initialization & UI Wiring
+// 12) GHO Modal Logic (queries, cache, rendering)
+// 13) CIC Managers (weekend roster modal)
+// 14) GHO Mapping Modal (view/edit mappings)
+// 15) Misc Helpers & Utilities
+// ================================================
+// Section: 1) Imports and External Modules
+// ================================================
 import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js';
 import { applyFilter, applySearch, updateWeekendModeIndicator } from './utils/dom.js';
 import { trackAction, logUsageDaily } from './utils/api.js';
@@ -8,9 +30,26 @@ import { showToast } from './modules/toast.js';
 import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.js';
 import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
 import { logger } from './utils/logging.js';
+import {
+  googleSheetsGET as _sheetsGET,
+  getCellValueWithoutStrikethrough as _getCellNoStrike,
+  getWeekendRosterCacheKey as _wrGetKey,
+  getWeekendRosterFromCache as _wrGetFromCache,
+  setWeekendRosterCache as _wrSetCache,
+  cleanupWeekendRosterCache as _wrCleanup,
+  getWeekendRosterData as _wrGetData,
+  googleSheetsGETWithCache as _sheetsGETWithCache,
+  getWeekendRosterCacheStats as _wrCacheStats,
+  clearWeekendRosterCache as _wrClearCache,
+  refreshWeekendRosterCache as _wrRefreshCache,
+  startWeekendRosterCacheCleanup as _wrStartCleanup
+} from './utils/sheets.js';
 
 try { logger.setLevel('warn'); logger.installConsoleBeautifier(); } catch { }
 
+// ================================================
+// Section: 2) Error and Network Interceptors (Salesforce IP Access)
+// ================================================
 (() => {
   try {
     const SEEN_KEY = '__ip_access_toast_last_shown_ts';
@@ -101,6 +140,9 @@ try { logger.setLevel('warn'); logger.installConsoleBeautifier(); } catch { }
   } catch { }
 })();
 
+// ================================================
+// Section: 3) Global State and Configuration
+// ================================================
 let SESSION_ID;
 let currentMode = localStorage.getItem('caseTriageMode') || 'signature';
 let currentUserName;
@@ -110,8 +152,11 @@ let ghoConnectionGlobal = null;
 export const SPREADSHEET_ID = '1BKxQLGFrczjhcx9rEt-jXGvlcCPQblwBhFJjoiDD7TI';
 export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70iXfT-MVfhPs';
 
-const DEV_FORCE_SHOW_WEEKEND_ROSTER = false;
+const DEV_FORCE_SHOW_WEEKEND_ROSTER = true;
 
+// ================================================
+// Section: 4) GHO Caching Keys and Defaults
+// ================================================
 const GHO_CACHE_TTL = 600000;
 const GHO_CACHE_STORAGE_KEY = 'gho_cache_v1';
 window.__ghoCache = window.__ghoCache || loadGHOCache();
@@ -129,127 +174,36 @@ const USER_EMAIL_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
 const GHO_MAPPING_STORAGE_KEY = 'gho_transfer_mappings_v1';
 const GHO_MAPPING_CACHE_TTL = 24 * 60 * 60 * 1000;
 
+// ================================================
+// Section: 5) Weekend Roster Cache (sessionStorage with TTL)
+// ================================================
 // Weekend roster caching system with 1-hour TTL
 const WEEKEND_ROSTER_CACHE_TTL = 60 * 60 * 1000;
 const WEEKEND_ROSTER_CACHE_PREFIX = 'weekend_roster_cache_';
 
-function getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode) {
-  return `${WEEKEND_ROSTER_CACHE_PREFIX}${sheetName}_${shift}_${weekendDateStr}_${mode}`;
-}
+function getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode) { return _wrGetKey(WEEKEND_ROSTER_CACHE_PREFIX, sheetName, shift, weekendDateStr, mode); }
 
-function getWeekendRosterFromCache(cacheKey) {
-  try {
-    const cached = sessionStorage.getItem(cacheKey);
-    if (!cached) return null;
+function getWeekendRosterFromCache(cacheKey) { return _wrGetFromCache(WEEKEND_ROSTER_CACHE_TTL, cacheKey); }
 
-    const parsed = JSON.parse(cached);
-    const now = Date.now();
+function setWeekendRosterCache(cacheKey, data) { try { _wrSetCache(cacheKey, data, WEEKEND_ROSTER_CACHE_TTL); } catch { } }
 
-    // Check if cache is expired
-    if (!parsed.timestamp || (now - parsed.timestamp) > WEEKEND_ROSTER_CACHE_TTL) {
-      sessionStorage.removeItem(cacheKey);
-      return null;
-    }
-
-    return parsed.data;
-  } catch (error) {
-    console.warn('Failed to parse weekend roster cache:', error);
-    sessionStorage.removeItem(cacheKey);
-    return null;
-  }
-}
-
-function setWeekendRosterCache(cacheKey, data) {
-  try {
-    const cacheEntry = {
-      data: data,
-      timestamp: Date.now(),
-      ttl: WEEKEND_ROSTER_CACHE_TTL
-    };
-    sessionStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-  } catch (error) {
-    console.warn('Failed to set weekend roster cache:', error);
-    // If session storage is full, try to clean up old entries
-    cleanupWeekendRosterCache();
-    try {
-      sessionStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-    } catch (retryError) {
-      console.warn('Failed to set weekend roster cache after cleanup:', retryError);
-    }
-  }
-}
-
-function cleanupWeekendRosterCache() {
-  try {
-    const keys = Object.keys(sessionStorage);
-    const now = Date.now();
-    let cleanedCount = 0;
-
-    for (const key of keys) {
-      if (key.startsWith(WEEKEND_ROSTER_CACHE_PREFIX)) {
-        try {
-          const cached = JSON.parse(sessionStorage.getItem(key));
-          if (!cached.timestamp || (now - cached.timestamp) > WEEKEND_ROSTER_CACHE_TTL) {
-            sessionStorage.removeItem(key);
-            cleanedCount++;
-          }
-        } catch {
-          // Remove invalid cache entries
-          sessionStorage.removeItem(key);
-          cleanedCount++;
-        }
-      }
-    }
-
-    if (cleanedCount > 0) {
-      // Cache cleanup completed
-    }
-  } catch (error) {
-    console.warn('Failed to cleanup weekend roster cache:', error);
-  }
-}
+function cleanupWeekendRosterCache() { try { _wrCleanup(WEEKEND_ROSTER_CACHE_PREFIX, WEEKEND_ROSTER_CACHE_TTL); } catch { } }
 
 function getWeekendRosterData(sheetName, shift, weekendDateStr, mode, callback, onError) {
-  const cacheKey = getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode);
-
-  // Try to get from cache first
-  const cachedData = getWeekendRosterFromCache(cacheKey);
-  if (cachedData) {
-    // Cache hit
-    callback(cachedData);
-    return;
-  }
-
-
-  // Cache miss - fetch from API
-  const range = `'${sheetName}'!A:X`;
-  googleSheetsGET(range, (resp) => {
-    try {
-      // Cache the successful response
-      setWeekendRosterCache(cacheKey, resp);
-      callback(resp);
-    } catch (error) {
-      console.error('Failed to process weekend roster data:', error);
-      onError && onError(error);
-    }
-  }, (error) => {
-    console.error('Failed to fetch weekend roster data:', error);
-    onError && onError(error);
-  });
+  return _wrGetData(sheetName, shift, weekendDateStr, mode, WEEKEND_ROSTER_SPREADSHEET_ID, WEEKEND_ROSTER_CACHE_PREFIX, WEEKEND_ROSTER_CACHE_TTL, callback, onError);
 }
 
+// ================================================
+// Section: 6) Google Sheets API Helper (with optional weekend roster cache)
+// ================================================
 // Enhanced googleSheetsGET with weekend roster caching
 function googleSheetsGETWithCache(rangeA1, callback, onError, options = {}) {
-  const { useCache = false, sheetName, shift, weekendDateStr, mode } = options;
-
-  if (useCache && sheetName && shift && weekendDateStr && mode) {
-    getWeekendRosterData(sheetName, shift, weekendDateStr, mode, callback, onError);
-    return;
-  }
-
-  googleSheetsGET(rangeA1, callback, onError);
+  return _sheetsGETWithCache(rangeA1, callback, onError, { ...options, spreadsheetId: WEEKEND_ROSTER_SPREADSHEET_ID, prefix: WEEKEND_ROSTER_CACHE_PREFIX, ttlMs: WEEKEND_ROSTER_CACHE_TTL });
 }
 
+// ================================================
+// Section: 7) GHO User Map Cache (localStorage)
+// ================================================
 function loadUserMapCache() {
   try {
     const raw = localStorage.getItem(GHO_USERMAP_CACHE_KEY);
@@ -270,6 +224,9 @@ function saveUserMapCache(userMap) {
   } catch { }
 }
 
+// ================================================
+// Section: 8) Salesforce User Email Cache (localStorage)
+// ================================================
 function loadUserEmailCache() {
   try {
     const raw = localStorage.getItem(USER_EMAIL_CACHE_KEY);
@@ -284,6 +241,9 @@ function saveUserEmailCache(map) {
   try { localStorage.setItem(USER_EMAIL_CACHE_KEY, JSON.stringify({ map: map || {}, fetchedAt: Date.now() })); } catch { }
 }
 
+// ================================================
+// Section: GHO Data Cache (per-mode signature/premier)
+// ================================================
 // GHO Cache Functions
 function loadGHOCache() {
   try {
@@ -575,6 +535,9 @@ function resetMouseActivityTimer() {
   }, MOUSE_ACTIVITY_TIMEOUT);
 }
 
+// ================================================
+// Section: 9) User Activity Tracking (mouse/keyboard)
+// ================================================
 function initMouseActivityTracking() {
   const events = ['mousemove', 'mousedown', 'mouseup', 'click', 'scroll', 'keydown', 'keyup'];
 
@@ -957,6 +920,9 @@ function trackActionAndCount(dateofAction, caseNumber, severity, actionType, clo
 
 
 
+// ================================================
+// Section: 10) Identity & Session (cookies, jsforce)
+// ================================================
 function getSessionIds() {
   getCookies("https://orgcs.my.salesforce.com", "sid", function (cookie) {
     SESSION_ID = cookie.value;
@@ -2254,6 +2220,9 @@ function showKeyboardShortcutsHelp() {
   });
 }
 
+// ================================================
+// Section: 11) DOMContentLoaded Initialization & UI Wiring
+// ================================================
 document.addEventListener("DOMContentLoaded", function () {
   ensureSingleTab();
   updateWeekendModeIndicator();
@@ -2886,73 +2855,13 @@ function getCurrentShiftIST() {
   return 'AMER';
 }
 
-function googleSheetsGET(rangeA1, callback, onError) {
-  chrome.identity.getAuthToken({ interactive: true }, function (token) {
-    if (chrome.runtime.lastError || !token) {
-      console.error('Auth token error:', chrome.runtime.lastError);
-      onError && onError(new Error('Auth token error'));
-      return;
-    }
-    fetch(`https://sheets.googleapis.com/v4/spreadsheets/${WEEKEND_ROSTER_SPREADSHEET_ID}/values/${encodeURIComponent(rangeA1)}?majorDimension=ROWS`, {
-      headers: { 'Authorization': 'Bearer ' + token }
-    }).then(r => r.json()).then(data => {
-      if (data.error) throw new Error(data.error.message || 'Sheets error');
-      callback && callback(data);
-    }).catch(err => {
-      console.error('Sheets read failed:', err);
-      onError && onError(err);
-    });
-  });
-}
+function googleSheetsGET(rangeA1, callback, onError) { return _sheetsGET(rangeA1, callback, onError, WEEKEND_ROSTER_SPREADSHEET_ID); }
 
-async function getCellValueWithoutStrikethrough(sheetName, rowIndexZero, colLetter) {
-  return new Promise((resolve, reject) => {
-    try {
-      const a1 = `${colLetter}${rowIndexZero + 1}`;
-      chrome.identity.getAuthToken({ interactive: true }, function (token) {
-        if (chrome.runtime.lastError || !token) {
-          return reject(new Error('Auth token error'));
-        }
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${WEEKEND_ROSTER_SPREADSHEET_ID}?includeGridData=true&ranges=${encodeURIComponent(`${sheetName}!${a1}`)}`;
-        fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
-          .then(r => r.json())
-          .then(j => {
-            try {
-              const sheets = j.sheets || [];
-              for (const sh of sheets) {
-                const data = (sh.data || []);
-                for (const block of data) {
-                  const rows = block.rowData || [];
-                  for (const row of rows) {
-                    const vals = row.values || [];
-                    for (const v of vals) {
-                      const text = (v.formattedValue) || (v.effectiveValue && v.effectiveValue.stringValue) || '';
-                      const runs = v.textFormatRuns || [];
-                      if (!runs || runs.length === 0) return resolve(String(text || ''));
-                      const ordered = runs.slice().sort((a, b) => (a.startIndex || 0) - (b.startIndex || 0));
-                      let out = '';
-                      for (let i = 0; i < ordered.length; i++) {
-                        const start = ordered[i].startIndex || 0;
-                        const end = (i + 1 < ordered.length) ? (ordered[i + 1].startIndex || text.length) : text.length;
-                        const seg = text.substring(start, end);
-                        const fmt = ordered[i].format || {};
-                        if (fmt.strikethrough) continue;
-                        out += seg;
-                      }
-                      return resolve(out.trim());
-                    }
-                  }
-                }
-              }
-              resolve('');
-            } catch (e) { reject(e); }
-          })
-          .catch(err => reject(err));
-      });
-    } catch (e) { reject(e); }
-  });
-}
+async function getCellValueWithoutStrikethrough(sheetName, rowIndexZero, colLetter) { return _getCellNoStrike(sheetName, rowIndexZero, colLetter, WEEKEND_ROSTER_SPREADSHEET_ID); }
 
+// ================================================
+// Section: 13) CIC Managers (weekend roster modal)
+// ================================================
 function showCICManagers() {
   const shift = getCurrentShiftIST();
   const weekendDateStr = getWeekendLookupDateForShift(shift);
@@ -4150,6 +4059,9 @@ function updateDetailedCacheInfo() {
   }
 }
 
+// ================================================
+// Section: 12) GHO Modal Logic (queries, cache, rendering)
+// ================================================
 function checkGHOStatus(forceRefresh = false) {
   const modal = document.getElementById('gho-modal');
   const container = document.getElementById('gho-cases-container');
@@ -5354,6 +5266,9 @@ function getMappingSource(caseRecord, userMap) {
   }
 }
 
+// ================================================
+// Section: 14) GHO Mapping Modal (view/edit mappings)
+// ================================================
 function showGHOMappingModal() {
   const modal = document.getElementById('gho-mapping-modal');
   if (!modal) return;
@@ -5985,91 +5900,13 @@ function startPendingLiveUpdater() {
 // ================= Weekend Roster Cache Management =================
 
 // Cache management functions (production version - no debug output)
-function getWeekendRosterCacheStats() {
-  try {
-    const keys = Object.keys(sessionStorage);
-    const cacheKeys = keys.filter(key => key.startsWith(WEEKEND_ROSTER_CACHE_PREFIX));
-    const now = Date.now();
-    let totalEntries = 0;
-    let expiredEntries = 0;
-    let validEntries = 0;
-    let totalSize = 0;
+function getWeekendRosterCacheStats() { return _wrCacheStats(WEEKEND_ROSTER_CACHE_PREFIX, WEEKEND_ROSTER_CACHE_TTL); }
 
-    for (const key of cacheKeys) {
-      try {
-        const cached = JSON.parse(sessionStorage.getItem(key));
-        totalEntries++;
-        totalSize += JSON.stringify(cached).length;
+function clearWeekendRosterCache() { return _wrClearCache(WEEKEND_ROSTER_CACHE_PREFIX); }
 
-        if (!cached.timestamp || (now - cached.timestamp) > WEEKEND_ROSTER_CACHE_TTL) {
-          expiredEntries++;
-        } else {
-          validEntries++;
-        }
-      } catch {
-        totalEntries++;
-      }
-    }
+function refreshWeekendRosterCache(sheetName, shift, weekendDateStr, mode) { return _wrRefreshCache(WEEKEND_ROSTER_CACHE_PREFIX, sheetName, shift, weekendDateStr, mode); }
 
-    return {
-      totalEntries,
-      validEntries,
-      expiredEntries,
-      totalSizeBytes: totalSize,
-      cacheTTLHours: WEEKEND_ROSTER_CACHE_TTL / (1000 * 60 * 60)
-    };
-  } catch (error) {
-    return null;
-  }
-}
-
-function clearWeekendRosterCache() {
-  try {
-    const keys = Object.keys(sessionStorage);
-    const cacheKeys = keys.filter(key => key.startsWith(WEEKEND_ROSTER_CACHE_PREFIX));
-    let clearedCount = 0;
-
-    for (const key of cacheKeys) {
-      sessionStorage.removeItem(key);
-      clearedCount++;
-    }
-
-    return clearedCount;
-  } catch (error) {
-    return 0;
-  }
-}
-
-function refreshWeekendRosterCache(sheetName, shift, weekendDateStr, mode) {
-  try {
-    const cacheKey = getWeekendRosterCacheKey(sheetName, shift, weekendDateStr, mode);
-    sessionStorage.removeItem(cacheKey);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-function startWeekendRosterCacheCleanup() {
-  try {
-    // Clean up expired cache entries every 15 minutes
-    setInterval(() => {
-      cleanupWeekendRosterCache();
-    }, 15 * 60 * 1000);
-
-    // Also clean up when the page becomes visible again
-    if (!window._weekendRosterCacheVisHandlerAdded) {
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          cleanupWeekendRosterCache();
-        }
-      });
-      window._weekendRosterCacheVisHandlerAdded = true;
-    }
-  } catch (error) {
-    // Handle error silently
-  }
-}
+function startWeekendRosterCacheCleanup() { try { _wrStartCleanup(WEEKEND_ROSTER_CACHE_PREFIX, WEEKEND_ROSTER_CACHE_TTL); } catch { } }
 
 // Initialize cache cleanup on page load
 startWeekendRosterCacheCleanup();

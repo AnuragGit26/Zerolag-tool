@@ -503,7 +503,7 @@ class NewCaseProcessingQueue {
 		try {
 			// Check if case has already been tracked to prevent duplicates using sessionStorage logic
 			const trackingKey = `tracked_${caseRecord.Id}`;
-			const isTracked = this.checkIfTracked(trackingKey);
+			const isTracked = await checkIfTracked(trackingKey);
 			if (isTracked) {
 				this.stats.processed++;
 				this.stats.successful++;
