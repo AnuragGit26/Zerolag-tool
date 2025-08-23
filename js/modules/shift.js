@@ -34,6 +34,7 @@ export function getCurrentShift() {
 export function getPreferredShiftValues(currentShift) {
     if (currentShift === 'APAC') return ['APAC', 'IST'];
     if (currentShift === 'EMEA') return ['EMEA', 'IST'];
+    if (currentShift === 'AMER') return ['AMER', 'AMER-PST', 'AMER-EST'];
     return [currentShift];
 }
 
