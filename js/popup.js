@@ -4467,10 +4467,10 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
   let filteredRecords = ghoRecords;
   if (filterValue !== 'All') {
     const aliases = {
-      'Data': ['data cloud', 'data'],
-      'Sales': ['sales'],
-      'Service': ['service'],
-      'Industry': ['industry']
+      'Data': ['data', 'data cloud'],
+      'Sales': ['sales', 'sales cloud'],
+      'Service': ['service', 'service cloud'],
+      'Industry': ['industry', 'industry cloud']
     };
     const selected = filterValue; // Keep original case
     const targets = aliases[selected] || [selected.toLowerCase()];
