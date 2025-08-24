@@ -161,12 +161,13 @@ if (typeof console === 'undefined') {
 	};
 }
 
-// Minimize background noise in production: silence log/debug/trace while keeping warnings/errors
+// Minimize background noise in production: silence log/info/debug/trace while keeping warnings/errors
 try {
 	if (typeof console !== 'undefined') {
 		const __warn = console.warn && console.warn.bind(console);
 		const __error = console.error && console.error.bind(console);
 		console.log = () => { };
+		console.info = () => { };
 		console.debug = () => { };
 		console.trace = () => { };
 		// Keep warn/error intact

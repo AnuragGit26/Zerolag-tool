@@ -29,6 +29,14 @@ import { initPremierCounters, resetPremierCountersAll, parseRosterNames, renderP
 import { showToast } from './modules/toast.js';
 import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.js';
 import { attachGhoPreviewTemplateCopy } from './modules/gho.js';
+import {
+  showManualTrackModal as _showManualTrackModal,
+  trackNewCaseFromHistory as _trackNewCaseFromHistory,
+  detectAssignmentsForCases as _detectAssignmentsForCases,
+  forceProcessCase as _forceProcessCase,
+  forceProcessCaseById as _forceProcessCaseById,
+  forceProcess as _forceProcess
+} from './modules/manual.js';
 import { logger } from './utils/logging.js';
 import {
   googleSheetsGET as _sheetsGET,
@@ -1004,8 +1012,13 @@ function getCaseDetails() {
             if (result.records.length === 0) {
               const noCasesHtml = `
               <div class="no-cases-message">
+                <div class="no-cases-icon">✅</div>
                 <h4 class="no-cases-title">No Cases to Action</h4>
                 <p class="no-cases-text">All cases are up to date. Great work!</p>
+                <div class="no-cases-chips">
+                  <span class="pill">Mode: ${currentMode === 'premier' ? 'Premier' : 'Signature'}</span>
+                  <span class="pill">Shift: ${getCurrentShift()}</span>
+                </div>
                 <p class="mode-switch-hint">💡 Meanwhile you can switch between Signature and Premier modes to see different case types.</p>
               </div>
             `;
@@ -1655,16 +1668,26 @@ function getCaseDetails() {
                 } else if (totalCasesCount > 0 && displayedCaseCount === 0) {
                   noCasesHtml = `
                     <div class="no-cases-message">
+                      <div class="no-cases-icon">🧭</div>
                       <h4 class="no-cases-title">No Cases for Now</h4>
                       <p class="no-cases-text">All ${totalCasesCount} case${totalCasesCount === 1 ? ' is' : 's are'} assigned or handled. Check back later!</p>
+                      <div class="no-cases-chips">
+                        <span class="pill">Mode: ${currentMode === 'premier' ? 'Premier' : 'Signature'}</span>
+                        <span class="pill">Shift: ${getCurrentShift()}</span>
+                      </div>
                       <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
                     </div>
                   `;
                 } else {
                   noCasesHtml = `
                     <div class="no-cases-message">
+                      <div class="no-cases-icon">✅</div>
                       <h4 class="no-cases-title">No Cases to Action</h4>
                       <p class="no-cases-text">All cases are up to date. Great work!</p>
+                      <div class="no-cases-chips">
+                        <span class="pill">Mode: ${currentMode === 'premier' ? 'Premier' : 'Signature'}</span>
+                        <span class="pill">Shift: ${getCurrentShift()}</span>
+                      </div>
                       <p class="mode-switch-hint">💡 Try switching between Signature and Premier modes to see different case types.</p>
                     </div>
                   `;
@@ -2332,170 +2355,16 @@ document.addEventListener('keydown', function (e) {
     }
   }
 });
-// Manual Track Case modal logic
+// Manual Track Case modal logic (delegates to modules/manual.js)
 async function showManualTrackModal() {
   try {
-    const modal = document.getElementById('manual-track-modal');
-    const input = document.getElementById('manual-track-input');
-    const fetchBtn = document.getElementById('manual-track-fetch');
-    const loading = document.getElementById('manual-track-loading');
-    const details = document.getElementById('manual-track-details');
-    const confirmBtn = document.getElementById('manual-track-confirm');
-    const cancelBtn = document.getElementById('manual-track-cancel');
-    const closeX = document.getElementById('manual-track-close');
-
-    if (!modal || !input || !fetchBtn || !loading || !details || !confirmBtn || !cancelBtn || !closeX) return;
-
-    const resetView = () => {
-      loading.style.display = 'none';
-      details.style.display = 'none';
-      details.innerHTML = '';
-      confirmBtn.disabled = true;
+    const ctx = {
+      getSessionId: () => SESSION_ID,
+      getCurrentMode: () => currentMode,
+      getCurrentUserName: () => currentUserName,
+      trackActionAndCount: (d, n, s, a, c, m, u, asg) => trackActionAndCount(d, n, s, a, c, m, u, asg)
     };
-
-    resetView();
-    input.value = '';
-    modal.style.display = 'flex';
-    setTimeout(() => modal.classList.add('modal-show'), 0);
-    setTimeout(() => input.focus(), 80);
-
-    const closeModal = () => { modal.classList.remove('modal-show'); setTimeout(() => modal.style.display = 'none', 150); };
-    cancelBtn.onclick = closeModal; closeX.onclick = closeModal; modal.onclick = (e) => { if (e.target === modal) closeModal(); };
-
-    const doFetch = async () => {
-      const num = (input.value || '').trim();
-      if (!num) { showToast('Enter a Case Number'); return; }
-      if (!window.jsforce || !SESSION_ID) { showToast('Session not ready'); return; }
-      try {
-        loading.style.display = 'block';
-        details.style.display = 'none';
-        const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID, version: '64.0' });
-        const q = `SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE CaseNumber='${num}' LIMIT 1`;
-        const res = await conn.query(q);
-        loading.style.display = 'none';
-        if (!res.records || !res.records.length) { details.style.display = 'block'; details.innerHTML = '<div style="color:#b91c1c;">Case not found</div>'; confirmBtn.disabled = true; return; }
-        const c = res.records[0];
-        const cloud = (c.CaseRoutingTaxonomy__r && c.CaseRoutingTaxonomy__r.Name) ? c.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
-        // Determine assignedTo for tracking:
-        // If Routing_Status__c changed to 'Transferred', use Owner->NewValue from nearest subsequent Owner change
-        let assignedToForConfirm = 'QB';
-        try {
-          const hres = await conn.query(`SELECT Field, NewValue, CreatedDate FROM CaseHistory WHERE CaseId='${c.Id}' ORDER BY CreatedDate ASC LIMIT 100`);
-          const recs = (hres && hres.records) ? hres.records : [];
-          let ownerVal = '';
-          for (let i = 0; i < recs.length; i++) {
-            const h = recs[i];
-            const newValLower = String(h.NewValue || '').toLowerCase();
-            if (h.Field === 'Routing_Status__c' && (newValLower.includes('transferred') || newValLower.includes('manually assigned'))) {
-              for (let j = i + 1; j < recs.length; j++) {
-                const oh = recs[j];
-                if (oh.Field === 'Owner' && oh.NewValue) { ownerVal = String(oh.NewValue); break; }
-              }
-              break;
-            }
-          }
-          if (ownerVal) {
-            const isUserId = /^005[\w]{12,15}$/.test(ownerVal);
-            const isGroupId = /^00G[\w]{12,15}$/.test(ownerVal);
-            if (isUserId) {
-              try {
-                const u = await conn.query(`SELECT Name FROM User WHERE Id='${ownerVal}' LIMIT 1`);
-                assignedToForConfirm = (u && u.records && u.records.length) ? (u.records[0].Name || ownerVal) : ownerVal;
-              } catch { assignedToForConfirm = ownerVal; }
-            } else if (isGroupId) {
-              try {
-                const g = await conn.query(`SELECT Name FROM Group WHERE Id='${ownerVal}' LIMIT 1`);
-                assignedToForConfirm = (g && g.records && g.records.length) ? (g.records[0].Name || ownerVal) : ownerVal;
-              } catch { assignedToForConfirm = ownerVal; }
-            } else {
-              assignedToForConfirm = ownerVal;
-            }
-          } else if (recs.some(h => h.Field === 'Routing_Status__c' && (String(h.NewValue || '').toLowerCase().includes('transferred') || String(h.NewValue || '').toLowerCase().includes('manually assigned')))) {
-            assignedToForConfirm = (c.Owner && c.Owner.Name) ? c.Owner.Name : 'Case Owner';
-          }
-        } catch { }
-
-        // Determine ActionType for tracking: GHO if routing logs show reason 'GHO'
-        let actionTypeForConfirm = 'New Case';
-        try {
-          const r = await conn.query(`SELECT Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c='${c.Id}' AND CreatedById='${userId}' ORDER BY CreatedDate DESC LIMIT 20`);
-          const recs = (r && r.records) ? r.records : [];
-          if (recs.some(rr => String(rr.Transfer_Reason__c || '').toUpperCase() === 'GHO')) actionTypeForConfirm = 'GHO';
-        } catch { }
-        details.innerHTML = `
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-            <div><strong>Case</strong>: ${c.CaseNumber}</div>
-            <div><strong>Severity</strong>: ${c.Severity_Level__c || '-'}</div>
-            <div style="grid-column: 1 / -1;"><strong>Subject</strong>: ${String(c.Subject || '').replace(/</g, '&lt;')}</div>
-            <div><strong>Owner</strong>: ${c.Owner && c.Owner.Name ? c.Owner.Name : '-'}</div>
-            <div><strong>Cloud</strong>: ${cloud || '-'}</div>
-          </div>
-          <div id="manual-track-activity" style="margin-top:12px; padding-top:10px; border-top:1px solid #e5e7eb;">
-            <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Your recent actions</div>
-            <div id="manual-track-activity-body" style="display:flex; flex-direction:column; gap:6px;">Loading...</div>
-          </div>`;
-        details.style.display = 'block';
-        confirmBtn.disabled = false;
-
-        confirmBtn.onclick = async () => {
-          try {
-            trackActionAndCount(new Date(), c.CaseNumber, c.Severity_Level__c || '', actionTypeForConfirm, cloud || '', currentMode, currentUserName, assignedToForConfirm);
-            showToast(`Tracked New Case for ${c.CaseNumber}`);
-            closeModal();
-          } catch (err) {
-            console.warn('Manual confirm track failed:', err);
-            showToast('Failed to track');
-          }
-        };
-
-        // Load CaseFeed and CaseHistory entries you created (GHOTriage/QBMention and Owner/Status changes)
-        (async () => {
-          try {
-            let userId = null;
-            try {
-              const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
-              if (ures && ures.records && ures.records.length) userId = ures.records[0].Id;
-            } catch { }
-            const bodyEl = document.getElementById('manual-track-activity-body');
-            if (!bodyEl) return;
-            if (!userId) { bodyEl.textContent = 'Could not resolve your user id.'; return; }
-
-            const [feedRes, histRes] = await Promise.all([
-              conn.query(`SELECT Body, CreatedDate FROM CaseFeed WHERE Visibility='InternalUsers' AND ParentId='${c.Id}' AND Type='TextPost' AND CreatedById='${userId}' ORDER BY CreatedDate DESC LIMIT 20`),
-              conn.query(`SELECT Field, NewValue, CreatedDate FROM CaseHistory WHERE CaseId='${c.Id}' AND CreatedById='${userId}' AND (Field='Routing_Status__c' OR Field='Owner') ORDER BY CreatedDate DESC LIMIT 20`)
-            ]);
-            const items = [];
-            (feedRes.records || []).forEach(cm => {
-              const body = String(cm.Body || ''); const low = body.toLowerCase();
-              if (low.includes('#ghotriage') || low.includes('#sigqbmention')) items.push({ t: 'comment', when: cm.CreatedDate, text: body });
-            });
-            (histRes.records || []).forEach(h => {
-              const f = h.Field; const val = (typeof h.NewValue === 'string') ? h.NewValue : (h.NewValue && h.NewValue.name) ? h.NewValue.name : '';
-              items.push({ t: 'history', when: h.CreatedDate, text: `${f}: ${val}` });
-            });
-            items.sort((a, b) => new Date(b.when) - new Date(a.when));
-            if (!items.length) { bodyEl.textContent = 'No recent comments or history by you.'; return; }
-            bodyEl.innerHTML = items.slice(0, 10).map(it => {
-              const when = new Date(it.when).toLocaleString();
-              const badge = it.t === 'comment' ? '<span class="badge-soft badge-soft--info" style="margin-right:6px;">Comment</span>' : '<span class="badge-soft" style="background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; margin-right:6px;">History</span>';
-              const safe = String(it.text || '').replace(/</g, '&lt;');
-              return `<div style="font-size:12px; color:#334155;">${badge}<span style="color:#0f172a; font-weight:600;">${when}</span> — ${safe}</div>`;
-            }).join('');
-          } catch (e) {
-            const bodyEl = document.getElementById('manual-track-activity-body');
-            if (bodyEl) bodyEl.textContent = 'Failed to load your recent actions.';
-          }
-        })();
-      } catch (e) {
-        loading.style.display = 'none';
-        details.style.display = 'block';
-        details.innerHTML = `<div style="color:#b91c1c;">${String(e.message || e).replace(/</g, '&lt;')}</div>`;
-        confirmBtn.disabled = true;
-      }
-    };
-
-    fetchBtn.onclick = doFetch;
-    input.onkeypress = (e) => { if (e.key === 'Enter') doFetch(); };
+    await _showManualTrackModal(ctx);
   } catch (e) { console.warn('showManualTrackModal failed', e); }
 }
 
@@ -2545,18 +2414,12 @@ function showKeyboardShortcutsHelp() {
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Premier Mode</span>
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + P</kbd>
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
-              <span style="font-weight: 600; color: #111827; font-size: 15px;">Clear All Filters</span>
-              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + A</kbd>
-            </div>
+            
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Clear Snoozed Cases</span>
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + S</kbd>
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
-              <span style="font-weight: 600; color: #111827; font-size: 15px;">Track Case (toggle / submit)</span>
-              <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">⌘ + L</kbd>
-            </div>
+            
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
               <span style="font-weight: 600; color: #111827; font-size: 15px;">Close Modals</span>
               <kbd style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #374151; border: 1px solid #d1d5db;">ESC</kbd>
@@ -2841,10 +2704,9 @@ document.addEventListener("DOMContentLoaded", function () {
     // Manual Track modal open
     const openManualBtn = document.getElementById('open-manual-track-modal');
     if (openManualBtn) {
-      openManualBtn.addEventListener('click', () => {
-        moreDropdown.style.display = 'none';
-        showManualTrackModal();
-      });
+      // Disable manual tracking UI
+      openManualBtn.style.display = 'none';
+      openManualBtn.replaceWith(openManualBtn.cloneNode(true));
     }
 
     // Populate user header initially
@@ -2885,6 +2747,15 @@ document.addEventListener("DOMContentLoaded", function () {
       console.log('GHO connection available:', !!ghoConnectionGlobal);
       console.log('Current mode:', currentMode);
 
+      // Prefer fast DOM-level filtering if items are already rendered
+      const listEl = document.getElementById('gho-items');
+      if (listEl && listEl.children && listEl.children.length > 0) {
+        try {
+          const ok = domFilterGHOCases(filterValue);
+          if (ok) return;
+        } catch (e) { console.warn('DOM filter failed, falling back to re-render', e); }
+      }
+
       if (ghoRecordsGlobal.length > 0 && ghoConnectionGlobal) {
         // Reset pagination state on filter change
         window.__ghoListState = null;
@@ -2917,6 +2788,45 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   } else {
     console.warn('GHO filter dropdown not found');
+  }
+  // DOM-level filter for already rendered GHO items
+  function domFilterGHOCases(filterValue) {
+    try {
+      const listEl = document.getElementById('gho-items');
+      if (!listEl) return false;
+      const wantAll = (filterValue === 'All');
+      const key = String(filterValue || '').toLowerCase();
+      listEl.querySelectorAll('.gho-case-card').forEach(el => {
+        if (wantAll) {
+          el.style.display = '';
+        } else {
+          const group = (el.getAttribute('data-taxonomy-group') || '').toLowerCase();
+          el.style.display = group === key ? '' : 'none';
+        }
+      });
+      updateGHOSummaryUI(filterValue);
+      return true;
+    } catch (e) {
+      console.warn('domFilterGHOCases failed', e);
+      return false;
+    }
+  }
+
+  function updateGHOSummaryUI(filterValue) {
+    try {
+      const container = document.getElementById('gho-cases-container');
+      if (!container) return;
+      const titleEl = container.querySelector('.gho-summary-title');
+      const subtitleEl = container.querySelector('.gho-summary-subtitle');
+      const totalEl = container.querySelector('.gho-summary-stats .gho-stat-item .gho-stat-number');
+      const items = Array.from(document.querySelectorAll('#gho-items .gho-case-card'));
+      const visibleCount = items.filter(el => el.style.display !== 'none').length;
+      const currentShift = getCurrentShift();
+      const label = (filterValue === 'All') ? '' : (filterValue + ' ');
+      if (titleEl) titleEl.textContent = `${visibleCount} ${label}GHO Case${visibleCount === 1 ? '' : 's'} Found`;
+      if (subtitleEl) subtitleEl.innerHTML = `Cases matching ${filterValue === 'All' ? 'GHO criteria' : filterValue + ' taxonomy'} for <strong>${currentShift}</strong> shift`;
+      if (totalEl) totalEl.textContent = String(visibleCount);
+    } catch (e) { console.warn('updateGHOSummaryUI failed', e); }
   }
 
 
@@ -4511,7 +4421,7 @@ function checkGHOStatus(forceRefresh = false) {
   const preferredShiftValues = getPreferredShiftValues(currentShiftLive);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-  const signatureGHOQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND (Case_Support_level__c IN ('Premier Priority','Signature','Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const signatureGHOQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE (((Owner.Name LIKE '%Skills Queue' OR Owner.Name IN ('Kase Changer', 'Working in Org62','GHO Queue')) AND (Case_Support_level__c IN ('Premier Priority','Signature','Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
   const premierGHOQuery = `SELECT Case__c, Transfer_Reason__c, Case__r.Case_Support_level__c, Case__r.IsClosed, Case__r.Account_Support_SBR_Category__c, Case__r.Severity_Level__c, Case__r.OrgCS_Owner__c, Case__r.Contact.Is_MVP__c, Case__r.GHO__c, Case__r.Out_of_Impact_Service_Restored__c, Case__r.AX_Product_Name__c, Case__r.CaseRoutingTaxonomy__r.Name FROM Case_Routing_Log__c WHERE Transfer_Reason__c = 'GHO' AND Case__r.Case_Support_level__c In ('Partner Premier', 'Premier', 'Premier+', 'Premium','Standard','') AND Case__r.IsClosed = false AND Case__r.Account_Support_SBR_Category__c != 'JP' AND Case__r.Severity_Level__c IN ('Level 1 - Critical' ,'Level 2 - Urgent') AND Case__r.OrgCS_Owner__c LIKE '%Queue%' AND Case__r.Contact.Is_MVP__c = false AND Case__r.GHO__c = true AND Case__r.Out_of_Impact_Service_Restored__c = false AND (Case__r.AX_Product_Name__c = 'Sales' OR Case__r.AX_Product_Name__c = 'Service'  OR Case__r.AX_Product_Name__c = 'Industry' ) AND Case__r.CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce','Service-Agent for setup','Service-AgentforEmail','Service-Field Service Agentforce','Service-Agentforce for Dev','Sales-Agentforce','Sales -Agentforce for Dev','Sales-Agent for Setup','Sales-Prompt Builder','Data Cloud-Admin','Permissions','Flows','Reports & Dashboards','Data Cloud-Model Builder','Data Cloud-Connectors & Data Streams','Data Cloud-Developer','Calculated Insights & Consumption','Data Cloud-Segments','Activations & Identity Resolution')`;
   const ghoQuery = currentMode === 'premier' ? premierGHOQuery : signatureGHOQuery;
 
@@ -4837,38 +4747,26 @@ function renderFilteredGHOCases(ghoRecords, conn, filterValue = 'All', pre = {})
   // Filter records based on CaseRoutingTaxonomy__r.Name
   let filteredRecords = ghoRecords;
   if (filterValue !== 'All') {
-    const aliases = {
-      'Data': ['data', 'data cloud'],
-      'Sales': ['sales', 'sales cloud'],
-      'Service': ['service', 'service cloud'],
-      'Industry': ['industry', 'industry cloud']
-    };
-    const selected = filterValue; // Keep original case
-    const targets = aliases[selected] || [selected.toLowerCase()];
-
-    console.log(`Filtering with value: "${filterValue}", targets: ${targets}`);
-
+    const want = String(filterValue).toLowerCase();
     filteredRecords = ghoRecords.filter(record => {
-      // Both modes should have CaseRoutingTaxonomy__r.Name after hydration
-      const taxonomyName = record.CaseRoutingTaxonomy__r?.Name || '';
-      const rawName = taxonomyName.toLowerCase().trim();
-
-      if (!rawName) {
-        console.log('No taxonomy name found for record:', record.Id, record);
-        return false;
-      }
-
-      const group = rawName.split(/[\-–—]/)[0].trim();
-      const matches = targets.includes(group);
-
-      if (filterValue !== 'All') {
-        console.log(`Filtering record ${record.Id}: taxonomy="${taxonomyName}", group="${group}", targets="${targets}", matches=${matches}`);
-      }
-
-      return matches;
+      const group = (function () {
+        const primary = record.CaseRoutingTaxonomy__r?.Name;
+        const nestedPremierName = record.Case__r?.CaseRoutingTaxonomy__r?.Name;
+        const axProduct = record.AX_Product_Name__c;
+        const groupFrom = (s) => {
+          const x = String(s || '').toLowerCase().trim();
+          if (!x) return '';
+          if (/^sales(\b|[\-–—])/.test(x) || /^sales\s+cloud(\b|[\-–—])/.test(x)) return 'sales';
+          if (/^service(\b|[\-–—])/.test(x) || /^service\s+cloud(\b|[\-–—])/.test(x)) return 'service';
+          if (/^industry(\b|[\-–—])/.test(x) || /^industry\s+cloud(\b|[\-–—])/.test(x)) return 'industry';
+          if (/^data(\b|[\-–—])/.test(x) || /^data\s+cloud(\b|[\-–—])/.test(x)) return 'data';
+          return '';
+        };
+        return groupFrom(primary) || groupFrom(nestedPremierName) || groupFrom(axProduct) || '';
+      })();
+      return group === want;
     });
-
-    console.log(`Filtered ${ghoRecords.length} records to ${filteredRecords.length} records`);
+    console.log(`Filtering with value: "${filterValue}" => kept ${filteredRecords.length}/${ghoRecords.length}`);
   }
 
   if (filteredRecords.length === 0) {
@@ -5197,6 +5095,7 @@ function renderGHOCasesWithCommentInfo(filteredRecords, conn, currentShift, filt
     `;
 
     container.innerHTML = headerHtml;
+    // No post-tagging needed; each card carries its normalized group attribute
 
     // Initialize list state for lazy loading
     window.__ghoListState = {
@@ -5291,11 +5190,19 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
     ).sort((a, b) => new Date(b.CreatedDate) - new Date(a.CreatedDate));
 
     if (allGhoTransfers.length > 0) {
+      const matchesCurrentShiftOld = (value) => {
+        if (!value) return false;
+        const oldVal = String(value).toUpperCase();
+        const curr = String(currentShift || '').toUpperCase();
+        if (curr === 'AMER') return oldVal.startsWith('AMER'); // AMER%
+        return oldVal === curr;
+      };
+
       const currentShiftTransfers = allGhoTransfers.filter(transfer =>
-        transfer.Preferred_Shift_Old_Value__c === currentShift
+        matchesCurrentShiftOld(transfer.Preferred_Shift_Old_Value__c)
       );
       const otherTransfers = allGhoTransfers.filter(transfer =>
-        transfer.Preferred_Shift_Old_Value__c !== currentShift
+        !matchesCurrentShiftOld(transfer.Preferred_Shift_Old_Value__c)
       );
 
       const caseUniqueId = `gho-${caseRecord.Id}`;
@@ -5399,8 +5306,25 @@ function renderSingleGhoCaseHTML(caseRecord, userMap, ghoTriageCommentCases, cur
   }
 
 
+  // Compute single taxonomy group for DOM-level filtering
+  const domGroup = (() => {
+    const primary = caseRecord.CaseRoutingTaxonomy__r && caseRecord.CaseRoutingTaxonomy__r.Name;
+    const nested = caseRecord.Case__r && caseRecord.Case__r.CaseRoutingTaxonomy__r && caseRecord.Case__r.CaseRoutingTaxonomy__r.Name;
+    const ax = caseRecord.AX_Product_Name__c;
+    const groupFrom = (s) => {
+      const x = String(s || '').toLowerCase().trim();
+      if (!x) return '';
+      if (/^sales(\b|[\-–—])/.test(x) || /^sales\s+cloud(\b|[\-–—])/.test(x)) return 'sales';
+      if (/^service(\b|[\-–—])/.test(x) || /^service\s+cloud(\b|[\-–—])/.test(x)) return 'service';
+      if (/^industry(\b|[\-–—])/.test(x) || /^industry\s+cloud(\b|[\-–—])/.test(x)) return 'industry';
+      if (/^data(\b|[\-–—])/.test(x) || /^data\s+cloud(\b|[\-–—])/.test(x)) return 'data';
+      return '';
+    };
+    return groupFrom(primary) || groupFrom(nested) || groupFrom(ax) || '';
+  })();
+
   return `
-    <div class="case-card gho-case-card ${isMVP ? 'mvp-case card-accent-purple' : ''}" data-case-id="${caseId}" style="margin-bottom:16px;">
+    <div class="case-card gho-case-card ${isMVP ? 'mvp-case card-accent-purple' : ''}" data-case-id="${caseId}" data-taxonomy-group="${domGroup}" style="margin-bottom:16px;">
       <div class="gho-card-header">
         <div class="gho-card-header-main">
           <div class="gho-card-badges">
@@ -5815,367 +5739,43 @@ function updateMappingButtonCount() {
 
 // Helper Fn: process CaseHistory and track 'New Case'
 
-async function trackNewCaseFromHistory(conn, params) {
-  const { caseIds, currentUserId, currentUserName, currentMode, strategy, removeFromPersistent } = params || {};
-  try {
-    if (!Array.isArray(caseIds) || caseIds.length === 0) return { processed: [] };
-
-    // Fetch required case details including Owner
-    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, CaseRoutingTaxonomy__r.Name, Owner.Name FROM Case WHERE Id IN ('${caseIds.join("','")}')`);
-    const caseMap = new Map((caseRes.records || []).map(r => [r.Id, r]));
-
-    const orderDir = strategy === 'firstManualByUser' ? 'ASC' : 'DESC';
-    const histRes = await conn.query(`SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND CreatedById='${currentUserId}' AND (Field='Routing_Status__c' OR Field='Owner') ORDER BY CreatedDate ${orderDir}`);
-    const records = histRes.records || [];
-
-    // Group by CaseId
-    const byCase = new Map();
-    for (const h of records) {
-      if (!byCase.has(h.CaseId)) byCase.set(h.CaseId, []);
-      byCase.get(h.CaseId).push(h);
-    }
-
-    const processed = [];
-    for (const caseId of caseIds) {
-      const hist = byCase.get(caseId) || [];
-      // Choose candidate per strategy
-      let candidate = null;
-      for (const h of hist) {
-        const isManualAssign = (h.Field === 'Routing_Status__c' && typeof h.NewValue === 'string' && h.NewValue.startsWith('Manually Assigned'));
-        const isOwnerChange = (h.Field === 'Owner');
-        if (strategy === 'firstManualByUser') {
-          if (isManualAssign && h.CreatedById === currentUserId) { candidate = h; break; }
-        } else {
-          if ((isManualAssign || isOwnerChange) && h.CreatedById === currentUserId) { candidate = h; break; }
-        }
-      }
-      if (!candidate) continue;
-
-      const cRec = caseMap.get(caseId);
-      if (!cRec) continue;
-
-      const trackingKey = `tracked_${currentMode}_assignment_${caseId}`;
-      if (localStorage.getItem(trackingKey)) continue;
-
-      const cloud = (cRec.CaseRoutingTaxonomy__r && cRec.CaseRoutingTaxonomy__r.Name) ? cRec.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
-      // Prefer latest Owner change with a human-readable name over IDs
-      const isSfUserId = (v) => typeof v === 'string' && /^005[\w]{12,15}$/.test(v);
-      const scanArr = strategy === 'firstManualByUser' ? hist.slice().reverse() : hist;
-      let ownerNameFromHist = '';
-      for (const oh of scanArr) {
-        if (oh.Field === 'Owner' && oh.NewValue && !isSfUserId(oh.NewValue)) { ownerNameFromHist = oh.NewValue; break; }
-      }
-      const assignedTo = ownerNameFromHist || ((cRec.Owner && cRec.Owner.Name) ? cRec.Owner.Name : (candidate.NewValue || ''));
-
-      trackActionAndCount(
-        candidate.CreatedDate,
-        cRec.CaseNumber,
-        cRec.Severity_Level__c,
-        'New Case',
-        cloud,
-        currentMode,
-        currentUserName,
-        assignedTo
-      );
-      localStorage.setItem(trackingKey, 'true');
-
-      if (removeFromPersistent) {
-        try { chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId }, () => { }); } catch { }
-      }
-
-      processed.push({ caseId, action: 'New Case (history)', assignedTo });
-    }
-    return { processed };
-  } catch (e) {
-    console.warn('trackNewCaseFromHistory failed:', e);
-    return { processed: [], error: e.message };
-  }
-}
+const trackNewCaseFromHistory = _trackNewCaseFromHistory;
 
 // Detect if cases have been assigned by ANY user (no tracking/logging)
-async function detectAssignmentsForCases(conn, params) {
-  const { caseIds } = params || {};
-  try {
-    if (!Array.isArray(caseIds) || caseIds.length === 0) return { processed: [] };
-
-    // Pull Case info for context/state checks
-    const caseRes = await conn.query(`SELECT Id, CaseNumber, Owner.Name, Status, IsClosed FROM Case WHERE Id IN ('${caseIds.join("','")}')`);
-    const caseMap = new Map((caseRes.records || []).map(r => [r.Id, r]));
-
-    // Look for either routing status manual assignment OR owner changes by anyone in recent history (last 24h window)
-    const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const histRes = await conn.query(`SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId IN ('${caseIds.join("','")}') AND CreatedDate >= ${sinceIso} AND (Field='Routing_Status__c' OR Field='Owner') ORDER BY CreatedDate DESC`);
-    const records = histRes.records || [];
-    const byCase = new Map();
-    for (const h of records) {
-      if (!byCase.has(h.CaseId)) byCase.set(h.CaseId, []);
-      byCase.get(h.CaseId).push(h);
-    }
-
-    const processed = [];
-    for (const caseId of caseIds) {
-      const hist = byCase.get(caseId) || [];
-      let assigned = false;
-      let reason = '';
-
-      // Check current state first (cheap & definitive)
-      const cRec = caseMap.get(caseId);
-      if (cRec) {
-        const ownerName = (cRec.Owner && cRec.Owner.Name) ? String(cRec.Owner.Name) : '';
-        const isQueueOwner = /Queue/i.test(ownerName) || ['Kase Changer', 'Working in Org62', 'Data Cloud Queue'].some(q => ownerName.includes(q));
-        if (cRec.IsClosed === true) { assigned = true; reason = 'closed'; }
-        else if (cRec.Status && cRec.Status !== 'New') { assigned = true; reason = 'status-changed'; }
-        else if (!isQueueOwner && ownerName) { assigned = true; reason = 'owner-human'; }
-      }
-
-      // If still not decided, look at recent history changes by anyone
-      for (const h of hist) {
-        const isManualAssign = (h.Field === 'Routing_Status__c' && typeof h.NewValue === 'string' && h.NewValue.startsWith('Manually Assigned'));
-        const isOwnerChange = (h.Field === 'Owner');
-        if (isManualAssign || isOwnerChange) { assigned = true; reason = isManualAssign ? 'history-manual' : 'history-owner'; break; }
-      }
-      if (assigned) {
-        processed.push({ caseId, action: 'assignment-detected', reason, owner: (cRec && cRec.Owner && cRec.Owner.Name) || '' });
-      }
-    }
-    return { processed };
-  } catch (e) {
-    console.warn('detectAssignmentsForCases failed:', e);
-    return { processed: [], error: e.message };
-  }
-}
+const detectAssignmentsForCases = _detectAssignmentsForCases;
 
 // Force-process a single case by Case Number: checks manual assignments, QB mentions, and GHO triage
 async function forceProcessCase(caseNumber) {
-  try {
-    if (!caseNumber || typeof caseNumber !== 'string') {
-      showToast('Provide a valid Case Number');
-      return { success: false, message: 'Invalid Case Number' };
-    }
-    if (!SESSION_ID) {
-      showToast('Session not ready. Try again after data loads.');
-      return { success: false, message: 'Missing SESSION_ID' };
-    }
-
-    const conn = new jsforce.Connection({
-      serverUrl: 'https://orgcs.my.salesforce.com',
-      sessionId: SESSION_ID,
-    });
-
-    // Resolve current user id
-    let userId = null;
-    try {
-      const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
-      if (ures.records && ures.records.length > 0) userId = ures.records[0].Id;
-    } catch (e) {
-      console.warn('Failed fetching user id:', e);
-    }
-    if (!userId) {
-      showToast('Could not resolve current user');
-      return { success: false, message: 'Missing user id' };
-    }
-
-    // Fetch the case by number
-    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE CaseNumber='${caseNumber}' LIMIT 5`);
-    if (!caseRes.records || caseRes.records.length === 0) {
-      showToast(`Case ${caseNumber} not found`);
-      return { success: false, message: 'Case not found' };
-    }
-    const caseRec = caseRes.records[0];
-    const caseId = caseRec.Id;
-
-    const cloud = (caseRec.CaseRoutingTaxonomy__r && caseRec.CaseRoutingTaxonomy__r.Name) ? caseRec.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
-
-    let actions = [];
-
-    // History-based tracking via helper
-    try {
-      const res = await trackNewCaseFromHistory(conn, {
-        caseIds: [caseId],
-        currentUserId: userId,
-        currentUserName,
-        currentMode,
-        strategy: 'latestByUser',
-        removeFromPersistent: false
-      });
-      if (res && res.processed && res.processed.length > 0) actions.push('New Case (history)');
-    } catch (e) { console.warn('History helper failed in forceProcessCase:', e); }
-
-    // Check CaseFeed comments for #SigQBmention and #GHOTriage
-    try {
-      const cRes = await conn.query(`SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility='InternalUsers' AND ParentId='${caseId}' AND Type='TextPost' ORDER BY CreatedDate DESC LIMIT 20`);
-      const comments = cRes.records || [];
-      for (const c of comments) {
-        if (c.Body && c.Body.includes('#SigQBmention') && c.CreatedById === userId) {
-          const trackingKey = `tracked_${caseId}`;
-          if (!localStorage.getItem(trackingKey)) {
-            trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
-            localStorage.setItem(trackingKey, 'true');
-            actions.push('New Case (QB mention)');
-          }
-          break;
-        }
-      }
-      // GHO triage (only if signature mode makes sense, but keep generic)
-      for (const c of comments) {
-        if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === userId) {
-          const commentDate = c.LastModifiedDate || c.CreatedDate;
-          if (isToday(commentDate) && getShiftForDate(commentDate) === getCurrentShift()) {
-            const ghoKey = `gho_tracked_${caseId}`;
-            if (!localStorage.getItem(ghoKey)) {
-              trackActionAndCount(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
-              localStorage.setItem(ghoKey, 'true');
-              actions.push('GHO (#GHOTriage)');
-            }
-          }
-          break;
-        }
-      }
-    } catch (e) {
-      console.warn('Comments query failed in forceProcessCase:', e);
-    }
-
-    // Optionally, remove from persistent set if present
-    try {
-      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId }, () => { });
-    } catch { }
-
-    if (actions.length === 0) {
-      showToast(`No actions tracked for ${caseNumber}`);
-      return { success: true, message: 'No actions', caseId, actions };
-    } else {
-      showToast(`Processed ${actions.length} action(s) for ${caseNumber}`);
-      return { success: true, message: 'Processed', caseId, actions };
-    }
-  } catch (e) {
-    console.error('forceProcessCase failed:', e);
-    showToast('Force process failed (see console)');
-    return { success: false, message: e.message };
-  }
+  const ctx = {
+    getSessionId: () => SESSION_ID,
+    getCurrentMode: () => currentMode,
+    getCurrentUserName: () => currentUserName,
+    trackActionAndCount: (d, n, s, a, c, m, u, asg) => trackActionAndCount(d, n, s, a, c, m, u, asg)
+  };
+  return _forceProcessCase(ctx, caseNumber);
 }
 window.forceProcessCase = forceProcessCase;
 
 // Force-process by Case Id (15/18-char, typically starts with 500)
 async function forceProcessCaseById(caseId) {
-  try {
-    if (!caseId || typeof caseId !== 'string') {
-      showToast('Provide a valid Case Id');
-      return { success: false, message: 'Invalid Case Id' };
-    }
-    if (!SESSION_ID) {
-      showToast('Session not ready. Try again after data loads.');
-      return { success: false, message: 'Missing SESSION_ID' };
-    }
-
-    const conn = new jsforce.Connection({
-      serverUrl: 'https://orgcs.my.salesforce.com',
-      sessionId: SESSION_ID,
-    });
-
-    let userId = null;
-    try {
-      const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
-      if (ures.records && ures.records.length > 0) userId = ures.records[0].Id;
-    } catch (e) {
-      console.warn('Failed fetching user id:', e);
-    }
-    if (!userId) {
-      showToast('Could not resolve current user');
-      return { success: false, message: 'Missing user id' };
-    }
-
-    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE Id='${caseId}' LIMIT 5`);
-    if (!caseRes.records || caseRes.records.length === 0) {
-      showToast(`Case ${caseId} not found`);
-      return { success: false, message: 'Case not found' };
-    }
-    const caseRec = caseRes.records[0];
-    const cloud = (caseRec.CaseRoutingTaxonomy__r && caseRec.CaseRoutingTaxonomy__r.Name) ? caseRec.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
-
-    let actions = [];
-
-    // History-based tracking via helper
-    try {
-      const res = await trackNewCaseFromHistory(conn, {
-        caseIds: [caseRec.Id],
-        currentUserId: userId,
-        currentUserName,
-        currentMode,
-        strategy: 'latestByUser',
-        removeFromPersistent: false
-      });
-      if (res && res.processed && res.processed.length > 0) actions.push('New Case (history)');
-    } catch (e) { console.warn('History helper failed in forceProcessCaseById:', e); }
-
-    // Comments-based tracking
-    try {
-      const cRes = await conn.query(`SELECT ParentId, Body, CreatedById, LastModifiedDate, CreatedDate FROM CaseFeed WHERE Visibility='InternalUsers' AND ParentId='${caseRec.Id}' AND Type='TextPost' ORDER BY CreatedDate DESC LIMIT 20`);
-      const comments = cRes.records || [];
-      for (const c of comments) {
-        if (c.Body && c.Body.includes('#SigQBmention') && c.CreatedById === userId) {
-          const trackingKey = `tracked_${caseRec.Id}`;
-          if (!localStorage.getItem(trackingKey)) {
-            trackActionAndCount(c.LastModifiedDate || c.CreatedDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'New Case', cloud, currentMode, currentUserName, 'QB');
-            localStorage.setItem(trackingKey, 'true');
-            actions.push('New Case (QB mention)');
-          }
-          break;
-        }
-      }
-      for (const c of comments) {
-        if (c.Body && c.Body.includes('#GHOTriage') && c.CreatedById === userId) {
-          const commentDate = c.LastModifiedDate || c.CreatedDate;
-          if (isToday(commentDate) && getShiftForDate(commentDate) === getCurrentShift()) {
-            const ghoKey = `gho_tracked_${caseRec.Id}`;
-            if (!localStorage.getItem(ghoKey)) {
-              trackActionAndCount(commentDate, caseRec.CaseNumber, caseRec.Severity_Level__c, 'GHO', cloud, currentMode, currentUserName, 'QB');
-              localStorage.setItem(ghoKey, 'true');
-              actions.push('GHO (#GHOTriage)');
-            }
-          }
-          break;
-        }
-      }
-    } catch (e) {
-      console.warn('Comments query failed in forceProcessCaseById:', e);
-    }
-
-    try {
-      chrome.runtime.sendMessage({ action: 'removeCaseFromPersistentSet', caseId: caseRec.Id }, () => { });
-    } catch { }
-
-    if (actions.length === 0) {
-      showToast(`No actions tracked for ${caseRec.CaseNumber}`);
-      return { success: true, message: 'No actions', caseId: caseRec.Id, actions };
-    } else {
-      showToast(`Processed ${actions.length} action(s) for ${caseRec.CaseNumber}`);
-      return { success: true, message: 'Processed', caseId: caseRec.Id, actions };
-    }
-  } catch (e) {
-    console.error('forceProcessCaseById failed:', e);
-    showToast('Force process by Id failed (see console)');
-    return { success: false, message: e.message };
-  }
+  const ctx = {
+    getSessionId: () => SESSION_ID,
+    getCurrentMode: () => currentMode,
+    getCurrentUserName: () => currentUserName,
+    trackActionAndCount: (d, n, s, a, c, m, u, asg) => trackActionAndCount(d, n, s, a, c, m, u, asg)
+  };
+  return _forceProcessCaseById(ctx, caseId);
 }
 window.forceProcessCaseById = forceProcessCaseById;
 
 async function forceProcess(input) {
-  const s = String(input || '').trim();
-  if (!s) {
-    showToast('Provide a Case Number, Id, or URL');
-    return { success: false, message: 'No input' };
-  }
-  // Try to extract a Case Id from URL or raw Id
-  let idMatch = null;
-  const m1 = s.match(/Case\/([a-zA-Z0-9]{15,18})/);
-  const m2 = s.match(/(500[\w]{12,15})/);
-  if (m1 && m1[1]) idMatch = m1[1];
-  else if (m2 && m2[1]) idMatch = m2[1];
-
-  if (idMatch) {
-    return await forceProcessCaseById(idMatch);
-  }
-  return await forceProcessCase(s);
+  const ctx = {
+    getSessionId: () => SESSION_ID,
+    getCurrentMode: () => currentMode,
+    getCurrentUserName: () => currentUserName,
+    trackActionAndCount: (d, n, s, a, c, m, u, asg) => trackActionAndCount(d, n, s, a, c, m, u, asg)
+  };
+  return _forceProcess(ctx, input);
 }
 window.forceProcess = forceProcess;
 window.fp = forceProcessCase;
