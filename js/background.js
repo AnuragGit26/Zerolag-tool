@@ -239,6 +239,7 @@ async function processCasesInBackground(cases, connectionInfo, currentMode, curr
 		const conn = new jsforce.Connection({
 			serverUrl: connectionInfo.serverUrl,
 			sessionId: connectionInfo.sessionId,
+			version: '64.0',
 		});
 
 		// Query 1: Get CaseFeed records for TrackedChange type for the current user based on mode
@@ -529,7 +530,7 @@ class NewCaseProcessingQueue {
 				let routingLogReason = '';
 
 				try {
-					const routingLogQuery = `SELECT Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c = '${caseRecord.Id}' ORDER BY CreatedDate DESC LIMIT 1`;
+					const routingLogQuery = `SELECT Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c = '${caseRecord.Id}' ORDER BY CreatedDate DESC LIMIT 20`;
 					let routingLogResult = await this.connection.query(routingLogQuery);
 
 					if (typeof routingLogResult === 'string') {
@@ -562,7 +563,7 @@ class NewCaseProcessingQueue {
 						caseDetail.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
 
 					// Get assignedTo value from CaseHistory
-					const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId = '${caseRecord.Id}' AND CreatedById = '${this.userId}' AND (Field = 'Routing_Status__c' OR Field = 'Owner') ORDER BY CreatedDate ASC LIMIT 10`;
+					const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId = '${caseRecord.Id}' AND CreatedById = '${this.userId}' AND (Field = 'Routing_Status__c' OR Field = 'Owner') ORDER BY CreatedDate ASC LIMIT 20`;
 					let historyResult = await this.connection.query(historyQuery);
 
 					if (typeof historyResult === 'string') {
@@ -730,7 +731,7 @@ class NewCaseProcessingQueue {
 						// Determine action type from routing logs
 						let actionType = 'New Case';
 						try {
-							const routingLogQuery = `SELECT Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c = '${caseRecord.Id}' ORDER BY CreatedDate DESC LIMIT 1`;
+							const routingLogQuery = `SELECT Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c = '${caseRecord.Id}' ORDER BY CreatedDate DESC LIMIT 20`;
 							let routingLogResult = await this.connection.query(routingLogQuery);
 
 							if (typeof routingLogResult === 'string') {
@@ -750,7 +751,7 @@ class NewCaseProcessingQueue {
 						// Get action date from CaseHistory
 						let actionDate = caseRecord.CreatedDate;
 						try {
-							const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId = '${caseRecord.Id}' AND CreatedById = '${this.userId}' AND (Field = 'Routing_Status__c' OR Field = 'Owner') ORDER BY CreatedDate ASC LIMIT 10`;
+							const historyQuery = `SELECT CaseId, CreatedById, CreatedDate, Field, NewValue FROM CaseHistory WHERE CaseId = '${caseRecord.Id}' AND CreatedById = '${this.userId}' AND (Field = 'Routing_Status__c' OR Field = 'Owner') ORDER BY CreatedDate ASC LIMIT 20`;
 							let historyResult = await this.connection.query(historyQuery);
 
 							if (typeof historyResult === 'string') {
@@ -2158,6 +2159,7 @@ async function continuousCaseFeedProcessing(connectionInfo, currentMode, current
 		const conn = new jsforce.Connection({
 			serverUrl: connectionInfo.serverUrl,
 			sessionId: connectionInfo.sessionId,
+			version: '64.0',
 		});
 
 		// Skip connection verification for now to avoid the URL normalization error

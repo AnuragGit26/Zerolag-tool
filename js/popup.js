@@ -356,7 +356,7 @@ function getEmailsByNames(names) {
         pairs.forEach(p => { const k = p.cleaned.toLowerCase(); const em = cache[k]; if (em) { out[k] = em; out[p.original.toLowerCase()] = em; } });
         return resolve(out);
       }
-      const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID });
+      const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID, version: '64.0' });
       const CHUNK = 70;
       let idx = 0; const merged = { ...cache };
       const runNext = () => {
@@ -950,6 +950,7 @@ function getCaseDetails() {
   let conn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
+    version: '64.0',
   });
   conn.identity(function (err, res) {
     if (err) {
@@ -968,6 +969,8 @@ function getCaseDetails() {
       return console.error('error---' + err);
     } else {
       currentUserName = res.display_name;
+      // Update 3-dots menu header now that we have the user
+      try { updateMoreMenuUserHeader(); } catch { }
       try {
         ensureUserUsageBucket(currentUserName);
         lastActivityTs = Date.now();
@@ -987,9 +990,8 @@ function getCaseDetails() {
           // Resume continuous processing when user becomes active
           resumeContinuousProcessing(currentUserId, currentUserName, currentMode);
         }
-        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 2) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
-        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 2) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND (Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium')) AND (IsClosed = false) AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND (Account_Support_SBR_Category__c != 'JP') AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical'))) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND CreatedDate = TODAY ORDER BY CreatedDate DESC";
-
+        let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c,Back_To_Queue__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 20) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
+        let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, Back_To_Queue__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 20) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND ((Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium') AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical')))) OR (Case_Support_level__c = 'Standard' AND Initial_Case_Severity__c = 'Level 1 - Critical')) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND (IsClosed = false) AND (CreatedDate = TODAY) ORDER BY CreatedDate DESC";
         let query = currentMode === 'premier' ? premierQuery : signatureQuery;
 
         return conn.query(query,
@@ -1250,18 +1252,18 @@ function getCaseDetails() {
                     }
 
                     if (actionedCaseIds.has(caseId)) {
-                      localStorage.setItem(caseId, 'true');
+                      sessionStorage.setItem(caseId, 'true');
                     }
 
                     const routingLogs = caseRecord.Case_Routing_Logs__r;
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c === 'GEO Locate' && caseRecord.SE_Initial_Response_Status__c === 'Met') {
-                        localStorage.setItem(caseId, 'true');
+                        sessionStorage.setItem(caseId, 'true');
                       }
                     }
 
-                    const isActionTaken = localStorage.getItem(caseId) === 'true';
+                    const isActionTaken = (sessionStorage.getItem(caseId) || localStorage.getItem(caseId)) === 'true';
                     const caseData = {
                       number: caseRecord.CaseNumber,
                       severity: caseRecord.Severity_Level__c,
@@ -1377,26 +1379,43 @@ function getCaseDetails() {
                   }
 
                   if (actionedCaseIds.has(caseId)) {
-                    localStorage.setItem(caseId, 'true');
+                    sessionStorage.setItem(caseId, 'true');
                   }
 
                   const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
                   if (routingLogs && routingLogs.totalSize > 0) {
                     const lastLog = routingLogs.records[0];
                     if (lastLog.Transfer_Reason__c === 'GEO Locate' || lastLog.Transfer_Reason__c === 'Dispatched' && filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
-                      localStorage.setItem(caseId, 'true');
+                      sessionStorage.setItem(caseId, 'true');
                       // Auto-actioned case due to GEO Locate routing with Met SLA
+                    }
+                    // Track manual action for customer calls when case is sent back to queue
+                    if (lastLog.Back_To_Queue__c === true) {
+                      const tr = lastLog.Transfer_Reason__c;
+                      if (tr === 'New' || tr === 'Chat/Voice') {
+                        try {
+                          trackActionAndCount(
+                            lastLog.CreatedDate,
+                            filteredRecords[x].CaseNumber,
+                            filteredRecords[x].Severity_Level__c,
+                            'Customer Call',
+                            filteredRecords[x].CaseRoutingTaxonomy__r.Name.split('-')[0],
+                            currentMode,
+                            currentUserName,
+                            caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0] + ' Skills Queue'
+                          );
+                        } catch (e) { console.warn('Customer Call tracking failed', e); }
+                      }
                     }
                   }
 
                   const isSLAM = filteredRecords[x].CaseRoutingTaxonomy__r.Name === 'Sales-Issues Developing for Salesforce Functions (Product)';
                   if (isSLAM && filteredRecords[x].support_available_timezone__c === '(GMT+09:00) Japan Standard Time (Asia/Tokyo)') {
-                    localStorage.setItem(caseId, 'true');
+                    sessionStorage.setItem(caseId, 'true');
                     // Auto-actioned SLAM case due to Japan timezone
                   }
 
                   // Processing case
-
                   const meetsAlertCriteria = (filteredRecords[x].CaseRoutingTaxonomy__r.Name == 'Sales-Issues Developing for Salesforce Functions (Product)') ||
                     (today >= addMinutes(minSev1, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 1 - Critical') ||
                     (today >= addMinutes(minSev2, new Date(filteredRecords[x].CreatedDate)) && filteredRecords[x].Severity_Level__c == 'Level 2 - Urgent') ||
@@ -1412,7 +1431,7 @@ function getCaseDetails() {
                     } else if (snoozeUntil) {
                       localStorage.removeItem('snooze_' + caseId);
                     }
-                    const isActionTaken = localStorage.getItem(caseId) === 'true';
+                    const isActionTaken = (sessionStorage.getItem(caseId) || localStorage.getItem(caseId)) === 'true';
                     const caseData = {
                       number: filteredRecords[x].CaseNumber,
                       severity: filteredRecords[x].Severity_Level__c,
@@ -1733,7 +1752,7 @@ function checkGHOAlert() {
   const preferredShiftValues = getPreferredShiftValues(region);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const ghoQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 20) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND ((Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success') OR (Case_Support_level__c='Signature' OR Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
 
   if (!SESSION_ID) {
     console.error('SESSION_ID not available for GHO alert');
@@ -1743,6 +1762,7 @@ function checkGHOAlert() {
   let ghoConn = new jsforce.Connection({
     serverUrl: 'https://orgcs.my.salesforce.com',
     sessionId: SESSION_ID,
+    version: '64.0',
   });
 
   ghoConn.query(ghoQuery, function (err, result) {
@@ -2004,6 +2024,197 @@ function updateCICButtonVisibility() {
   }
 }
 
+// Update the 3-dots menu user header (name + dummy avatar)
+function updateMoreMenuUserHeader() {
+  try {
+    const nameEl = document.getElementById('more-menu-name');
+    const avatarEl = document.getElementById('more-menu-avatar');
+    if (!nameEl || !avatarEl) return;
+    const nm = currentUserName || 'User';
+    nameEl.textContent = nm;
+    const initial = (nm || 'U').trim().charAt(0).toUpperCase();
+    avatarEl.textContent = initial || 'U';
+  } catch { }
+}
+
+// ================================================
+// Voice Calls Modal and Tracking
+// ================================================
+async function showVoiceCallModal() {
+  try {
+    const modal = document.getElementById('voicecall-modal');
+    const loading = document.getElementById('voicecall-loading');
+    const container = document.getElementById('voicecall-container');
+    const tbody = document.getElementById('voicecall-tbody');
+    const trackBtn = document.getElementById('voicecall-track-btn');
+    const selectAll = document.getElementById('voicecall-select-all');
+
+    if (!modal || !loading || !container || !tbody || !trackBtn || !selectAll) return;
+
+    // Reset state
+    tbody.innerHTML = '';
+    selectAll.checked = false;
+    trackBtn.disabled = true;
+    container.style.display = 'none';
+    loading.style.display = 'block';
+
+    // Show modal
+    modal.style.display = 'flex';
+    setTimeout(() => modal.classList.add('modal-show'), 0);
+
+    if (!window.jsforce || !SESSION_ID) {
+      loading.innerHTML = '<p style="color:#b91c1c;">Unable to query Salesforce: missing session. Please sign in.</p>';
+      return;
+    }
+
+    // Resolve current user Id
+    const conn = new jsforce.Connection({
+      serverUrl: 'https://orgcs.my.salesforce.com',
+      sessionId: SESSION_ID,
+      version: '64.0',
+    });
+    let userId = null;
+    try {
+      const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
+      if (ures && ures.records && ures.records.length) userId = ures.records[0].Id;
+    } catch (e) {
+    }
+
+    const daysInputEl = document.getElementById('voicecall-days-input');
+    let days = 2;
+    try {
+      const parsed = parseInt(daysInputEl && daysInputEl.value ? daysInputEl.value : '2', 10);
+      if (!isNaN(parsed) && parsed >= 1 && parsed <= 30) days = parsed;
+    } catch { }
+    const soql = `SELECT Account__c, CallDurationInSeconds, Case__c, Contact__c, Contact_Is_DC__c, CreatedById, CreatedDate, DisconnectReason, FromPhoneNumber, Id, Name, OwnerId, QueueName, RecipientId, Related_Issue__c, ToPhoneNumber, UserId,Voice_Issue_Summary__c, Voice_Resolution_Summary__c, Voice_Summary__c FROM VoiceCall WHERE OwnerId = '${userId}' AND QueueName='CS Signature Hotline' AND CreatedDate=LAST_N_DAYS:${days} ORDER BY CreatedDate DESC`;
+
+    let result;
+    try {
+      result = await conn.query(soql);
+    } catch (e) {
+      loading.innerHTML = `<p style="color:#b91c1c;">Query failed: ${e.message}</p>`;
+      return;
+    }
+
+    const records = (result && result.records) ? result.records : [];
+    if (!records.length) {
+      loading.innerHTML = '<p style="color:#374151;">No recent Voice Calls found.</p>';
+      return;
+    }
+
+    // Resolve Case Id -> CaseNumber for better display
+    const caseNumMap = {};
+    try {
+      const caseIds = Array.from(new Set(records.map(r => r.Case__c).filter(id => id && typeof id === 'string' && id.startsWith('500'))));
+      const CHUNK = 100;
+      for (let i = 0; i < caseIds.length; i += CHUNK) {
+        const slice = caseIds.slice(i, i + CHUNK);
+        const cres = await conn.query(`SELECT Id, CaseNumber FROM Case WHERE Id IN ('${slice.join("','")}')`);
+        (cres.records || []).forEach(c => { if (c && c.Id) caseNumMap[c.Id] = c.CaseNumber; });
+      }
+    } catch { }
+
+    // Render rows
+    const fmt = (d) => {
+      try { return new Date(d).toLocaleString(); } catch { return d; }
+    };
+    const dur = (s) => {
+      const n = parseInt(s || 0, 10);
+      const m = Math.floor(n / 60); const r = n % 60; return `${m}m ${r}s`;
+    };
+    records.forEach((r) => {
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid #e5e7eb';
+      const caseDisplay = r.Case__c ? (caseNumMap[r.Case__c] || r.Case__c) : '';
+      tr.innerHTML = `
+        <td style="padding:8px; text-align:center;"><input type="checkbox" class="voicecall-row-select" data-case="${r.Case__c || ''}" data-created="${r.CreatedDate || ''}"></td>
+        <td>${fmt(r.CreatedDate)}</td>
+        <td>${r.FromPhoneNumber || ''}</td>
+        <td>${r.ToPhoneNumber || ''}</td>
+        <td>${dur(r.CallDurationInSeconds)}</td>
+        <td>${caseDisplay}</td>
+        <td>${r.QueueName || ''}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Enable UI
+    loading.style.display = 'none';
+    container.style.display = 'block';
+
+    // Selection logic
+    const updateTrackBtn = () => {
+      const any = !!document.querySelector('.voicecall-row-select:checked');
+      trackBtn.disabled = !any;
+    };
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.voicecall-row-select').forEach(cb => cb.checked = selectAll.checked);
+      updateTrackBtn();
+    });
+    tbody.addEventListener('change', (e) => {
+      if (e.target && e.target.classList.contains('voicecall-row-select')) updateTrackBtn();
+    });
+
+    // Re-run query on Apply
+    const applyBtn = document.getElementById('voicecall-days-apply');
+    if (applyBtn) {
+      applyBtn.onclick = () => {
+        // simple reload of modal for new filter
+        showVoiceCallModal();
+      };
+    }
+
+    // Track selected calls
+    trackBtn.onclick = async () => {
+      try {
+        const selected = Array.from(document.querySelectorAll('.voicecall-row-select:checked'));
+        if (!selected.length) return;
+        for (const cb of selected) {
+          const caseIdOrNumber = cb.getAttribute('data-case') || '';
+          const created = cb.getAttribute('data-created');
+
+          // If we have a Case Number, use it; if it's an Id, try to resolve number quickly
+          let caseNumber = caseIdOrNumber;
+          let severity = '';
+          let cloud = '';
+          try {
+            if (caseIdOrNumber && caseIdOrNumber.startsWith('500')) {
+              if (caseNumMap[caseIdOrNumber]) {
+                caseNumber = caseNumMap[caseIdOrNumber] || caseNumber;
+              } else {
+                const cres = await conn.query(`SELECT CaseNumber, Severity_Level__c, CaseRoutingTaxonomy__r.Name FROM Case WHERE Id='${caseIdOrNumber}' LIMIT 1`);
+                if (cres && cres.records && cres.records.length) {
+                  caseNumber = cres.records[0].CaseNumber || caseNumber;
+                  severity = cres.records[0].Severity_Level__c || '';
+                  cloud = (cres.records[0].CaseRoutingTaxonomy__r && cres.records[0].CaseRoutingTaxonomy__r.Name ? cres.records[0].CaseRoutingTaxonomy__r.Name.split('-')[0] : '') || '';
+                }
+              }
+            }
+          } catch { }
+
+          // Default to signature sheet regardless of currentMode per requirement
+          const dateOfAction = created ? new Date(created) : new Date();
+          trackActionAndCount(dateOfAction, caseNumber || '--', severity || '--', 'Customer Call', cloud || 'Signature', 'signature', currentUserName, '--');
+        }
+        showToast(`Tracked ${selected.length} call${selected.length > 1 ? 's' : ''}`);
+        // Close modal after tracking
+        const modal = document.getElementById('voicecall-modal');
+        modal.classList.remove('modal-show');
+        setTimeout(() => modal.style.display = 'none', 150);
+      } catch (err) {
+        console.warn('Tracking voice calls failed', err);
+        showToast('Failed to track calls');
+      }
+    };
+  } catch (e) {
+    console.warn('showVoiceCallModal failed', e);
+    try {
+      const loading = document.getElementById('voicecall-loading');
+      if (loading) loading.innerHTML = `<p style="color:#b91c1c;">${e.message}</p>`;
+    } catch { }
+  }
+}
+
 // Function to ensure only one extension tab exists
 async function ensureSingleTab() {
   try {
@@ -2121,6 +2332,172 @@ document.addEventListener('keydown', function (e) {
     }
   }
 });
+// Manual Track Case modal logic
+async function showManualTrackModal() {
+  try {
+    const modal = document.getElementById('manual-track-modal');
+    const input = document.getElementById('manual-track-input');
+    const fetchBtn = document.getElementById('manual-track-fetch');
+    const loading = document.getElementById('manual-track-loading');
+    const details = document.getElementById('manual-track-details');
+    const confirmBtn = document.getElementById('manual-track-confirm');
+    const cancelBtn = document.getElementById('manual-track-cancel');
+    const closeX = document.getElementById('manual-track-close');
+
+    if (!modal || !input || !fetchBtn || !loading || !details || !confirmBtn || !cancelBtn || !closeX) return;
+
+    const resetView = () => {
+      loading.style.display = 'none';
+      details.style.display = 'none';
+      details.innerHTML = '';
+      confirmBtn.disabled = true;
+    };
+
+    resetView();
+    input.value = '';
+    modal.style.display = 'flex';
+    setTimeout(() => modal.classList.add('modal-show'), 0);
+    setTimeout(() => input.focus(), 80);
+
+    const closeModal = () => { modal.classList.remove('modal-show'); setTimeout(() => modal.style.display = 'none', 150); };
+    cancelBtn.onclick = closeModal; closeX.onclick = closeModal; modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+    const doFetch = async () => {
+      const num = (input.value || '').trim();
+      if (!num) { showToast('Enter a Case Number'); return; }
+      if (!window.jsforce || !SESSION_ID) { showToast('Session not ready'); return; }
+      try {
+        loading.style.display = 'block';
+        details.style.display = 'none';
+        const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID, version: '64.0' });
+        const q = `SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE CaseNumber='${num}' LIMIT 1`;
+        const res = await conn.query(q);
+        loading.style.display = 'none';
+        if (!res.records || !res.records.length) { details.style.display = 'block'; details.innerHTML = '<div style="color:#b91c1c;">Case not found</div>'; confirmBtn.disabled = true; return; }
+        const c = res.records[0];
+        const cloud = (c.CaseRoutingTaxonomy__r && c.CaseRoutingTaxonomy__r.Name) ? c.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
+        // Determine assignedTo for tracking:
+        // If Routing_Status__c changed to 'Transferred', use Owner->NewValue from nearest subsequent Owner change
+        let assignedToForConfirm = 'QB';
+        try {
+          const hres = await conn.query(`SELECT Field, NewValue, CreatedDate FROM CaseHistory WHERE CaseId='${c.Id}' ORDER BY CreatedDate ASC LIMIT 100`);
+          const recs = (hres && hres.records) ? hres.records : [];
+          let ownerVal = '';
+          for (let i = 0; i < recs.length; i++) {
+            const h = recs[i];
+            const newValLower = String(h.NewValue || '').toLowerCase();
+            if (h.Field === 'Routing_Status__c' && (newValLower.includes('transferred') || newValLower.includes('manually assigned'))) {
+              for (let j = i + 1; j < recs.length; j++) {
+                const oh = recs[j];
+                if (oh.Field === 'Owner' && oh.NewValue) { ownerVal = String(oh.NewValue); break; }
+              }
+              break;
+            }
+          }
+          if (ownerVal) {
+            const isUserId = /^005[\w]{12,15}$/.test(ownerVal);
+            const isGroupId = /^00G[\w]{12,15}$/.test(ownerVal);
+            if (isUserId) {
+              try {
+                const u = await conn.query(`SELECT Name FROM User WHERE Id='${ownerVal}' LIMIT 1`);
+                assignedToForConfirm = (u && u.records && u.records.length) ? (u.records[0].Name || ownerVal) : ownerVal;
+              } catch { assignedToForConfirm = ownerVal; }
+            } else if (isGroupId) {
+              try {
+                const g = await conn.query(`SELECT Name FROM Group WHERE Id='${ownerVal}' LIMIT 1`);
+                assignedToForConfirm = (g && g.records && g.records.length) ? (g.records[0].Name || ownerVal) : ownerVal;
+              } catch { assignedToForConfirm = ownerVal; }
+            } else {
+              assignedToForConfirm = ownerVal;
+            }
+          } else if (recs.some(h => h.Field === 'Routing_Status__c' && (String(h.NewValue || '').toLowerCase().includes('transferred') || String(h.NewValue || '').toLowerCase().includes('manually assigned')))) {
+            assignedToForConfirm = (c.Owner && c.Owner.Name) ? c.Owner.Name : 'Case Owner';
+          }
+        } catch { }
+
+        // Determine ActionType for tracking: GHO if routing logs show reason 'GHO'
+        let actionTypeForConfirm = 'New Case';
+        try {
+          const r = await conn.query(`SELECT Transfer_Reason__c FROM Case_Routing_Log__c WHERE Case__c='${c.Id}' AND CreatedById='${userId}' ORDER BY CreatedDate DESC LIMIT 20`);
+          const recs = (r && r.records) ? r.records : [];
+          if (recs.some(rr => String(rr.Transfer_Reason__c || '').toUpperCase() === 'GHO')) actionTypeForConfirm = 'GHO';
+        } catch { }
+        details.innerHTML = `
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <div><strong>Case</strong>: ${c.CaseNumber}</div>
+            <div><strong>Severity</strong>: ${c.Severity_Level__c || '-'}</div>
+            <div style="grid-column: 1 / -1;"><strong>Subject</strong>: ${String(c.Subject || '').replace(/</g, '&lt;')}</div>
+            <div><strong>Owner</strong>: ${c.Owner && c.Owner.Name ? c.Owner.Name : '-'}</div>
+            <div><strong>Cloud</strong>: ${cloud || '-'}</div>
+          </div>
+          <div id="manual-track-activity" style="margin-top:12px; padding-top:10px; border-top:1px solid #e5e7eb;">
+            <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Your recent actions</div>
+            <div id="manual-track-activity-body" style="display:flex; flex-direction:column; gap:6px;">Loading...</div>
+          </div>`;
+        details.style.display = 'block';
+        confirmBtn.disabled = false;
+
+        confirmBtn.onclick = async () => {
+          try {
+            trackActionAndCount(new Date(), c.CaseNumber, c.Severity_Level__c || '', actionTypeForConfirm, cloud || '', currentMode, currentUserName, assignedToForConfirm);
+            showToast(`Tracked New Case for ${c.CaseNumber}`);
+            closeModal();
+          } catch (err) {
+            console.warn('Manual confirm track failed:', err);
+            showToast('Failed to track');
+          }
+        };
+
+        // Load CaseFeed and CaseHistory entries you created (GHOTriage/QBMention and Owner/Status changes)
+        (async () => {
+          try {
+            let userId = null;
+            try {
+              const ures = await conn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
+              if (ures && ures.records && ures.records.length) userId = ures.records[0].Id;
+            } catch { }
+            const bodyEl = document.getElementById('manual-track-activity-body');
+            if (!bodyEl) return;
+            if (!userId) { bodyEl.textContent = 'Could not resolve your user id.'; return; }
+
+            const [feedRes, histRes] = await Promise.all([
+              conn.query(`SELECT Body, CreatedDate FROM CaseFeed WHERE Visibility='InternalUsers' AND ParentId='${c.Id}' AND Type='TextPost' AND CreatedById='${userId}' ORDER BY CreatedDate DESC LIMIT 20`),
+              conn.query(`SELECT Field, NewValue, CreatedDate FROM CaseHistory WHERE CaseId='${c.Id}' AND CreatedById='${userId}' AND (Field='Routing_Status__c' OR Field='Owner') ORDER BY CreatedDate DESC LIMIT 20`)
+            ]);
+            const items = [];
+            (feedRes.records || []).forEach(cm => {
+              const body = String(cm.Body || ''); const low = body.toLowerCase();
+              if (low.includes('#ghotriage') || low.includes('#sigqbmention')) items.push({ t: 'comment', when: cm.CreatedDate, text: body });
+            });
+            (histRes.records || []).forEach(h => {
+              const f = h.Field; const val = (typeof h.NewValue === 'string') ? h.NewValue : (h.NewValue && h.NewValue.name) ? h.NewValue.name : '';
+              items.push({ t: 'history', when: h.CreatedDate, text: `${f}: ${val}` });
+            });
+            items.sort((a, b) => new Date(b.when) - new Date(a.when));
+            if (!items.length) { bodyEl.textContent = 'No recent comments or history by you.'; return; }
+            bodyEl.innerHTML = items.slice(0, 10).map(it => {
+              const when = new Date(it.when).toLocaleString();
+              const badge = it.t === 'comment' ? '<span class="badge-soft badge-soft--info" style="margin-right:6px;">Comment</span>' : '<span class="badge-soft" style="background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; margin-right:6px;">History</span>';
+              const safe = String(it.text || '').replace(/</g, '&lt;');
+              return `<div style="font-size:12px; color:#334155;">${badge}<span style="color:#0f172a; font-weight:600;">${when}</span> — ${safe}</div>`;
+            }).join('');
+          } catch (e) {
+            const bodyEl = document.getElementById('manual-track-activity-body');
+            if (bodyEl) bodyEl.textContent = 'Failed to load your recent actions.';
+          }
+        })();
+      } catch (e) {
+        loading.style.display = 'none';
+        details.style.display = 'block';
+        details.innerHTML = `<div style="color:#b91c1c;">${String(e.message || e).replace(/</g, '&lt;')}</div>`;
+        confirmBtn.disabled = true;
+      }
+    };
+
+    fetchBtn.onclick = doFetch;
+    input.onkeypress = (e) => { if (e.key === 'Enter') doFetch(); };
+  } catch (e) { console.warn('showManualTrackModal failed', e); }
+}
 
 document.addEventListener('keydown', function (e) {
   if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -2411,6 +2788,69 @@ document.addEventListener("DOMContentLoaded", function () {
     showGHOMappingModal();
   });
 
+  // More menu toggle (Signature-only option visibility)
+  const moreBtn = document.getElementById('more-menu-btn');
+  const moreDropdown = document.getElementById('more-menu-dropdown');
+  const openVoiceModalBtn = document.getElementById('open-voicecall-modal');
+  if (moreBtn && moreDropdown && openVoiceModalBtn) {
+    const updateMoreMenuVisibility = () => {
+      // Only show item in Signature mode
+      openVoiceModalBtn.style.display = (currentMode === 'signature') ? 'flex' : 'none';
+    };
+    updateMoreMenuVisibility();
+    moreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = moreDropdown.style.display === 'block';
+      if (isOpen) {
+        moreDropdown.style.display = 'none';
+        return;
+      }
+      // Ensure dropdown is at body level to escape any stacking context
+      try {
+        if (moreDropdown.parentElement !== document.body) {
+          document.body.appendChild(moreDropdown);
+        }
+      } catch { }
+      // Position as fixed overlay near the button to avoid header clipping and stacking issues
+      const rect = moreBtn.getBoundingClientRect();
+      moreDropdown.style.position = 'fixed';
+      moreDropdown.style.top = `${Math.round(rect.bottom + 8)}px`;
+      // Align right edge to button's right, with viewport padding
+      const rightPx = Math.max(8, Math.round(window.innerWidth - rect.right));
+      moreDropdown.style.right = `${rightPx}px`;
+      moreDropdown.style.left = 'auto';
+      moreDropdown.style.minWidth = '220px';
+      moreDropdown.style.zIndex = '5000';
+      moreDropdown.style.display = 'block';
+      // Hide on scroll/resize
+      const hideOnScrollOrResize = () => { moreDropdown.style.display = 'none'; window.removeEventListener('scroll', hideOnScrollOrResize, true); window.removeEventListener('resize', hideOnScrollOrResize, true); };
+      window.addEventListener('scroll', hideOnScrollOrResize, true);
+      window.addEventListener('resize', hideOnScrollOrResize, true);
+    });
+    document.addEventListener('click', (e) => {
+      if (!moreDropdown.contains(e.target) && e.target !== moreBtn) {
+        moreDropdown.style.display = 'none';
+      }
+    });
+    document.getElementById('mode-switch').addEventListener('change', updateMoreMenuVisibility);
+    openVoiceModalBtn.addEventListener('click', () => {
+      moreDropdown.style.display = 'none';
+      showVoiceCallModal();
+    });
+
+    // Manual Track modal open
+    const openManualBtn = document.getElementById('open-manual-track-modal');
+    if (openManualBtn) {
+      openManualBtn.addEventListener('click', () => {
+        moreDropdown.style.display = 'none';
+        showManualTrackModal();
+      });
+    }
+
+    // Populate user header initially
+    updateMoreMenuUserHeader();
+  }
+
   // Weekend Roster Button Event Listener
   document.getElementById("cic-button").addEventListener("click", function () {
     if (!DEV_FORCE_SHOW_WEEKEND_ROSTER && !isCurrentlyWeekend()) {
@@ -2480,6 +2920,23 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
 
+
+  // Voice Calls modal wiring
+  const voiceModal = document.getElementById('voicecall-modal');
+  const voiceCloseX = document.getElementById('voicecall-modal-close');
+  const voiceCloseBtn = document.getElementById('voicecall-close-btn');
+  const voiceTrackBtn = document.getElementById('voicecall-track-btn');
+  const voiceSelectAll = document.getElementById('voicecall-select-all');
+  if (voiceModal && voiceCloseX && voiceCloseBtn && voiceTrackBtn && voiceSelectAll) {
+    const closeVoiceModal = () => {
+      voiceModal.classList.remove('modal-show');
+      setTimeout(() => voiceModal.style.display = 'none', 150);
+    };
+    voiceCloseX.addEventListener('click', closeVoiceModal);
+    voiceCloseBtn.addEventListener('click', closeVoiceModal);
+    voiceModal.addEventListener('click', (e) => { if (e.target === voiceModal) closeVoiceModal(); });
+    document.addEventListener('keydown', (e) => { if (voiceModal.style.display === 'flex' && e.key === 'Escape') closeVoiceModal(); });
+  }
 
   document.getElementById("gho-modal").addEventListener("click", function (e) {
     if (e.target === this) {
@@ -2616,93 +3073,7 @@ document.getElementById("clear-snoozed-button").addEventListener("click", functi
   clearSnoozedCases();
 });
 
-// Manual track by Case Number UI wiring
-try {
-  const trackInput = document.getElementById('track-case-input');
-  // Button removed; tracking now via Cmd+L
-  if (trackInput) {
-    const setTrackLoading = (loading) => {
-      try {
-        if (loading) {
-          if (!trackBtn.dataset.origLabel) trackBtn.dataset.origLabel = trackBtn.innerHTML;
-          trackBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Tracking...';
-          trackBtn.disabled = true;
-          trackInput.disabled = true;
-        } else {
-          trackBtn.innerHTML = trackBtn.dataset.origLabel || 'Track Case';
-          trackBtn.disabled = false;
-          trackInput.disabled = false;
-        }
-      } catch (e) { }
-    };
-
-    const doTrack = async () => {
-      const isHidden = trackInput.classList.contains('hidden');
-      if (isHidden) {
-        trackInput.classList.remove('hidden');
-        trackInput.focus();
-        return;
-      }
-      const num = (trackInput.value || '').trim();
-      if (!num) { trackInput.classList.add('hidden'); return; }
-      setTrackLoading(true);
-      try {
-        const res = await window.forceProcessCase(num);
-        if (res && res.success) {
-          showToast(res.actions && res.actions.length ? `Tracked ${res.actions.join(', ')}` : 'No actions (by you)');
-        } else {
-          showToast(res && res.message ? res.message : 'Failed to track');
-        }
-      } catch (err) {
-        console.warn('Manual track failed:', err);
-        showToast('Failed to track');
-      } finally {
-        setTrackLoading(false);
-        trackInput.value = '';
-        trackInput.classList.add('hidden');
-      }
-    };
-    trackInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') doTrack(); });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey) return;
-      const active = document.activeElement;
-      const isOtherInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active !== trackInput;
-      if (isOtherInput) return;
-      if (!trackInput.classList.contains('hidden')) {
-        const val = (trackInput.value || '').trim();
-        if (val) {
-          e.preventDefault();
-          doTrack();
-        }
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      const active = document.activeElement;
-      const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active !== trackInput;
-      if (isTyping) return;
-      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-      const metaPressed = isMac ? e.metaKey : e.ctrlKey;
-      if (metaPressed && !e.shiftKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
-        e.preventDefault();
-        const isHidden = trackInput.classList.contains('hidden');
-        if (isHidden) {
-          trackInput.classList.remove('hidden');
-          trackInput.focus();
-          trackInput.select();
-        } else {
-          const val = (trackInput.value || '').trim();
-          if (val) {
-            doTrack();
-          } else {
-            trackInput.classList.add('hidden');
-          }
-        }
-      }
-    });
-  }
-} catch (e) { console.warn('Manual track wiring failed:', e); }
+// Manual track by Case Number: removed inline UI + shortcut; moved to 3-dots modal
 
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
   if (e.target && e.target.classList.contains("preview-record-btn")) {
@@ -3474,7 +3845,7 @@ function showCICManagers() {
                   if (fallback) { emailInp.value = fallback; }
                   return;
                 }
-                const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID });
+                const conn = new jsforce.Connection({ serverUrl: 'https://orgcs.my.salesforce.com', sessionId: SESSION_ID, version: '64.0' });
                 const soql = `SELECT Name, Email, Title, Username FROM User WHERE IsActive = true AND Email != null AND (Username LIKE '%dreamevent.com' OR Username LIKE '%orgcs.com') AND Name ='${escapeSoqlString(qname)}'`;
                 conn.query(soql, (err, res) => {
                   if (err) {
@@ -4140,7 +4511,7 @@ function checkGHOStatus(forceRefresh = false) {
   const preferredShiftValues = getPreferredShiftValues(currentShiftLive);
   const shiftCondition = buildPreferredShiftCondition(preferredShiftValues);
 
-  const signatureGHOQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND (Case_Support_level__c IN ('Premier Priority','Signature','Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
+  const signatureGHOQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 5) FROM Case WHERE ((Owner.Name IN ('Skills Queue','Kase Changer', 'Working in Org62','GHO Queue') AND (Case_Support_level__c IN ('Premier Priority','Signature','Signature Success'))) OR (Contact.Is_MVP__c=true AND Owner.Name='GHO Queue')) AND IsClosed=false AND ${shiftCondition} AND ((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%' OR CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent')) AND CaseRoutingTaxonomy__r.Name NOT IN ('Disability and Product Accessibility','DORA')`;
   const premierGHOQuery = `SELECT Case__c, Transfer_Reason__c, Case__r.Case_Support_level__c, Case__r.IsClosed, Case__r.Account_Support_SBR_Category__c, Case__r.Severity_Level__c, Case__r.OrgCS_Owner__c, Case__r.Contact.Is_MVP__c, Case__r.GHO__c, Case__r.Out_of_Impact_Service_Restored__c, Case__r.AX_Product_Name__c, Case__r.CaseRoutingTaxonomy__r.Name FROM Case_Routing_Log__c WHERE Transfer_Reason__c = 'GHO' AND Case__r.Case_Support_level__c In ('Partner Premier', 'Premier', 'Premier+', 'Premium','Standard','') AND Case__r.IsClosed = false AND Case__r.Account_Support_SBR_Category__c != 'JP' AND Case__r.Severity_Level__c IN ('Level 1 - Critical' ,'Level 2 - Urgent') AND Case__r.OrgCS_Owner__c LIKE '%Queue%' AND Case__r.Contact.Is_MVP__c = false AND Case__r.GHO__c = true AND Case__r.Out_of_Impact_Service_Restored__c = false AND (Case__r.AX_Product_Name__c = 'Sales' OR Case__r.AX_Product_Name__c = 'Service'  OR Case__r.AX_Product_Name__c = 'Industry' ) AND Case__r.CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce','Service-Agent for setup','Service-AgentforEmail','Service-Field Service Agentforce','Service-Agentforce for Dev','Sales-Agentforce','Sales -Agentforce for Dev','Sales-Agent for Setup','Sales-Prompt Builder','Data Cloud-Admin','Permissions','Flows','Reports & Dashboards','Data Cloud-Model Builder','Data Cloud-Connectors & Data Streams','Data Cloud-Developer','Calculated Insights & Consumption','Data Cloud-Segments','Activations & Identity Resolution')`;
   const ghoQuery = currentMode === 'premier' ? premierGHOQuery : signatureGHOQuery;
 
@@ -4171,7 +4542,7 @@ function checkGHOStatus(forceRefresh = false) {
         showGHOStatusModal([], ghoConn);
         return;
       }
-      const detailQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 10) FROM Case WHERE Id IN ('${caseIds.join("','")}')`;
+      const detailQuery = `SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c, CreatedDate, CreatedById, Preferred_Shift_Old_Value__c, Preferred_Shift_New_Value__c, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 20) FROM Case WHERE Id IN ('${caseIds.join("','")}')`;
       return ghoConn.query(detailQuery, (detailErr, detailRes) => {
         if (detailErr) {
           console.error('Premier detail fetch error:', detailErr);
@@ -5605,7 +5976,7 @@ async function forceProcessCase(caseNumber) {
     }
 
     // Fetch the case by number
-    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE CaseNumber='${caseNumber}' LIMIT 1`);
+    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE CaseNumber='${caseNumber}' LIMIT 5`);
     if (!caseRes.records || caseRes.records.length === 0) {
       showToast(`Case ${caseNumber} not found`);
       return { success: false, message: 'Case not found' };
@@ -5713,7 +6084,7 @@ async function forceProcessCaseById(caseId) {
       return { success: false, message: 'Missing user id' };
     }
 
-    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE Id='${caseId}' LIMIT 1`);
+    const caseRes = await conn.query(`SELECT Id, CaseNumber, Severity_Level__c, Subject, CaseRoutingTaxonomy__r.Name, Owner.Name, LastModifiedDate FROM Case WHERE Id='${caseId}' LIMIT 5`);
     if (!caseRes.records || caseRes.records.length === 0) {
       showToast(`Case ${caseId} not found`);
       return { success: false, message: 'Case not found' };

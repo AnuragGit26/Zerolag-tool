@@ -40,7 +40,6 @@
 
 
 		.header-container {
-			/* Animated, modern gradient header */
 			background: linear-gradient(135deg, #F76C5E 0%, #E85A4F 60%, #f08a7f 100%);
 			background-size: 180% 180%;
 			animation: headerGradientShift 14s ease-in-out infinite;
@@ -54,7 +53,6 @@
 			overflow: hidden;
 		}
 
-		/* subtle decorative glows */
 		.header-container::before,
 		.header-container::after {
 			content: "";
@@ -140,7 +138,6 @@
 			transition: opacity .25s ease, transform .2s ease;
 		}
 
-		/* Active label highlighting via :has() */
 		.header-toggle:has(#mode-switch:not(:checked)) .toggle-label-text--signature {
 			opacity: 1;
 		}
@@ -232,7 +229,6 @@
 			box-shadow: inset 0 2px 6px rgba(0, 0, 0, .2), 0 0 0 4px rgba(34, 197, 94, .15);
 		}
 
-		/* Header entrance and gradient animation */
 		@keyframes headerDropIn {
 			from {
 				opacity: 0;
@@ -309,6 +305,46 @@
 			outline: none;
 			border-color: #6366f1;
 			box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+		}
+
+		#track-case-input {
+			max-width: 260px;
+			background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+			border-color: #c7d2fe;
+			border-radius: 10px;
+			transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+		}
+
+		#track-case-input::placeholder {
+			color: #9ca3af;
+		}
+
+		#track-case-input:focus {
+			border-color: #6366f1;
+			box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+			background: #ffffff;
+		}
+
+		.track-case-wrapper {
+			position: relative;
+			display: inline-block;
+		}
+
+		#track-case-input.loading {
+			padding-right: 36px;
+		}
+
+		#track-case-spinner {
+			position: absolute;
+			right: 10px;
+			top: 0;
+			bottom: 0;
+			margin: auto 0;
+			display: inline-flex;
+			align-items: center;
+			font-size: 14px;
+			color: #6b7280;
+			pointer-events: none;
 		}
 
 		.filter-select {
@@ -647,7 +683,6 @@
 
 
 		#toast {
-			/* Legacy single-toast element (kept for backward compat). Hidden when enhanced system in use. */
 			position: fixed;
 			top: 20px;
 			right: 20px;
@@ -661,7 +696,6 @@
 			animation: slideInRight 260ms ease-out;
 		}
 
-		/* Enhanced toast system */
 		#toast-container {
 			position: fixed;
 			top: 16px;
@@ -673,7 +707,6 @@
 			max-width: calc(100vw - 32px);
 			z-index: 1100;
 			pointer-events: none;
-			/* Allow clicks through gaps */
 		}
 
 		.toast {
@@ -828,19 +861,8 @@
 			}
 		}
 
-
-		.action-taken-text {
-			color: #059669;
-			font-weight: 600;
-			font-size: 14px;
-		}
-
 		.hidden {
 			display: none !important;
-		}
-
-		.visible {
-			display: block !important;
 		}
 
 
@@ -1478,7 +1500,6 @@
 			animation: pulseGlow 1800ms ease-in-out infinite alternate;
 		}
 
-		/* Modern GHO Summary Styles */
 		.gho-summary-modern {
 			margin-bottom: 24px;
 			padding: 24px;
@@ -1808,7 +1829,6 @@
 			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 		}
 
-		/* Responsive adjustments for modern GHO summary */
 		@media (max-width: 768px) {
 			.gho-summary-header {
 				flex-direction: column;
@@ -1829,7 +1849,6 @@
 			}
 		}
 
-		/* Legacy GHO Summary Styles (kept for backward compatibility) */
 		.gho-summary {
 			margin-bottom: 16px;
 			padding: 16px;
@@ -1954,18 +1973,6 @@
 		}
 
 
-		@keyframes fadeUp {
-			0% {
-				opacity: 0;
-				transform: translateY(6px);
-			}
-
-			100% {
-				opacity: 1;
-				transform: translateY(0);
-			}
-		}
-
 		@keyframes slideInLeft {
 			0% {
 				opacity: 0;
@@ -2069,7 +2076,6 @@
 			}
 		}
 
-		/* GHO Mapping Modal Styles */
 		.mapping-item {
 			transition: all 0.2s ease;
 		}
@@ -2093,7 +2099,6 @@
 			overflow-y: auto;
 		}
 
-		/* Suggested Assignee Styling */
 		.gho-suggested-assignee {
 			background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
 			border: 2px solid #bbf7d0;
@@ -2104,7 +2109,6 @@
 			overflow: hidden;
 		}
 
-		/* Delete All Mappings Button Styling */
 		#delete-all-mappings-btn {
 			transition: all 0.2s ease;
 		}
@@ -2424,7 +2428,6 @@
 			}
 		}
 
-		/* Enhanced GHO Cache Status Styles */
 		#gho-cache-status {
 			transition: all 0.2s ease;
 		}
@@ -2447,6 +2450,76 @@
 		#current-mode-cache-detail {
 			font-size: 12px;
 			line-height: 1.4;
+		}
+
+		/* Voice Calls Modal - beautified */
+		#voicecall-modal .modal-content {
+			max-width: 900px;
+			border-radius: 18px;
+			box-shadow: 0 24px 55px rgba(2, 6, 23, 0.20), 0 10px 24px rgba(2, 6, 23, 0.12);
+			border: 1px solid #e5e7eb;
+		}
+
+		#voicecall-modal .modal-header {
+			background: linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%);
+			border-bottom: 1px solid #bbf7d0;
+		}
+
+		#voicecall-modal .modal-header h3 {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			color: #065f46;
+		}
+
+		#voicecall-modal .modal-subtle {
+			margin: 0 0 12px 0;
+			color: #6b7280;
+			font-size: 13px;
+		}
+
+		#voicecall-modal .table-wrap {
+			border: 1px solid #e5e7eb;
+			border-radius: 12px;
+			overflow: hidden;
+			box-shadow: 0 6px 16px rgba(2, 6, 23, 0.06);
+		}
+
+		#voicecall-table {
+			width: 100%;
+			border-collapse: separate;
+			border-spacing: 0;
+			font-size: 13px;
+		}
+
+		#voicecall-table thead th {
+			position: sticky;
+			top: 0;
+			background: #f8fafc;
+			border-bottom: 1px solid #e5e7eb;
+			text-transform: uppercase;
+			letter-spacing: .03em;
+			font-weight: 700;
+			color: #0f172a;
+			font-size: 11px;
+		}
+
+		#voicecall-table th,
+		#voicecall-table td {
+			padding: 10px 12px;
+		}
+
+		#voicecall-table tbody tr:nth-child(even) td {
+			background: #fcfcfd;
+		}
+
+		#voicecall-table tbody tr:hover td {
+			background: #f1f5f9;
+		}
+
+		#voicecall-select-all {
+			width: 16px;
+			height: 16px;
 		}
 	</style>
 
@@ -2480,6 +2553,37 @@
 					<button id="shortcuts-help-btn" class="help-button" title="Keyboard Shortcuts (?)">
 						<i class="fa fa-keyboard-o"></i>
 					</button>
+					<!-- More (3-dots) menu -->
+					<div id="more-menu" style="position: relative; overflow: visible;">
+						<button id="more-menu-btn" class="help-button" title="More">
+							<i class="fa fa-ellipsis-v" aria-hidden="true"></i>
+						</button>
+						<div id="more-menu-dropdown"
+							style="display:none; position:absolute; right:0; margin-top:8px; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.12); min-width:220px; z-index:1001; overflow:hidden;">
+							<div id="more-menu-user"
+								style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid #e5e7eb; background:#f9fafb;">
+								<div id="more-menu-avatar"
+									style="width:28px; height:28px; border-radius:999px; background:#e5e7eb; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#6b7280; font-weight:700; font-size:12px;">
+								</div>
+								<div style="display:flex; flex-direction:column; min-width:0;">
+									<div id="more-menu-name"
+										style="font-size:12px; font-weight:700; color:#111827; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+										User</div>
+									<div id="more-menu-sub" style="font-size:11px; color:#6b7280;">Signed in</div>
+								</div>
+							</div>
+							<button id="open-voicecall-modal"
+								style="display:flex; align-items:center; gap:10px; width:100%; background:none; border:none; padding:10px 12px; cursor:pointer; font-weight:600; color:#374151;">
+								<i class="fa fa-phone" aria-hidden="true" style="color:#16a34a;"></i>
+								<span>Track Customer Calls</span>
+							</button>
+							<button id="open-manual-track-modal"
+								style="display:flex; align-items:center; gap:10px; width:100%; background:none; border:none; padding:10px 12px; cursor:pointer; font-weight:600; color:#374151; border-top:1px solid #f1f5f9;">
+								<i class="fa fa-search" aria-hidden="true" style="color:#0ea5e9;"></i>
+								<span>Manual Track Case</span>
+							</button>
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -2504,8 +2608,13 @@
 					Clear Snoozed</button>
 
 				<!-- Manual track controls -->
-				<input type="text" class="search-input hidden" id="track-case-input"
-					placeholder="Case Number to track..." style="max-width: 220px;">
+				<div class="track-case-wrapper hidden" id="track-case-wrapper">
+					<input type="text" class="search-input" id="track-case-input" placeholder="Track Case Number (⌘+L)"
+						style="max-width: 220px;">
+					<span id="track-case-spinner" class="hidden" aria-live="polite" aria-busy="true" title="Processing">
+						<div class="spinner" style="width:18px;height:18px;border-width:2px;"></div>
+					</span>
+				</div>
 				<!-- Log Case button removed: now triggered via Command+L shortcut -->
 			</div>
 		</div>
@@ -2564,6 +2673,88 @@
 						<p>Please wait while we fetch the latest GHO cases.</p>
 					</div>
 				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Voice Calls Modal -->
+	<div id="voicecall-modal" class="modal-overlay" style="display:none;">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h3><i class="fa fa-phone" style="color:#16a34a;"></i>Signature Customer Calls</h3>
+				<span class="modal-close" id="voicecall-modal-close">&times;</span>
+			</div>
+			<div class="modal-body">
+				<p class="modal-subtle">Select calls to track to Signature sheet. Only calls from CS Signature Hotline
+					are shown.</p>
+				<div id="voicecall-filter-row" style="display:flex; align-items:center; gap:8px; margin:6px 0 12px;">
+					<label for="voicecall-days-input"
+						style="font-size:12px; color:#475569; font-weight:700;">Days</label>
+					<input id="voicecall-days-input" type="number" value="2" min="1" max="30" step="1"
+						style="width:74px; padding:6px 8px; border:1px solid #e5e7eb; border-radius:8px; font-size:12px;" />
+					<button id="voicecall-days-apply" class="btn-secondary"
+						style="padding:8px 12px; font-size:12px;">Apply</button>
+				</div>
+				<div id="voicecall-loading" class="loading-message">
+					<div class="spinner"></div>
+					<p>Fetching recent Voice Calls...</p>
+				</div>
+				<div id="voicecall-container" style="display:none;">
+					<div class="table-wrap" style="overflow:auto; max-height:50vh;">
+						<table id="voicecall-table">
+							<thead>
+								<tr>
+									<th style="width:42px;"><input type="checkbox" id="voicecall-select-all"></th>
+									<th>Created</th>
+									<th>From</th>
+									<th>To</th>
+									<th>Duration</th>
+									<th>Case</th>
+									<th>Queue</th>
+								</tr>
+							</thead>
+							<tbody id="voicecall-tbody"></tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+			<div style="padding:16px; border-top:1px solid #e5e7eb; display:flex; gap:12px; justify-content:flex-end;">
+				<button id="voicecall-track-btn" class="btn-primary" disabled
+					style="display:inline-flex; align-items:center; gap:8px;">
+					<i class="fa fa-check" aria-hidden="true"></i> Track Calls
+				</button>
+				<button id="voicecall-close-btn" class="btn-secondary"
+					style="background:#f3f4f6; color:#111827; border:1px solid #e5e7eb;">Close</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Manual Track Case Modal -->
+	<div id="manual-track-modal" class="modal-overlay" style="display:none;">
+		<div class="modal-content" style="max-width: 640px;">
+			<div class="modal-header">
+				<h3><i class="fa fa-search" style="color:#0ea5e9;"></i> Manual Track Case</h3>
+				<span class="modal-close" id="manual-track-close">&times;</span>
+			</div>
+			<div class="modal-body">
+				<div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+					<input type="text" id="manual-track-input" class="search-input"
+						placeholder="Enter Case Number (e.g. 12345678)" style="flex:1; max-width:none;">
+					<button id="manual-track-fetch" class="btn-secondary" style="padding:10px 14px;">Fetch</button>
+				</div>
+				<div id="manual-track-loading" class="loading-message" style="display:none;">
+					<div class="spinner"></div>
+					<p>Fetching case details...</p>
+				</div>
+				<div id="manual-track-details"
+					style="display:none; border:1px solid #e5e7eb; border-radius:12px; padding:12px; background:#f8fafc;">
+				</div>
+			</div>
+			<div style="padding:16px; border-top:1px solid #e5e7eb; display:flex; gap:12px; justify-content:flex-end;">
+				<button id="manual-track-confirm" class="btn-primary" disabled
+					style="display:inline-flex; align-items:center; gap:8px;"><i class="fa fa-check"></i> Track</button>
+				<button id="manual-track-cancel" class="btn-secondary"
+					style="background:#f3f4f6; color:#111827; border:1px solid #e5e7eb;">Close</button>
 			</div>
 		</div>
 	</div>
