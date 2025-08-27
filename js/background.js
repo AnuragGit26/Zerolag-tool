@@ -2863,3 +2863,416 @@ function incrementActionedCases(userName) {
 		console.error('Error incrementing actionedCases in background:', error);
 	}
 }
+
+// ================================================
+// LocalStorage Cleanup Functions
+// ================================================
+
+// Clean localStorage data older than 3 days
+function cleanupLocalStorageOlderThan3Days() {
+	try {
+		const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
+		let cleanedCount = 0;
+		const keysToRemove = [];
+
+		// Iterate through all localStorage keys
+		for (let i = 0; i < localStorage.length; i++) {
+			const key = localStorage.key(i);
+			if (!key) continue;
+
+			try {
+				const value = localStorage.getItem(key);
+				if (!value) continue;
+
+				// Check if the value contains timestamp information
+				let shouldRemove = false;
+				let dataAge = 0;
+
+				// Check for various timestamp patterns in the data
+				if (typeof value === 'string') {
+					// Check for JSON objects with timestamp fields
+					try {
+						const parsed = JSON.parse(value);
+						if (parsed && typeof parsed === 'object') {
+							// Check for common timestamp fields
+							if (parsed.timestamp && typeof parsed.timestamp === 'number') {
+								dataAge = Date.now() - parsed.timestamp;
+								shouldRemove = dataAge > threeDaysAgo;
+							} else if (parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
+								dataAge = Date.now() - parsed.fetchedAt;
+								shouldRemove = dataAge > threeDaysAgo;
+							} else if (parsed.createdAt && typeof parsed.createdAt === 'number') {
+								dataAge = Date.now() - parsed.createdAt;
+								shouldRemove = dataAge > threeDaysAgo;
+							} else if (parsed.date && typeof parsed.date === 'string') {
+								// Handle date strings like "2024-01-15"
+								const dateMatch = parsed.date.match(/^\d{4}-\d{2}-\d{2}$/);
+								if (dateMatch) {
+									const entryDate = new Date(dateMatch[0]);
+									dataAge = Date.now() - entryDate.getTime();
+									shouldRemove = dataAge > threeDaysAgo;
+								}
+							}
+						}
+					} catch (parseError) {
+						// Not JSON, check for other patterns
+						// Check for date patterns in the key name
+						const dateMatch = key.match(/\d{4}-\d{2}-\d{2}/);
+						if (dateMatch) {
+							const entryDate = new Date(dateMatch[0]);
+							dataAge = Date.now() - entryDate.getTime();
+							shouldRemove = dataAge > threeDaysAgo;
+						}
+					}
+				}
+
+				if (shouldRemove) {
+					keysToRemove.push(key);
+					console.log(`Marked for removal: ${key} (age: ${Math.floor(dataAge / (24 * 60 * 60 * 1000))} days)`);
+				}
+			} catch (error) {
+				console.warn(`Error processing localStorage key ${key}:`, error);
+			}
+		}
+
+		// Remove the marked keys
+		keysToRemove.forEach(key => {
+			try {
+				localStorage.removeItem(key);
+				cleanedCount++;
+				console.log(`Removed: ${key}`);
+			} catch (error) {
+				console.error(`Failed to remove localStorage key ${key}:`, error);
+			}
+		});
+
+		if (cleanedCount > 0) {
+			console.log(`LocalStorage cleanup completed: ${cleanedCount} items removed (older than 3 days)`);
+		} else {
+			console.log('LocalStorage cleanup: No items older than 3 days found');
+		}
+
+		return { success: true, cleanedCount, totalKeys: localStorage.length };
+	} catch (error) {
+		console.error('Error during localStorage cleanup:', error);
+		return { success: false, error: error.message };
+	}
+}
+
+// Enhanced cleanup function that also handles specific known keys
+function comprehensiveLocalStorageCleanup() {
+	try {
+		const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
+		let cleanedCount = 0;
+		const results = {};
+
+		// Clean up specific known cache keys
+		const cacheKeys = [
+			'gho_cache_data',
+			'gho_usermap_cache',
+			'user_email_cache',
+			'gho_transfer_mappings_v1',
+			'weekend_roster_cache_',
+			'usage_logged_',
+			'sentToSheets'
+		];
+
+		cacheKeys.forEach(cacheKey => {
+			try {
+				if (cacheKey === 'weekend_roster_cache_' || cacheKey === 'usage_logged_') {
+					// Handle prefixed keys
+					const keysToRemove = [];
+					for (let i = 0; i < localStorage.length; i++) {
+						const key = localStorage.key(i);
+						if (key && key.startsWith(cacheKey)) {
+							try {
+								const value = localStorage.getItem(key);
+								if (value) {
+									const parsed = JSON.parse(value);
+									if (parsed && parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
+										const age = Date.now() - parsed.fetchedAt;
+										if (age > threeDaysAgo) {
+											keysToRemove.push(key);
+										}
+									}
+								}
+							} catch (parseError) {
+								// If parsing fails, check if it's a date-based key
+								const dateMatch = key.match(/\d{4}-\d{2}-\d{2}/);
+								if (dateMatch) {
+									const entryDate = new Date(dateMatch[0]);
+									const age = Date.now() - entryDate.getTime();
+									if (age > threeDaysAgo) {
+										keysToRemove.push(key);
+									}
+								}
+							}
+						}
+					}
+
+					keysToRemove.forEach(key => {
+						localStorage.removeItem(key);
+						cleanedCount++;
+					});
+
+					results[cacheKey] = keysToRemove.length;
+				} else {
+					// Handle single keys
+					const value = localStorage.getItem(cacheKey);
+					if (value) {
+						try {
+							const parsed = JSON.parse(value);
+							if (parsed && parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
+								const age = Date.now() - parsed.fetchedAt;
+								if (age > threeDaysAgo) {
+									localStorage.removeItem(cacheKey);
+									cleanedCount++;
+									results[cacheKey] = 1;
+								}
+							}
+						} catch (parseError) {
+							// If parsing fails, remove the key as it might be corrupted
+							localStorage.removeItem(cacheKey);
+							cleanedCount++;
+							results[cacheKey] = 1;
+						}
+					}
+				}
+			} catch (error) {
+				console.warn(`Error cleaning up cache key ${cacheKey}:`, error);
+			}
+		});
+
+		// Also run the general cleanup
+		const generalCleanup = cleanupLocalStorageOlderThan3Days();
+		cleanedCount += generalCleanup.cleanedCount || 0;
+
+		console.log(`Comprehensive localStorage cleanup completed: ${cleanedCount} total items removed`);
+		console.log('Cleanup results:', results);
+
+		return { success: true, totalCleaned: cleanedCount, results, generalCleanup };
+	} catch (error) {
+		console.error('Error during comprehensive localStorage cleanup:', error);
+		return { success: false, error: error.message };
+	}
+}
+
+// Get localStorage statistics and age information
+function getLocalStorageStats() {
+	try {
+		const stats = {
+			totalKeys: localStorage.length,
+			totalSize: 0,
+			keysByAge: {
+				'0-1 days': 0,
+				'1-3 days': 0,
+				'3-7 days': 0,
+				'7+ days': 0
+			},
+			keysByType: {},
+			oldKeys: [],
+			cacheKeys: {}
+		};
+
+		const now = Date.now();
+		const oneDay = 24 * 60 * 60 * 1000;
+		const threeDays = 3 * oneDay;
+		const sevenDays = 7 * oneDay;
+
+		for (let i = 0; i < localStorage.length; i++) {
+			const key = localStorage.key(i);
+			if (!key) continue;
+
+			try {
+				const value = localStorage.getItem(key);
+				if (!value) continue;
+
+				// Calculate size
+				stats.totalSize += key.length + value.length;
+
+				// Determine age category
+				let age = 0;
+				let ageCategory = 'unknown';
+
+				try {
+					const parsed = JSON.parse(value);
+					if (parsed && typeof parsed === 'object') {
+						if (parsed.timestamp && typeof parsed.timestamp === 'number') {
+							age = now - parsed.timestamp;
+						} else if (parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
+							age = now - parsed.fetchedAt;
+						} else if (parsed.createdAt && typeof parsed.createdAt === 'number') {
+							age = now - parsed.createdAt;
+						} else if (parsed.date && typeof parsed.date === 'string') {
+							const dateMatch = parsed.date.match(/^\d{4}-\d{2}-\d{2}$/);
+							if (dateMatch) {
+								const entryDate = new Date(dateMatch[0]);
+								age = now - entryDate.getTime();
+							}
+						}
+					}
+				} catch (parseError) {
+					// Check for date patterns in the key name
+					const dateMatch = key.match(/\d{4}-\d{2}-\d{2}/);
+					if (dateMatch) {
+						const entryDate = new Date(dateMatch[0]);
+						age = now - entryDate.getTime();
+					}
+				}
+
+				if (age > 0) {
+					if (age <= oneDay) {
+						ageCategory = '0-1 days';
+						stats.keysByAge['0-1 days']++;
+					} else if (age <= threeDays) {
+						ageCategory = '1-3 days';
+						stats.keysByAge['1-3 days']++;
+					} else if (age <= sevenDays) {
+						ageCategory = '3-7 days';
+						stats.keysByAge['3-7 days']++;
+					} else {
+						ageCategory = '7+ days';
+						stats.keysByAge['7+ days']++;
+					}
+
+					if (age > threeDays) {
+						stats.oldKeys.push({
+							key,
+							age: Math.floor(age / oneDay),
+							ageCategory,
+							size: key.length + value.length
+						});
+					}
+				}
+
+				// Categorize by key type
+				if (key.includes('cache') || key.includes('Cache')) {
+					stats.keysByType.cache = (stats.keysByType.cache || 0) + 1;
+				} else if (key.includes('usage') || key.includes('Usage')) {
+					stats.keysByType.usage = (stats.keysByType.usage || 0) + 1;
+				} else if (key.includes('gho') || key.includes('GHO')) {
+					stats.keysByType.gho = (stats.keysByType.gho || 0) + 1;
+				} else if (key.includes('sheet') || key.includes('Sheet')) {
+					stats.keysByType.sheets = (stats.keysByType.sheets || 0) + 1;
+				} else {
+					stats.keysByType.other = (stats.keysByType.other || 0) + 1;
+				}
+
+				// Track specific cache keys
+				if (key.startsWith('gho_') || key.startsWith('weekend_roster_cache_') || key.startsWith('usage_logged_')) {
+					const prefix = key.split('_')[0] + '_';
+					stats.cacheKeys[prefix] = (stats.cacheKeys[prefix] || 0) + 1;
+				}
+
+			} catch (error) {
+				console.warn(`Error processing localStorage key ${key}:`, error);
+				stats.keysByType.error = (stats.keysByType.error || 0) + 1;
+			}
+		}
+
+		// Sort old keys by age (oldest first)
+		stats.oldKeys.sort((a, b) => b.age - a.age);
+
+		// Format sizes
+		stats.totalSizeKB = Math.round(stats.totalSize / 1024);
+		stats.totalSizeMB = Math.round(stats.totalSize / (1024 * 1024) * 100) / 100;
+
+		return stats;
+	} catch (error) {
+		console.error('Error getting localStorage stats:', error);
+		return { error: error.message };
+	}
+}
+
+// ================================================
+// Scheduled LocalStorage Cleanup Tasks
+// ================================================
+
+// Run localStorage cleanup every 12 hours to keep storage clean
+setInterval(cleanupLocalStorageOlderThan3Days, 12 * 60 * 60 * 1000);
+
+// Run initial cleanup when the background script starts
+setTimeout(() => {
+	console.log('Running initial localStorage cleanup in background...');
+	cleanupLocalStorageOlderThan3Days();
+}, 10000); // Wait 10 seconds after background script starts
+
+// ================================================
+// Message Handlers for LocalStorage Cleanup
+// ================================================
+
+// Listen for messages from popup and other parts of the extension
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+	try {
+		if (request.action === 'cleanupLocalStorage') {
+			// Handle localStorage cleanup request (remove items older than 3 days)
+			console.log('Background: Cleaning up localStorage items older than 3 days...');
+			try {
+				const result = cleanupLocalStorageOlderThan3Days();
+				if (result.success) {
+					console.log(`Background: LocalStorage cleanup completed: ${result.cleanedCount} items removed`);
+					sendResponse({
+						success: true,
+						message: `LocalStorage cleanup completed: ${result.cleanedCount} items removed`,
+						cleanedCount: result.cleanedCount,
+						totalKeys: result.totalKeys
+					});
+				} else {
+					console.error('Background: LocalStorage cleanup failed:', result.error);
+					sendResponse({ success: false, error: result.error });
+				}
+			} catch (error) {
+				console.error('Background: Error during localStorage cleanup:', error);
+				sendResponse({ success: false, error: error.message });
+			}
+			return true;
+		} else if (request.action === 'comprehensiveLocalStorageCleanup') {
+			// Handle comprehensive localStorage cleanup request
+			console.log('Background: Running comprehensive localStorage cleanup...');
+			try {
+				const result = comprehensiveLocalStorageCleanup();
+				if (result.success) {
+					console.log(`Background: Comprehensive cleanup completed: ${result.totalCleaned} total items removed`);
+					sendResponse({
+						success: true,
+						message: `Comprehensive cleanup completed: ${result.totalCleaned} total items removed`,
+						totalCleaned: result.totalCleaned,
+						results: result.results,
+						generalCleanup: result.generalCleanup
+					});
+				} else {
+					console.error('Background: Comprehensive cleanup failed:', result.error);
+					sendResponse({ success: false, error: result.error });
+				}
+			} catch (error) {
+				console.error('Background: Error during comprehensive localStorage cleanup:', error);
+				sendResponse({ success: false, error: error.message });
+			}
+			return true;
+		} else if (request.action === 'getLocalStorageStats') {
+			// Handle localStorage stats request
+			console.log('Background: Getting localStorage statistics...');
+			try {
+				const stats = getLocalStorageStats();
+				if (stats.error) {
+					console.error('Background: Error getting localStorage stats:', stats.error);
+					sendResponse({ success: false, error: stats.error });
+				} else {
+					console.log('Background: LocalStorage stats retrieved successfully');
+					sendResponse({
+						success: true,
+						stats: stats
+					});
+				}
+			} catch (error) {
+				console.error('Background: Error getting localStorage stats:', error);
+				sendResponse({ success: false, error: error.message });
+			}
+			return true;
+		}
+	} catch (error) {
+		console.error('Background: Error handling message:', error);
+		sendResponse({ success: false, error: error.message });
+	}
+	return false;
+});

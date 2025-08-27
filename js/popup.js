@@ -163,19 +163,16 @@ export const WEEKEND_ROSTER_SPREADSHEET_ID = '19qZi50CzKHm8PmSHiPjgTHogEue_DS70i
 const DEV_FORCE_SHOW_WEEKEND_ROSTER = false;
 
 // ================================================
-// Section: 4) GHO Caching Keys and Defaults
+// Section: 4) GHO Cache Keys & Defaults
 // ================================================
-const GHO_CACHE_TTL = 600000;
-const GHO_CACHE_STORAGE_KEY = 'gho_cache_v1';
-window.__ghoCache = window.__ghoCache || loadGHOCache();
-window.__ghoListState = window.__ghoListState || null;
+const GHO_CACHE_STORAGE_KEY = 'gho_cache_data';
+const GHO_USERMAP_CACHE_KEY = 'gho_usermap_cache';
+const USER_EMAIL_CACHE_KEY = 'user_email_cache';
+const USAGE_STATE_KEY = 'usage_state';
+const ACTION_TAKEN_CASES_KEY = 'action_taken_cases';
 
-// Initialize GHO cache
-console.log('GHO Cache initialized:', window.__ghoCache);
-const GHO_PAGE_SIZE = 10;
-const GHO_USERMAP_CACHE_KEY = 'gho_user_map_cache_v2';
+const GHO_CACHE_TTL = 600000;
 const GHO_USERMAP_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
-const USER_EMAIL_CACHE_KEY = 'sf_user_email_cache_v1';
 const USER_EMAIL_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
 
 // GHO mapping storage configuration
@@ -333,6 +330,1031 @@ function saveGHOCache() {
     console.warn('Failed to save GHO cache:', error);
   }
 }
+
+function addActionTakenCase(caseId, actionType = 'manual') {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    existing[caseId] = {
+      actionType,
+      timestamp: Date.now(),
+      date: new Date().toISOString().split('T')[0]
+    };
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+  } catch { }
+}
+
+function isActionTakenCase(caseId) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    return existing.hasOwnProperty(caseId);
+  } catch { return false; }
+}
+
+function getActionTakenCases() {
+  try {
+    return JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+  } catch { return {}; }
+}
+
+function cleanupOldActionTakenCases() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    let removedCount = 0;
+    Object.keys(existing).forEach(caseId => {
+      const caseData = existing[caseId];
+      if (caseData.timestamp && caseData.timestamp < thirtyDaysAgo.getTime()) {
+        delete existing[caseId];
+        removedCount++;
+      }
+    });
+
+    if (removedCount > 0) {
+      localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+      console.log(`Cleaned up ${removedCount} old action taken case entries`);
+    }
+  } catch { }
+}
+
+function getActionTakenCaseStats() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const stats = {
+      total: Object.keys(existing).length,
+      byActionType: {},
+      byDate: {},
+      recent: 0
+    };
+
+    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+
+    Object.values(existing).forEach(caseData => {
+      const actionType = caseData.actionType || 'unknown';
+      const date = caseData.date || 'unknown';
+
+      stats.byActionType[actionType] = (stats.byActionType[actionType] || 0) + 1;
+      stats.byDate[date] = (stats.byDate[date] || 0) + 1;
+
+      if (caseData.timestamp && caseData.timestamp > oneDayAgo) {
+        stats.recent++;
+      }
+    });
+
+    return stats;
+  } catch { return { total: 0, byActionType: {}, byDate: {}, recent: 0 }; }
+}
+
+function exportActionTakenCaseData() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const exportData = [];
+
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      exportData.push({
+        caseId,
+        actionType: caseData.actionType || 'unknown',
+        timestamp: caseData.timestamp || 0,
+        date: caseData.date || 'unknown',
+        formattedDate: caseData.timestamp ? new Date(caseData.timestamp).toLocaleString() : 'unknown'
+      });
+    });
+
+    const csvContent = [
+      'Case ID,Action Type,Timestamp,Date,Formatted Date',
+      ...exportData.map(row => `${row.caseId},${row.actionType},${row.timestamp},${row.date},"${row.formattedDate}"`)
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `action_taken_cases_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    return true;
+  } catch { return false; }
+}
+
+function clearAllActionTakenCases() {
+  try {
+    localStorage.removeItem(ACTION_TAKEN_CASES_KEY);
+    console.log('All action taken case data cleared');
+    return true;
+  } catch { return false; }
+}
+
+function getActionTakenCasesByDateRange(startDate, endDate) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const filtered = {};
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end) {
+        filtered[caseId] = caseData;
+      }
+    });
+
+    return filtered;
+  } catch { return {}; }
+}
+
+function getActionTakenCasesByType(actionType) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const filtered = {};
+
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (caseData.actionType === actionType) {
+        filtered[caseId] = caseData;
+      }
+    });
+
+    return filtered;
+  } catch { return {}; }
+}
+
+function getActionTakenCaseCountForDate(dateStr) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    let count = 0;
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.date === dateStr) {
+        count++;
+      }
+    });
+
+    return count;
+  } catch { return 0; }
+}
+
+function getTodayActionTakenCases() {
+  const today = new Date().toISOString().split('T')[0];
+  return getActionTakenCasesByDateRange(today, today);
+}
+
+function getThisWeekActionTakenCases() {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  const endOfWeek = new Date(now);
+  endOfWeek.setDate(now.getDate() + (6 - now.getDay()));
+  endOfWeek.setHours(23, 59, 59, 999);
+
+  return getActionTakenCasesByDateRange(startOfWeek.toISOString(), endOfWeek.toISOString());
+}
+
+function getThisMonthActionTakenCases() {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  return getActionTakenCasesByDateRange(startOfMonth.toISOString(), endOfMonth.toISOString());
+}
+
+function getActionTakenCasesByDateRangeAndType(startDate, endDate, actionType) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const filtered = {};
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && caseData.actionType === actionType) {
+        filtered[caseData.actionType] = (filtered[caseData.actionType] || 0) + 1;
+      }
+    });
+
+    return filtered;
+  } catch { return {}; }
+}
+
+function getActionTakenCasesByDateRangeAndTypes(startDate, endDate, actionTypes) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const filtered = {};
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && actionTypes.includes(caseData.actionType)) {
+        filtered[caseId] = caseData;
+      }
+    });
+
+    return filtered;
+  } catch { return {}; }
+}
+
+function getActionTakenCaseCountsByDateRangeAndTypes(startDate, endDate, actionTypes) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const counts = {};
+    actionTypes.forEach(type => counts[type] = 0);
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && actionTypes.includes(caseData.actionType)) {
+        counts[caseData.actionType]++;
+      }
+    });
+
+    return counts;
+  } catch { return {}; }
+}
+
+function getActionTakenCaseCountsByDateRangeAndTypesByDate(startDate, endDate, actionTypes) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const countsByDate = {};
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && actionTypes.includes(caseData.actionType)) {
+        const date = caseData.date;
+        if (!countsByDate[date]) {
+          countsByDate[date] = {};
+          actionTypes.forEach(type => countsByDate[date][type] = 0);
+        }
+        countsByDate[date][caseData.actionType]++;
+      }
+    });
+
+    return countsByDate;
+  } catch { return {}; }
+}
+
+function getActionTakenCaseCountsByDateRangeAndTypesByDateAndActionType(startDate, endDate, actionTypes) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const countsByDateAndActionType = {};
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && actionTypes.includes(caseData.actionType)) {
+        const date = caseData.date;
+        const actionType = caseData.actionType;
+
+        if (!countsByDateAndActionType[date]) {
+          countsByDateAndActionType[date] = {};
+        }
+        if (!countsByDateAndActionType[date][actionType]) {
+          countsByDateAndActionType[date][actionType] = 0;
+        }
+
+        countsByDateAndActionType[date][actionType]++;
+      }
+    });
+
+    return countsByDateAndActionType;
+  } catch { return {}; }
+}
+
+function getActionTakenCaseCountsByDateRangeAndTypesByDateAndActionTypeWithTotals(startDate, endDate, actionTypes) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const countsByDateAndActionType = {};
+    const totals = {};
+    actionTypes.forEach(type => totals[type] = 0);
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && actionTypes.includes(caseData.actionType)) {
+        const date = caseData.date;
+        const actionType = caseData.actionType;
+
+        if (!countsByDateAndActionType[date]) {
+          countsByDateAndActionType[date] = {};
+        }
+        if (!countsByDateAndActionType[date][actionType]) {
+          countsByDateAndActionType[date][actionType] = 0;
+        }
+
+        countsByDateAndActionType[date][actionType]++;
+        totals[actionType]++;
+      }
+    });
+
+    return {
+      countsByDateAndActionType,
+      totals
+    };
+  } catch { return { countsByDateAndActionType: {}, totals: {} }; }
+}
+
+function getActionTakenCaseCountsByDateRangeAndTypesByDateAndActionTypeWithTotalsAndSummary(startDate, endDate, actionTypes) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const countsByDateAndActionType = {};
+    const totals = {};
+    const summary = {
+      totalCases: 0,
+      totalDates: 0,
+      averageCasesPerDate: 0,
+      dateRange: {
+        start: new Date(start).toISOString().split('T')[0],
+        end: new Date(end).toISOString().split('T')[0]
+      }
+    };
+
+    actionTypes.forEach(type => totals[type] = 0);
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end && actionTypes.includes(caseData.actionType)) {
+        const date = caseData.date;
+        const actionType = caseData.actionType;
+
+        if (!countsByDateAndActionType[date]) {
+          countsByDateAndActionType[date] = {};
+        }
+        if (!countsByDateAndActionType[date][actionType]) {
+          countsByDateAndActionType[date][actionType] = 0;
+        }
+
+        countsByDateAndActionType[date][actionType]++;
+        totals[actionType]++;
+        summary.totalCases++;
+      }
+    });
+
+    summary.totalDates = Object.keys(countsByDateAndActionType).length;
+    summary.averageCasesPerDate = summary.totalDates > 0 ? summary.totalCases / summary.totalDates : 0;
+
+    return {
+      countsByDateAndActionType,
+      totals,
+      summary
+    };
+  } catch { return { countsByDateAndActionType: {}, totals: {}, summary: {} }; }
+}
+
+function exportActionTakenCaseDataByDateRangeAndTypes(startDate, endDate, actionTypes) {
+  try {
+    const data = getActionTakenCaseCountsByDateRangeAndTypesByDateAndActionTypeWithTotalsAndSummary(startDate, endDate, actionTypes);
+
+    const csvContent = [
+      'Date,' + actionTypes.join(',') + ',Total',
+      ...Object.keys(data.countsByDateAndActionType).map(date => {
+        const row = [date];
+        let rowTotal = 0;
+        actionTypes.forEach(type => {
+          const count = data.countsByDateAndActionType[date][type] || 0;
+          row.push(count);
+          rowTotal += count;
+        });
+        row.push(rowTotal);
+        return row.join(',');
+      }),
+      'Total,' + actionTypes.map(type => data.totals[type] || 0).join(',') + ',' + data.summary.totalCases,
+      'Summary',
+      `Total Cases,${data.summary.totalCases}`,
+      `Total Dates,${data.summary.totalDates}`,
+      `Average Cases Per Date,${data.summary.averageCasesPerDate.toFixed(2)}`,
+      `Date Range Start,${data.summary.dateRange.start}`,
+      `Date Range End,${data.summary.dateRange.end}`
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `action_taken_cases_${startDate}_to_${endDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    return true;
+  } catch { return false; }
+}
+
+function cleanupActionTakenCasesByDateRange(startDate, endDate) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    let removedCount = 0;
+    Object.keys(existing).forEach(caseId => {
+      const caseData = existing[caseId];
+      if (caseData.timestamp && caseData.timestamp >= start && caseData.timestamp <= end) {
+        delete existing[caseId];
+        removedCount++;
+      }
+    });
+
+    if (removedCount > 0) {
+      localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+      console.log(`Cleaned up ${removedCount} action taken case entries for date range ${startDate} to ${endDate}`);
+    }
+
+    return removedCount;
+  } catch { return 0; }
+}
+
+function validateActionTakenCaseData() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const validation = {
+      isValid: true,
+      errors: [],
+      warnings: [],
+      stats: {
+        total: Object.keys(existing).length,
+        valid: 0,
+        invalid: 0
+      }
+    };
+
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (!caseId || !caseData || typeof caseData !== 'object') {
+        validation.isValid = false;
+        validation.errors.push(`Invalid case data for caseId: ${caseId}`);
+        validation.stats.invalid++;
+        return;
+      }
+
+      if (!caseData.actionType || !caseData.timestamp || !caseData.date) {
+        validation.isValid = false;
+        validation.errors.push(`Missing required fields for caseId: ${caseId}`);
+        validation.stats.invalid++;
+        return;
+      }
+
+      if (isNaN(caseData.timestamp) || caseData.timestamp <= 0) {
+        validation.isValid = false;
+        validation.errors.push(`Invalid timestamp for caseId: ${caseId}`);
+        validation.stats.invalid++;
+        return;
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(caseData.date)) {
+        validation.warnings.push(`Invalid date format for caseId: ${caseId}, date: ${caseData.date}`);
+      }
+
+      validation.stats.valid++;
+    });
+
+    return validation;
+  } catch (error) {
+    return {
+      isValid: false,
+      errors: [`Validation failed: ${error.message}`],
+      warnings: [],
+      stats: { total: 0, valid: 0, invalid: 0 }
+    };
+  }
+}
+
+function repairActionTakenCaseData() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const repaired = {};
+    let repairedCount = 0;
+
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (!caseId || !caseData || typeof caseData !== 'object') {
+        return;
+      }
+
+      const repairedCase = { ...caseData };
+
+      if (!repairedCase.actionType) {
+        repairedCase.actionType = 'unknown';
+        repairedCount++;
+      }
+
+      if (!repairedCase.timestamp || isNaN(repairedCase.timestamp) || repairedCase.timestamp <= 0) {
+        repairedCase.timestamp = Date.now();
+        repairedCount++;
+      }
+
+      if (!repairedCase.date || !/^\d{4}-\d{2}-\d{2}$/.test(repairedCase.date)) {
+        repairedCase.date = new Date(repairedCase.timestamp).toISOString().split('T')[0];
+        repairedCount++;
+      }
+
+      repaired[caseId] = repairedCase;
+    });
+
+    if (repairedCount > 0) {
+      localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(repaired));
+      console.log(`Repaired ${repairedCount} action taken case entries`);
+    }
+
+    return { repairedCount, totalCases: Object.keys(repaired).length };
+  } catch (error) {
+    console.error('Failed to repair action taken case data:', error);
+    return { repairedCount: 0, totalCases: 0 };
+  }
+}
+
+function backupActionTakenCaseData() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const backupKey = `${ACTION_TAKEN_CASES_KEY}_backup_${Date.now()}`;
+    localStorage.setItem(backupKey, JSON.stringify(existing));
+
+    const backupKeys = Object.keys(localStorage).filter(key => key.startsWith(`${ACTION_TAKEN_CASES_KEY}_backup_`));
+    if (backupKeys.length > 5) {
+      backupKeys.sort().slice(0, -5).forEach(key => localStorage.removeItem(key));
+    }
+
+    return { success: true, backupKey, totalCases: Object.keys(existing).length };
+  } catch (error) {
+    console.error('Failed to backup action taken case data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function restoreActionTakenCaseData(backupKey) {
+  try {
+    const backupData = localStorage.getItem(backupKey);
+    if (!backupData) {
+      return { success: false, error: 'Backup not found' };
+    }
+
+    const parsed = JSON.parse(backupData);
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, backupData);
+
+    return { success: true, totalCases: Object.keys(parsed).length };
+  } catch (error) {
+    console.error('Failed to restore action taken case data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function listActionTakenCaseBackups() {
+  try {
+    const backupKeys = Object.keys(localStorage).filter(key => key.startsWith(`${ACTION_TAKEN_CASES_KEY}_backup_`));
+    const backups = backupKeys.map(key => {
+      const timestamp = key.replace(`${ACTION_TAKEN_CASES_KEY}_backup_`, '');
+      const data = localStorage.getItem(key);
+      let caseCount = 0;
+      try {
+        const parsed = JSON.parse(data);
+        caseCount = Object.keys(parsed).length;
+      } catch { }
+
+      return {
+        key,
+        timestamp: parseInt(timestamp),
+        date: new Date(parseInt(timestamp)).toLocaleString(),
+        caseCount
+      };
+    }).sort((a, b) => b.timestamp - a.timestamp);
+
+    return backups;
+  } catch (error) {
+    console.error('Failed to list action taken case backups:', error);
+    return [];
+  }
+}
+
+function deleteActionTakenCaseBackup(backupKey) {
+  try {
+    if (!backupKey || !backupKey.startsWith(`${ACTION_TAKEN_CASES_KEY}_backup_`)) {
+      return { success: false, error: 'Invalid backup key' };
+    }
+
+    localStorage.removeItem(backupKey);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete action taken case backup:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function searchActionTakenCases(query, options = {}) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const results = {};
+
+    const {
+      actionType,
+      startDate,
+      endDate,
+      limit = 100,
+      caseIdPattern
+    } = options;
+
+    const start = startDate ? new Date(startDate).getTime() : 0;
+    const end = endDate ? new Date(endDate).getTime() : Date.now();
+
+    let count = 0;
+    Object.entries(existing).forEach(([caseId, caseData]) => {
+      if (count >= limit) return;
+
+      let matches = true;
+
+      if (actionType && caseData.actionType !== actionType) {
+        matches = false;
+      }
+
+      if (startDate && caseData.timestamp < start) {
+        matches = false;
+      }
+
+      if (endDate && caseData.timestamp > end) {
+        matches = false;
+      }
+
+      if (caseIdPattern && !caseId.match(new RegExp(caseIdPattern, 'i'))) {
+        matches = false;
+      }
+
+      if (matches) {
+        results[caseId] = caseData;
+        count++;
+      }
+    });
+
+    return results;
+  } catch (error) {
+    console.error('Failed to search action taken cases:', error);
+    return {};
+  }
+}
+
+function getActionTakenCaseById(caseId) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    return existing[caseId] || null;
+  } catch (error) {
+    console.error('Failed to get action taken case by ID:', error);
+    return null;
+  }
+}
+
+function updateActionTakenCase(caseId, updates) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+
+    if (!existing[caseId]) {
+      return { success: false, error: 'Case not found' };
+    }
+
+    const updatedCase = { ...existing[caseId], ...updates };
+
+    if (updates.timestamp) {
+      updatedCase.date = new Date(updates.timestamp).toISOString().split('T')[0];
+    }
+
+    existing[caseId] = updatedCase;
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+
+    return { success: true, caseData: updatedCase };
+  } catch (error) {
+    console.error('Failed to update action taken case:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function deleteActionTakenCase(caseId) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+
+    if (!existing[caseId]) {
+      return { success: false, error: 'Case not found' };
+    }
+
+    delete existing[caseId];
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete action taken case:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function bulkAddActionTakenCases(cases) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    cases.forEach(caseData => {
+      if (!caseData.caseId || !caseData.actionType) {
+        return;
+      }
+
+      const newCase = {
+        actionType: caseData.actionType,
+        timestamp: caseData.timestamp || Date.now(),
+        date: caseData.date || new Date().toISOString().split('T')[0]
+      };
+
+      if (existing[caseData.caseId]) {
+        updatedCount++;
+      } else {
+        addedCount++;
+      }
+
+      existing[caseData.caseId] = newCase;
+    });
+
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+
+    return { success: true, addedCount, updatedCount, totalCases: Object.keys(existing).length };
+  } catch (error) {
+    console.error('Failed to bulk add action taken cases:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function importActionTakenCaseData(data, options = {}) {
+  try {
+    const {
+      overwrite = false,
+      merge = true,
+      validate = true
+    } = options;
+
+    if (validate) {
+      const validation = validateActionTakenCaseData();
+      if (!validation.isValid) {
+        return { success: false, error: 'Data validation failed', validation };
+      }
+    }
+
+    const existing = overwrite ? {} : JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    let importedCount = 0;
+    let skippedCount = 0;
+
+    if (Array.isArray(data)) {
+      data.forEach(caseData => {
+        if (!caseData.caseId || !caseData.actionType) {
+          skippedCount++;
+          return;
+        }
+
+        if (!overwrite && existing[caseData.caseId] && !merge) {
+          skippedCount++;
+          return;
+        }
+
+        existing[caseData.caseId] = {
+          actionType: caseData.actionType,
+          timestamp: caseData.timestamp || Date.now(),
+          date: caseData.date || new Date().toISOString().split('T')[0]
+        };
+
+        importedCount++;
+      });
+    } else if (typeof data === 'object') {
+      Object.entries(data).forEach(([caseId, caseData]) => {
+        if (!caseData || !caseData.actionType) {
+          skippedCount++;
+          return;
+        }
+
+        if (!overwrite && existing[caseId] && !merge) {
+          skippedCount++;
+          return;
+        }
+
+        existing[caseId] = {
+          actionType: caseData.actionType,
+          timestamp: caseData.timestamp || Date.now(),
+          date: caseData.date || new Date().toISOString().split('T')[0]
+        };
+
+        importedCount++;
+      });
+    }
+
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+
+    return { success: true, importedCount, skippedCount, totalCases: Object.keys(existing).length };
+  } catch (error) {
+    console.error('Failed to import action taken case data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function syncActionTakenCaseData(sourceData, options = {}) {
+  try {
+    const {
+      conflictResolution = 'newer',
+      validate = true,
+      backup = true
+    } = options;
+
+    if (backup) {
+      backupActionTakenCaseData();
+    }
+
+    if (validate) {
+      const validation = validateActionTakenCaseData();
+      if (!validation.isValid) {
+        return { success: false, error: 'Source data validation failed', validation };
+      }
+    }
+
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    let syncedCount = 0;
+    let conflictCount = 0;
+    let skippedCount = 0;
+
+    Object.entries(sourceData).forEach(([caseId, sourceCase]) => {
+      if (!sourceCase || !sourceCase.actionType) {
+        skippedCount++;
+        return;
+      }
+
+      const existingCase = existing[caseId];
+
+      if (existingCase) {
+        if (conflictResolution === 'newer') {
+          if (sourceCase.timestamp > existingCase.timestamp) {
+            existing[caseId] = sourceCase;
+            syncedCount++;
+          } else {
+            skippedCount++;
+          }
+        } else if (conflictResolution === 'source') {
+          existing[caseId] = sourceCase;
+          syncedCount++;
+        } else if (conflictResolution === 'existing') {
+          skippedCount++;
+        }
+      } else {
+        existing[caseId] = sourceCase;
+        syncedCount++;
+      }
+    });
+
+    localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+
+    return { success: true, syncedCount, conflictCount, skippedCount, totalCases: Object.keys(existing).length };
+  } catch (error) {
+    console.error('Failed to sync action taken case data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function migrateActionTakenCaseData(oldFormat, options = {}) {
+  try {
+    const {
+      validate = true,
+      backup = true,
+      cleanup = true
+    } = options;
+
+    if (backup) {
+      backupActionTakenCaseData();
+    }
+
+    const migrated = {};
+    let migratedCount = 0;
+    let skippedCount = 0;
+
+    if (Array.isArray(oldFormat)) {
+      oldFormat.forEach(item => {
+        if (item.caseId && item.actionType) {
+          migrated[item.caseId] = {
+            actionType: item.actionType,
+            timestamp: item.timestamp || Date.now(),
+            date: item.date || new Date().toISOString().split('T')[0]
+          };
+          migratedCount++;
+        } else {
+          skippedCount++;
+        }
+      });
+    } else if (typeof oldFormat === 'object') {
+      Object.entries(oldFormat).forEach(([key, value]) => {
+        if (typeof value === 'string' && value === 'true') {
+          migrated[key] = {
+            actionType: 'legacy',
+            timestamp: Date.now(),
+            date: new Date().toISOString().split('T')[0]
+          };
+          migratedCount++;
+        } else if (value && typeof value === 'object' && value.actionType) {
+          migrated[key] = {
+            actionType: value.actionType,
+            timestamp: value.timestamp || Date.now(),
+            date: value.date || new Date().toISOString().split('T')[0]
+          };
+          migratedCount++;
+        } else {
+          skippedCount++;
+        }
+      });
+    }
+
+    if (migratedCount > 0) {
+      localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(migrated));
+
+      if (cleanup) {
+        Object.keys(oldFormat).forEach(key => {
+          if (key !== ACTION_TAKEN_CASES_KEY) {
+            localStorage.removeItem(key);
+          }
+        });
+      }
+    }
+
+    return { success: true, migratedCount, skippedCount, totalCases: Object.keys(migrated).length };
+  } catch (error) {
+    console.error('Failed to migrate action taken case data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+function getActionTakenCaseStatsByPeriod(period = 'all', options = {}) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+    const stats = {
+      period,
+      total: Object.keys(existing).length,
+      byActionType: {},
+      byDate: {},
+      trends: {},
+      summary: {}
+    };
+
+    const now = Date.now();
+    let startTime = 0;
+    let endTime = now;
+
+    switch (period) {
+      case 'today':
+        startTime = new Date().setHours(0, 0, 0, 0);
+        break;
+      case 'week':
+        startTime = new Date(now - 7 * 24 * 60 * 60 * 1000).getTime();
+        break;
+      case 'month':
+        startTime = new Date(now - 30 * 24 * 60 * 60 * 1000).getTime();
+        break;
+      case 'quarter':
+        startTime = new Date(now - 90 * 24 * 60 * 60 * 1000).getTime();
+        break;
+      case 'year':
+        startTime = new Date(now - 365 * 24 * 60 * 60 * 1000).getTime();
+        break;
+    }
+
+    Object.values(existing).forEach(caseData => {
+      if (caseData.timestamp && caseData.timestamp >= startTime && caseData.timestamp <= endTime) {
+        const actionType = caseData.actionType || 'unknown';
+        const date = caseData.date || 'unknown';
+
+        stats.byActionType[actionType] = (stats.byActionType[actionType] || 0) + 1;
+        stats.byDate[date] = (stats.byDate[date] || 0) + 1;
+      }
+    });
+
+    const dates = Object.keys(stats.byDate).sort();
+    if (dates.length > 1) {
+      const firstDate = dates[0];
+      const lastDate = dates[dates.length - 1];
+      const firstCount = stats.byDate[firstDate];
+      const lastCount = stats.byDate[lastDate];
+
+      stats.trends = {
+        firstDate,
+        lastDate,
+        firstCount,
+        lastCount,
+        change: lastCount - firstCount,
+        changePercent: firstCount > 0 ? ((lastCount - firstCount) / firstCount) * 100 : 0
+      };
+    }
+
+    stats.summary = {
+      averagePerDay: dates.length > 0 ? Object.values(stats.byDate).reduce((a, b) => a + b, 0) / dates.length : 0,
+      mostActiveDay: dates.length > 0 ? dates.reduce((a, b) => stats.byDate[a] > stats.byDate[b] ? a : b) : null,
+      mostCommonActionType: Object.keys(stats.byActionType).length > 0 ?
+        Object.keys(stats.byActionType).reduce((a, b) => stats.byActionType[a] > stats.byActionType[b] ? a : b) : null
+    };
+
+    return stats;
+  } catch (error) {
+    console.error('Failed to get action taken case stats by period:', error);
+    return { period, total: 0, byActionType: {}, byDate: {}, trends: {}, summary: {} };
+  }
+}
+
 function escapeSoqlString(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 function cleanRosterNameForQuery(name) {
   let s = String(name || '').trim();
@@ -393,7 +1415,6 @@ function getEmailsByNames(names) {
 let mouseActivityTimer;
 const MOUSE_ACTIVITY_TIMEOUT = 60000;
 
-const USAGE_STATE_KEY = 'usage_state_v1';
 let usageState = (function loadUsageState() {
   try {
     const raw = localStorage.getItem(USAGE_STATE_KEY);
@@ -705,6 +1726,66 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message });
       }
       return true;
+    } else if (request.action === 'cleanupLocalStorage') {
+      // Handle localStorage cleanup request (remove items older than 3 days)
+      console.log('Requesting localStorage cleanup from background script...');
+      try {
+        chrome.runtime.sendMessage({ action: 'cleanupLocalStorage' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('Runtime error during cleanup:', chrome.runtime.lastError.message);
+            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+          } else if (response && response.success) {
+            sendResponse(response);
+          } else {
+            sendResponse({ success: false, error: response?.error || 'Unknown error' });
+          }
+        });
+        return true; // Keep message channel open for async response
+      } catch (error) {
+        console.error('Error requesting localStorage cleanup:', error);
+        sendResponse({ success: false, error: error.message });
+        return true;
+      }
+    } else if (request.action === 'comprehensiveLocalStorageCleanup') {
+      // Handle comprehensive localStorage cleanup request
+      console.log('Requesting comprehensive localStorage cleanup from background script...');
+      try {
+        chrome.runtime.sendMessage({ action: 'comprehensiveLocalStorageCleanup' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('Runtime error during comprehensive cleanup:', chrome.runtime.lastError.message);
+            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+          } else if (response && response.success) {
+            sendResponse(response);
+          } else {
+            sendResponse({ success: false, error: response?.error || 'Unknown error' });
+          }
+        });
+        return true; // Keep message channel open for async response
+      } catch (error) {
+        console.error('Error requesting comprehensive localStorage cleanup:', error);
+        sendResponse({ success: false, error: error.message });
+        return true;
+      }
+    } else if (request.action === 'getLocalStorageStats') {
+      // Handle localStorage stats request
+      console.log('Requesting localStorage statistics from background script...');
+      try {
+        chrome.runtime.sendMessage({ action: 'getLocalStorageStats' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('Runtime error getting stats:', chrome.runtime.lastError.message);
+            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+          } else if (response && response.success) {
+            sendResponse(response);
+          } else {
+            sendResponse({ success: false, error: response?.error || 'Unknown error' });
+          }
+        });
+        return true; // Keep message channel open for async response
+      } catch (error) {
+        console.error('Error requesting localStorage stats:', error);
+        sendResponse({ success: false, error: error.message });
+        return true;
+      }
     }
   } catch (error) {
     console.error('Error handling background message:', error);
@@ -857,11 +1938,7 @@ function cleanupOldTrackingIds() {
 }
 
 setInterval(cleanupOldTrackingIds, 24 * 60 * 60 * 1000);
-
-
-
-
-
+setInterval(cleanupOldActionTakenCases, 24 * 60 * 60 * 1000);
 // Wrapper: increment per-day actioned cases and then forward to API logger
 function trackActionAndCount(dateofAction, caseNumber, severity, actionType, cloud, mode, userName, assignedTo = '') {
   try {
@@ -1265,18 +2342,18 @@ function getCaseDetails() {
                     }
 
                     if (actionedCaseIds.has(caseId)) {
-                      sessionStorage.setItem(caseId, 'true');
+                      addActionTakenCase(caseId, 'sigqb');
                     }
 
                     const routingLogs = caseRecord.Case_Routing_Logs__r;
                     if (routingLogs && routingLogs.totalSize > 0) {
                       const lastLog = routingLogs.records[0];
                       if (lastLog.Transfer_Reason__c === 'GEO Locate' && caseRecord.SE_Initial_Response_Status__c === 'Met') {
-                        sessionStorage.setItem(caseId, 'true');
+                        addActionTakenCase(caseId, 'geo_locate');
                       }
                     }
 
-                    const isActionTaken = (sessionStorage.getItem(caseId) || localStorage.getItem(caseId)) === 'true';
+                    const isActionTaken = isActionTakenCase(caseId);
                     const caseData = {
                       number: caseRecord.CaseNumber,
                       severity: caseRecord.Severity_Level__c,
@@ -1353,8 +2430,7 @@ function getCaseDetails() {
                                      data-case-number="${caseData.number}" 
                                      data-severity="${caseData.severity}" 
                                      data-cloud="${caseData.cloud}"
-                                     data-is-mvp="true"
-                                     disabled>
+                                     data-is-mvp="true">
                               <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
                             </div>
                             
@@ -1392,14 +2468,14 @@ function getCaseDetails() {
                   }
 
                   if (actionedCaseIds.has(caseId)) {
-                    sessionStorage.setItem(caseId, 'true');
+                    addActionTakenCase(caseId, 'sigqb');
                   }
 
                   const routingLogs = filteredRecords[x].Case_Routing_Logs__r;
                   if (routingLogs && routingLogs.totalSize > 0) {
                     const lastLog = routingLogs.records[0];
                     if (lastLog.Transfer_Reason__c === 'GEO Locate' || lastLog.Transfer_Reason__c === 'Dispatched' && filteredRecords[x].SE_Initial_Response_Status__c === 'Met') {
-                      sessionStorage.setItem(caseId, 'true');
+                      addActionTakenCase(caseId, 'geo_locate_dispatched');
                       // Auto-actioned case due to GEO Locate routing with Met SLA
                     }
                     // Track manual action for customer calls when case is sent back to queue
@@ -1415,7 +2491,7 @@ function getCaseDetails() {
                             filteredRecords[x].CaseRoutingTaxonomy__r.Name.split('-')[0],
                             currentMode,
                             currentUserName,
-                            caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0] + ' Skills Queue'
+                            filteredRecords[x].CaseRoutingTaxonomy__r.Name.split('-')[0] + ' Skills Queue'
                           );
                         } catch (e) { console.warn('Customer Call tracking failed', e); }
                       }
@@ -1424,7 +2500,7 @@ function getCaseDetails() {
 
                   const isSLAM = filteredRecords[x].CaseRoutingTaxonomy__r.Name === 'Sales-Issues Developing for Salesforce Functions (Product)';
                   if (isSLAM && filteredRecords[x].support_available_timezone__c === '(GMT+09:00) Japan Standard Time (Asia/Tokyo)') {
-                    sessionStorage.setItem(caseId, 'true');
+                    addActionTakenCase(caseId, 'slam_japan_timezone');
                     // Auto-actioned SLAM case due to Japan timezone
                   }
 
@@ -1444,7 +2520,7 @@ function getCaseDetails() {
                     } else if (snoozeUntil) {
                       localStorage.removeItem('snooze_' + caseId);
                     }
-                    const isActionTaken = (sessionStorage.getItem(caseId) || localStorage.getItem(caseId)) === 'true';
+                    const isActionTaken = isActionTakenCase(caseId);
                     const caseData = {
                       number: filteredRecords[x].CaseNumber,
                       severity: filteredRecords[x].Severity_Level__c,
@@ -1545,8 +2621,7 @@ function getCaseDetails() {
                                      data-severity="${caseData.severity}" 
                                      data-cloud="${caseData.cloud}"
                                      data-is-mvp="${caseData.isMVP}"
-                                     data-is-slam="${caseData.isSLAM}"
-                                     disabled>
+                                     data-is-slam="${caseData.isSLAM}">
                               <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
                             </div>
                             
@@ -2080,10 +3155,147 @@ async function showVoiceCallModal() {
     trackBtn.disabled = true;
     container.style.display = 'none';
     loading.style.display = 'block';
+    // Ensure loading shows spinner text (in case it previously showed an empty or error state)
+    loading.innerHTML = '<div class="spinner"></div><p>Fetching recent Voice Calls...</p>';
 
     // Show modal
     modal.style.display = 'flex';
     setTimeout(() => modal.classList.add('modal-show'), 0);
+
+    // Bind Apply handler early so it works even if initial load exits early
+    // Re-run query on Apply
+    const applyBtnEarly = document.getElementById('voicecall-days-apply');
+    if (applyBtnEarly) {
+      applyBtnEarly.onclick = async () => {
+        // Refresh data with new days filter without reopening modal
+        try {
+          console.log('Apply button clicked, refreshing voice call data...');
+
+          // Reset state
+          tbody.innerHTML = '';
+          selectAll.checked = false;
+          trackBtn.disabled = true;
+          container.style.display = 'none';
+          loading.style.display = 'block';
+          // Reset loading content to spinner for the refresh
+          loading.innerHTML = '<div class="spinner"></div><p>Fetching recent Voice Calls...</p>';
+
+          // Get updated days value
+          const daysInputEl = document.getElementById('voicecall-days-input');
+          let days = 2;
+          try {
+            const parsed = parseInt(daysInputEl && daysInputEl.value ? daysInputEl.value : '2', 10);
+            if (!isNaN(parsed) && parsed >= 1 && parsed <= 30) days = parsed;
+            console.log('Using days value:', days);
+          } catch { }
+
+          // Create new connection and get userId for this refresh
+          const refreshConn = new jsforce.Connection({
+            serverUrl: 'https://orgcs.my.salesforce.com',
+            sessionId: SESSION_ID,
+            version: '64.0',
+          });
+
+          let refreshUserId = null;
+          try {
+            const ures = await refreshConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
+            if (ures && ures.records && ures.records.length) refreshUserId = ures.records[0].Id;
+            console.log('Refresh userId:', refreshUserId);
+          } catch (e) {
+            console.error('Error getting refresh userId:', e);
+          }
+
+          if (!refreshUserId) {
+            loading.innerHTML = '<p style="color:#b91c1c;">Unable to identify user. Please try again.</p>';
+            return;
+          }
+
+          // Re-run query with new days value
+          const soql = `SELECT Account__c, CallDurationInSeconds, Case__c, Contact__c, Contact_Is_DC__c, CreatedById, CreatedDate, DisconnectReason, FromPhoneNumber, Id, Name, OwnerId, QueueName, RecipientId, Related_Issue__c, ToPhoneNumber, UserId,Voice_Issue_Summary__c, Voice_Resolution_Summary__c, Voice_Summary__c FROM VoiceCall WHERE OwnerId = '${refreshUserId}' AND QueueName='CS Signature Hotline' AND CreatedDate=LAST_N_DAYS:${days} ORDER BY CreatedDate DESC`;
+
+          console.log('Executing SOQL query:', soql);
+
+          let result;
+          try {
+            result = await refreshConn.query(soql);
+            console.log('Query result:', result);
+          } catch (e) {
+            console.error('Query failed:', e);
+            loading.innerHTML = `<p style="color:#b91c1c;">Query failed: ${e.message}</p>`;
+            return;
+          }
+
+          const records = (result && result.records) ? result.records : [];
+          console.log('Records found:', records.length);
+
+          if (!records.length) {
+            loading.innerHTML = '<p style="color:#374151;">No recent Voice Calls found.</p>';
+            return;
+          }
+
+          // Resolve Case Id -> CaseNumber for better display
+          const caseNumMap = {};
+          try {
+            const caseIds = Array.from(new Set(records.map(r => r.Case__c).filter(id => id && typeof id === 'string' && id.startsWith('500'))));
+            const CHUNK = 100;
+            for (let i = 0; i < caseIds.length; i += CHUNK) {
+              const slice = caseIds.slice(i, i + CHUNK);
+              const cres = await refreshConn.query(`SELECT Id, CaseNumber FROM Case WHERE Id IN ('${slice.join("','")}')`);
+              (cres.records || []).forEach(c => { if (c && c.Id) caseNumMap[c.Id] = c.CaseNumber; });
+            }
+          } catch { }
+
+          // Render rows
+          const fmt = (d) => {
+            try { return new Date(d).toLocaleString(); } catch { return d; }
+          };
+          const dur = (s) => {
+            const n = parseInt(s || 0, 10);
+            const m = Math.floor(n / 60); const r = n % 60; return `${m}m ${r}s`;
+          };
+          records.forEach((r) => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #e5e7eb';
+            const caseDisplay = r.Case__c ? (caseNumMap[r.Case__c] || r.Case__c) : '';
+            tr.innerHTML = `
+              <td style="padding:8px; text-align:center;"><input type="checkbox" class="voicecall-row-select" data-case="${r.Case__c || ''}" data-created="${r.CreatedDate || ''}"></td>
+              <td>${fmt(r.CreatedDate)}</td>
+              <td>${r.FromPhoneNumber || ''}</td>
+              <td>${r.ToPhoneNumber || ''}</td>
+              <td>${dur(r.CallDurationInSeconds)}</td>
+              <td>${caseDisplay}</td>
+              <td>${r.QueueName || ''}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          // Enable UI
+          loading.style.display = 'none';
+          container.style.display = 'block';
+
+          // Re-attach event listeners for new rows
+          const updateTrackBtn = () => {
+            const any = !!document.querySelector('.voicecall-row-select:checked');
+            trackBtn.disabled = !any;
+          };
+          selectAll.addEventListener('change', () => {
+            document.querySelectorAll('.voicecall-row-select').forEach(cb => cb.checked = selectAll.checked);
+            updateTrackBtn();
+          });
+          tbody.addEventListener('change', (e) => {
+            if (e.target && e.target.classList.contains('voicecall-row-select')) updateTrackBtn();
+          });
+
+          showToast(`Updated to show calls from last ${days} day${days > 1 ? 's' : ''}`);
+          console.log('Voice call data refresh completed successfully');
+        } catch (error) {
+          console.error('Error refreshing voice call data:', error);
+          loading.innerHTML = '<p style="color:#b91c1c;">Failed to refresh data. Please try again.</p>';
+        }
+      };
+    }
+
+
 
     if (!window.jsforce || !SESSION_ID) {
       loading.innerHTML = '<p style="color:#b91c1c;">Unable to query Salesforce: missing session. Please sign in.</p>';
@@ -2178,12 +3390,135 @@ async function showVoiceCallModal() {
       if (e.target && e.target.classList.contains('voicecall-row-select')) updateTrackBtn();
     });
 
-    // Re-run query on Apply
+    // Re-run query on Apply (single binding)
     const applyBtn = document.getElementById('voicecall-days-apply');
     if (applyBtn) {
-      applyBtn.onclick = () => {
-        // simple reload of modal for new filter
-        showVoiceCallModal();
+      applyBtn.onclick = async () => {
+        // Refresh data with new days filter without reopening modal
+        try {
+          console.log('Apply button clicked, refreshing voice call data...');
+
+          // Reset state
+          tbody.innerHTML = '';
+          selectAll.checked = false;
+          trackBtn.disabled = true;
+          container.style.display = 'none';
+          loading.style.display = 'block';
+          // Reset loading content to spinner for the refresh
+          loading.innerHTML = '<div class="spinner"></div><p>Fetching recent Voice Calls...</p>';
+
+          // Get updated days value
+          const daysInputEl = document.getElementById('voicecall-days-input');
+          let days = 2;
+          try {
+            const parsed = parseInt(daysInputEl && daysInputEl.value ? daysInputEl.value : '2', 10);
+            if (!isNaN(parsed) && parsed >= 1 && parsed <= 30) days = parsed;
+            console.log('Using days value:', days);
+          } catch { }
+
+          // Create new connection and get userId for this refresh
+          const refreshConn = new jsforce.Connection({
+            serverUrl: 'https://orgcs.my.salesforce.com',
+            sessionId: SESSION_ID,
+            version: '64.0',
+          });
+
+          let refreshUserId = null;
+          try {
+            const ures = await refreshConn.query(`SELECT Id FROM User WHERE Name = '${currentUserName}' AND IsActive = True AND Username LIKE '%orgcs.com'`);
+            if (ures && ures.records && ures.records.length) refreshUserId = ures.records[0].Id;
+            console.log('Refresh userId:', refreshUserId);
+          } catch (e) {
+            console.error('Error getting refresh userId:', e);
+          }
+
+          if (!refreshUserId) {
+            loading.innerHTML = '<p style="color:#b91c1c;">Unable to identify user. Please try again.</p>';
+            return;
+          }
+
+          // Re-run query with new days value
+          const soql = `SELECT Account__c, CallDurationInSeconds, Case__c, Contact__c, Contact_Is_DC__c, CreatedById, CreatedDate, DisconnectReason, FromPhoneNumber, Id, Name, OwnerId, QueueName, RecipientId, Related_Issue__c, ToPhoneNumber, UserId,Voice_Issue_Summary__c, Voice_Resolution_Summary__c, Voice_Summary__c FROM VoiceCall WHERE OwnerId = '${refreshUserId}' AND QueueName='CS Signature Hotline' AND CreatedDate=LAST_N_DAYS:${days} ORDER BY CreatedDate DESC`;
+
+          console.log('Executing SOQL query:', soql);
+
+          let result;
+          try {
+            result = await refreshConn.query(soql);
+            console.log('Query result:', result);
+          } catch (e) {
+            console.error('Query failed:', e);
+            loading.innerHTML = `<p style="color:#b91c1c;">Query failed: ${e.message}</p>`;
+            return;
+          }
+
+          const records = (result && result.records) ? result.records : [];
+          console.log('Records found:', records.length);
+
+          if (!records.length) {
+            loading.innerHTML = '<p style="color:#374151;">No recent Voice Calls found.</p>';
+            return;
+          }
+
+          // Resolve Case Id -> CaseNumber for better display
+          const caseNumMap = {};
+          try {
+            const caseIds = Array.from(new Set(records.map(r => r.Case__c).filter(id => id && typeof id === 'string' && id.startsWith('500'))));
+            const CHUNK = 100;
+            for (let i = 0; i < caseIds.length; i += CHUNK) {
+              const slice = caseIds.slice(i, i + CHUNK);
+              const cres = await refreshConn.query(`SELECT Id, CaseNumber FROM Case WHERE Id IN ('${slice.join("','")}')`);
+              (cres.records || []).forEach(c => { if (c && c.Id) caseNumMap[c.Id] = c.CaseNumber; });
+            }
+          } catch { }
+
+          // Render rows
+          const fmt = (d) => {
+            try { return new Date(d).toLocaleString(); } catch { return d; }
+          };
+          const dur = (s) => {
+            const n = parseInt(s || 0, 10);
+            const m = Math.floor(n / 60); const r = n % 60; return `${m}m ${r}s`;
+          };
+          records.forEach((r) => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #e5e7eb';
+            const caseDisplay = r.Case__c ? (caseNumMap[r.Case__c] || r.Case__c) : '';
+            tr.innerHTML = `
+              <td style="padding:8px; text-align:center;"><input type="checkbox" class="voicecall-row-select" data-case="${r.Case__c || ''}" data-created="${r.CreatedDate || ''}"></td>
+              <td>${fmt(r.CreatedDate)}</td>
+              <td>${r.FromPhoneNumber || ''}</td>
+              <td>${r.ToPhoneNumber || ''}</td>
+              <td>${dur(r.CallDurationInSeconds)}</td>
+              <td>${caseDisplay}</td>
+              <td>${r.QueueName || ''}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          // Enable UI
+          loading.style.display = 'none';
+          container.style.display = 'block';
+
+          // Re-attach event listeners for new rows
+          const updateTrackBtn = () => {
+            const any = !!document.querySelector('.voicecall-row-select:checked');
+            trackBtn.disabled = !any;
+          };
+          selectAll.addEventListener('change', () => {
+            document.querySelectorAll('.voicecall-row-select').forEach(cb => cb.checked = selectAll.checked);
+            updateTrackBtn();
+          });
+          tbody.addEventListener('change', (e) => {
+            if (e.target && e.target.classList.contains('voicecall-row-select')) updateTrackBtn();
+          });
+
+          showToast(`Updated to show calls from last ${days} day${days > 1 ? 's' : ''}`);
+          console.log('Voice call data refresh completed successfully');
+        } catch (error) {
+          console.error('Error refreshing voice call data:', error);
+          loading.innerHTML = '<p style="color:#b91c1c;">Failed to refresh data. Please try again.</p>';
+        }
       };
     }
 
@@ -2848,6 +4183,8 @@ document.addEventListener("DOMContentLoaded", function () {
     document.addEventListener('keydown', (e) => { if (voiceModal.style.display === 'flex' && e.key === 'Escape') closeVoiceModal(); });
   }
 
+  // Removed fallback global binding to avoid duplicate fetches; Apply is bound within showVoiceCallModal
+
   document.getElementById("gho-modal").addEventListener("click", function (e) {
     if (e.target === this) {
       this.classList.remove('modal-show');
@@ -2986,6 +4323,18 @@ document.getElementById("clear-snoozed-button").addEventListener("click", functi
 // Manual track by Case Number: removed inline UI + shortcut; moved to 3-dots modal
 
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
+  if (e.target && e.target.classList.contains("action-checkbox")) {
+    const checkbox = e.target;
+    const caseId = checkbox.dataset.caseId;
+    if (checkbox.checked) {
+      addActionTakenCase(caseId, 'manual');
+    } else {
+      const existing = JSON.parse(localStorage.getItem(ACTION_TAKEN_CASES_KEY) || '{}');
+      delete existing[caseId];
+      localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
+    }
+  }
+
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
     const caseDiv = button.closest('.case-card');
