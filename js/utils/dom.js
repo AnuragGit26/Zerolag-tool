@@ -56,11 +56,28 @@ function getCurrentSearchValue() {
     return searchInput ? searchInput.value.trim() : "";
 }
 
-export function updateWeekendModeIndicator() {
+export function updateWeekendModeIndicator(currentMode = (localStorage.getItem('caseTriageMode') || 'signature')) {
     const weekendIndicator = document.getElementById("weekend-mode-indicator");
-    if (isCurrentlyWeekend()) {
-        weekendIndicator.style.display = "block";
+    const slaIndicator = document.getElementById("sla-indicator");
+
+    const weekend = isCurrentlyWeekend();
+
+    if (weekendIndicator) {
+        weekendIndicator.style.display = weekend ? "block" : "none";
+    }
+
+    if (!slaIndicator) return;
+
+    if (currentMode === 'signature') {
+        if (weekend) {
+            slaIndicator.style.display = 'inline-block';
+            slaIndicator.textContent = 'SLA · Weekend relaxed';
+        } else {
+            slaIndicator.style.display = 'inline-block';
+            slaIndicator.textContent = 'SLA · SEV1: 5m · SEV2: 30m';
+        }
     } else {
-        weekendIndicator.style.display = "none";
+        // Hide in Premier mode
+        slaIndicator.style.display = 'none';
     }
 }

@@ -2310,7 +2310,7 @@ function getCaseDetails() {
               // Weekend SLA thresholds
               const isWeekendFlag = isCurrentlyWeekend();
               var minSev1 = isWeekendFlag ? 0 : 5;
-              var minSev2 = isWeekendFlag ? 0 : 20;
+              var minSev2 = isWeekendFlag ? 0 : 30;
               if (result.records.length > 0) {
                 isData = true;
 
@@ -3905,6 +3905,8 @@ document.addEventListener("DOMContentLoaded", function () {
     // Update GHO button visibility based on mode
     updateGHOButtonVisibility();
     updateCICButtonVisibility();
+    // Refresh weekend and SLA indicators
+    try { updateWeekendModeIndicator(currentMode); } catch (e) { }
 
     // Update GHO cache status display if modal is open
     if (document.getElementById('gho-modal') && document.getElementById('gho-modal').style.display === 'flex') {
