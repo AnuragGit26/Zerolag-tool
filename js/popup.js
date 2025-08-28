@@ -173,6 +173,7 @@ const ACTION_TAKEN_CASES_KEY = 'action_taken_cases';
 
 const GHO_CACHE_TTL = 600000;
 const GHO_USERMAP_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
+const GHO_PAGE_SIZE = 80;
 const USER_EMAIL_CACHE_TTL = 2 * 24 * 60 * 60 * 1000;
 
 // GHO mapping storage configuration
@@ -290,6 +291,13 @@ function loadGHOCache() {
     console.warn('Failed to load GHO cache:', error);
     return { signature: null, premier: null };
   }
+}
+
+// Initialize in-memory GHO cache on load so downstream code can safely read/write
+try {
+  window.__ghoCache = loadGHOCache() || {};
+} catch {
+  window.__ghoCache = window.__ghoCache || {};
 }
 
 function saveGHOCache() {
@@ -2072,8 +2080,7 @@ function getCaseDetails() {
         if (userResult.records.length > 0) {
           currentUserId = userResult.records[0].Id;
 
-          // Resume continuous processing when user becomes active
-          resumeContinuousProcessing(currentUserId, currentUserName, currentMode);
+          // Background case processing disabled: skip resuming continuous processing
         }
         let signatureQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name,SE_Initial_Response_Status__c, Contact.Is_MVP__c, support_available_timezone__c, (SELECT Transfer_Reason__c,Back_To_Queue__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 20) FROM Case WHERE (Owner.Name LIKE '%Skills Queue%' OR Owner.Name='Kase Changer' OR Owner.Name='Working in Org62' OR Owner.Name='Data Cloud Queue') AND IsClosed=false AND Account_Support_SBR_Category__c!='JP MCS' AND Account.Name!='BT Test Account - HPA Premier Plus' AND Status='New' AND (((CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Community%' OR CaseRoutingTaxonomy__r.Name LIKE 'Scale Center%' OR CaseRoutingTaxonomy__r.Name LIKE 'Customer Success Score%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR ((CaseRoutingTaxonomy__r.Name LIKE 'Industry%') AND (Severity_Level__c='Level 1 - Critical' OR Severity_Level__c='Level 2 - Urgent') AND (Case_Support_level__c='Premier Priority' OR Case_Support_level__c='Signature' OR Case_Support_level__c='Signature Success')) OR (Contact.Is_MVP__c=true AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent', 'Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry%')) OR (Severity_Level__c IN ('Level 3 - High', 'Level 4 - Medium') AND (CaseRoutingTaxonomy__r.Name LIKE 'Data Cloud-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Sales-Agentforce%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-Agentforce%')))) OR (CaseRoutingTaxonomy__r.Name='Sales-Issues Developing for Salesforce Functions (Product)' AND CreatedDate = LAST_N_DAYS:2)) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Sales-Disability and Product Accessibility', 'Service-Disability and Product Accessibility', 'Industry-Disability and Product Accessibility', 'Sales-Quip', 'Sales-Sales Cloud for Slack', 'Industry-Nonprofit Cloud', 'Industry-Education Cloud', 'Industry-Education Data Architecture (EDA)', 'Industry-Education Packages (Other SFDO)', 'Industry-Nonprofit Packages (Other SFDO)', 'Industry-Nonprofit Success Pack (NPSP)', 'Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) ORDER BY CreatedDate DESC";
         let premierQuery = "SELECT Id, CreatedDate, Account.Name, Owner.Name, SE_Target_Response__c, Severity_Level__c, CaseNumber, Subject, CaseRoutingTaxonomy__r.Name, SE_Initial_Response_Status__c, Initial_Case_Severity__c, Contact.Is_MVP__c, (SELECT Transfer_Reason__c, Back_To_Queue__c, CreatedDate, Severity_New_Value__c, Severity_Old_Value__c FROM Case_Routing_Logs__r ORDER BY CreatedDate DESC LIMIT 20) FROM Case WHERE (Owner.Name IN ('Kase Changer', 'Working in Org62', 'Service Cloud Skills Queue', 'Sales Cloud Skills Queue', 'Industry Skills Queue', 'EXP Skills Queue', 'Data Cloud Queue')) AND (RecordType.Name IN ('Support', 'Partner Program Support', 'Platform / Application Support')) AND (Reason != 'Sales Request') AND (CaseRoutingTaxonomy__r.Name LIKE 'Sales-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Service-%' OR CaseRoutingTaxonomy__r.Name LIKE 'Industry-%') AND (Account_Support_SBR_Category__c != 'JP') AND ((Case_Support_level__c IN ('Partner Premier', 'Premier', 'Premier+', 'Premium') AND (SE_Initial_Response_Status__c NOT IN ('Met', 'Completed After Violation', 'Missed', 'Violated')) AND ((Severity_Level__c IN ('Level 1 - Critical', 'Level 2 - Urgent')) OR (Initial_Case_Severity__c IN ('Level 2 - Urgent', 'Level 1 - Critical')))) OR (Case_Support_level__c = 'Standard' AND Initial_Case_Severity__c = 'Level 1 - Critical')) AND (CaseRoutingTaxonomy__r.Name NOT IN ('Service-Agentforce', 'Service-Agent for setup', 'Service-AgentforEmail', 'Service-Field Service Agentforce', 'Service-Agentforce for Dev', 'Sales-Agentforce', 'Sales-Agentforce for Dev', 'Sales-Agent for Setup', 'Sales-Prompt Builder', 'Data Cloud-Admin', 'Permissions', 'Flows', 'Reports & Dashboards', 'Data Cloud-Model Builder', 'Data Cloud-Connectors & Data Streams', 'Data Cloud-Developer', 'Calculated Insights & Consumption', 'Data Cloud-Segments', 'Activations & Identity Resolution')) AND (IsClosed = false) AND (CreatedDate = TODAY) ORDER BY CreatedDate DESC";
@@ -2160,44 +2167,7 @@ function getCaseDetails() {
               if (response && response.success) {
                 logger.debug('cases.persistent.added', { message: response.message });
 
-                // Trigger background processing for all incoming cases using new TrackedChange approach
-                // Initiating new background processing
-                chrome.runtime.sendMessage({
-                  action: 'processCasesInBackgroundNew',
-                  cases: result.records,
-                  connectionInfo: {
-                    serverUrl: 'https://orgcs.my.salesforce.com',
-                    sessionId: SESSION_ID
-                  },
-                  currentMode: currentMode,
-                  currentUserId: currentUserId,
-                  currentUserName: currentUserName
-                }, function (bgResponse) {
-                  if (chrome.runtime.lastError) {
-                    console.error('❌ Runtime error starting new background processing:', chrome.runtime.lastError.message);
-                  } else if (bgResponse && bgResponse.success) {
-                    // New background processing initiated
-                    logger.info('cases.background.new.processing.started', { message: bgResponse.message });
-
-                    // Start continuous CaseFeed processing to ensure all cases are processed
-                    chrome.runtime.sendMessage({
-                      action: 'startContinuousCaseFeedProcessing',
-                      connectionInfo: {
-                        serverUrl: 'https://orgcs.my.salesforce.com',
-                        sessionId: SESSION_ID
-                      },
-                      currentMode: currentMode,
-                      currentUserId: currentUserId,
-                      currentUserName: currentUserName
-                    }, function (continuousResponse) {
-                      if (chrome.runtime.lastError) {
-                        console.error('❌ Runtime error starting continuous processing:', chrome.runtime.lastError.message);
-                      } else if (continuousResponse && continuousResponse.success) {
-                        logger.info('cases.background.continuous.processing.started', { message: continuousResponse.message });
-                      }
-                    });
-                  }
-                });
+                // Background case processing disabled: skip triggering background or continuous processing
               }
             });
 
@@ -2790,31 +2760,8 @@ function getCaseDetails() {
 
 // Function to resume continuous processing when user becomes active
 function resumeContinuousProcessing(currentUserId, currentUserName, currentMode) {
-  try {
-    if (!SESSION_ID) {
-      console.log('No valid session, skipping continuous processing resume');
-      return;
-    }
-
-    chrome.runtime.sendMessage({
-      action: 'startContinuousCaseFeedProcessing',
-      connectionInfo: {
-        serverUrl: 'https://orgcs.my.salesforce.com',
-        sessionId: SESSION_ID
-      },
-      currentMode: currentMode,
-      currentUserId: currentUserId,
-      currentUserName: currentUserName
-    }, function (response) {
-      if (chrome.runtime.lastError) {
-        console.error('❌ Runtime error resuming continuous processing:', chrome.runtime.lastError.message);
-      } else if (response && response.success) {
-        logger.info('cases.background.continuous.processing.resumed', { message: response.message });
-      }
-    });
-  } catch (error) {
-    console.error('Error resuming continuous processing:', error);
-  }
+  // Background case processing disabled: no-op
+  return;
 }
 
 
@@ -3663,15 +3610,15 @@ document.addEventListener('keydown', function (e) {
         }
         break;
 
-      case 'a':
-        e.preventDefault();
-        document.getElementById("search-input").value = "";
-        document.getElementById("action-filter").value = "all";
-        localStorage.setItem('caseFilter', 'all');
-        clearTimeout(searchTimeout);
-        applySearch("");
-        showToast('Filters and search cleared');
-        break;
+      // case 'a':
+      //   e.preventDefault();
+      //   document.getElementById("search-input").value = "";
+      //   document.getElementById("action-filter").value = "all";
+      //   localStorage.setItem('caseFilter', 'all');
+      //   clearTimeout(searchTimeout);
+      //   applySearch("");
+      //   showToast('Filters and search cleared');
+      //   break;
 
       case 's':
         e.preventDefault();

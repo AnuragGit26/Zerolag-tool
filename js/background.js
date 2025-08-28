@@ -224,7 +224,7 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 let tabId;
-let persistentCases = new Map(); // Store persistent cases by case ID
+// Removed: persistentCases (no longer tracking cases in background)
 
 // Helper function to get next daily cleanup time (5:30 AM IST = 12:00 AM UTC)
 function getNextDailyCleanupTime() {
@@ -233,167 +233,72 @@ function getNextDailyCleanupTime() {
 	return utcMidnight.getTime();
 }
 
+// Perform daily cleanup of tracked flags and stale pending data
+async function performDailyCaseCleanup() {
+	try {
+		let cleanedCount = 0;
+
+		// Remove session tracked_* keys stored in chrome.storage.local
+		try {
+			const allItems = await new Promise(resolve => chrome.storage.local.get(null, resolve));
+			const keysToRemove = Object.keys(allItems).filter(key => key && key.startsWith('tracked_'));
+			if (keysToRemove.length > 0) {
+				await new Promise(resolve => chrome.storage.local.remove(keysToRemove, resolve));
+				cleanedCount += keysToRemove.length;
+			}
+		} catch (e) {
+			// ignore storage errors for tracked_* cleanup
+		}
+
+		// Cleanup stale pending tracking data (> 2 days old)
+		try {
+			let pending = [];
+			let useChromeStorageForPending = false;
+			if (typeof localStorage !== 'undefined') {
+				try { pending = JSON.parse(localStorage.getItem('pendingTrackingData') || '[]'); } catch { pending = []; }
+			} else {
+				const result = await new Promise(resolve => chrome.storage.local.get(['pendingTrackingData'], resolve));
+				pending = Array.isArray(result?.pendingTrackingData) ? result.pendingTrackingData : [];
+				useChromeStorageForPending = true;
+			}
+
+			if (Array.isArray(pending) && pending.length) {
+				const cutoff = Date.now() - (2 * 24 * 60 * 60 * 1000);
+				const before = pending.length;
+				const filtered = pending.filter(item => !item?.timestamp || item.timestamp >= cutoff);
+				const removed = before - filtered.length;
+				if (removed > 0) {
+					cleanedCount += removed;
+					if (typeof localStorage !== 'undefined') {
+						localStorage.setItem('pendingTrackingData', JSON.stringify(filtered));
+					} else if (useChromeStorageForPending) {
+						await new Promise(resolve => chrome.storage.local.set({ pendingTrackingData: filtered }, resolve));
+					}
+				}
+			}
+		} catch (e) {
+			// ignore pending cleanup errors
+		}
+
+		// Notify UI (popup) that daily cleanup completed
+		try {
+			chrome.runtime.sendMessage({ action: 'dailyCleanupCompleted', cleanedCases: cleanedCount });
+		} catch (e) {
+			// ignore notification errors
+		}
+
+		return cleanedCount;
+	} catch (error) {
+		console.error('Error performing daily case cleanup:', error);
+		throw error;
+	}
+}
+
 // Function to process cases in background for assignment detection using new approach
 async function processCasesInBackground(cases, connectionInfo, currentMode, currentUserId, currentUserName) {
-	try {
-		// Create connection using the provided info
-		const conn = new jsforce.Connection({
-			serverUrl: connectionInfo.serverUrl,
-			sessionId: connectionInfo.sessionId,
-			version: '64.0',
-		});
-
-		// Query 1: Get CaseFeed records for TrackedChange type for the current user based on mode
-		// Get the current mode from chrome.storage.local to ensure we have the latest value
-		const currentMode = await getCurrentMode();
-		let caseFeedQuery;
-
-		// Using SOQL TODAY function for date filtering - simpler and more reliable
-		console.log('Using SOQL TODAY function for CaseFeed date filtering');
-
-		if (currentMode === 'signature') {
-			// Look for cases that have been assigned or transferred recently, regardless of who made the change
-			caseFeedQuery = `SELECT CreatedById, CreatedDate, Id, InsertedById, IsDeleted, LastModifiedDate, ParentId, SystemModstamp, Type, Visibility, Parent.Case_Support_level__c, Parent.Owner.Name, Parent.CaseNumber FROM CaseFeed WHERE Type = 'TrackedChange' AND Parent.Case_Support_level__c != 'Signature Success' AND CreatedDate >= TODAY ORDER BY CreatedDate DESC LIMIT 200`;
-			console.log('Main function - Executing Signature mode CaseFeed query (all users):', caseFeedQuery);
-		} else if (currentMode === 'premier') {
-			caseFeedQuery = `SELECT CreatedById, CreatedDate, Id, InsertedById, IsDeleted, LastModifiedDate, ParentId, SystemModstamp, Type, Visibility, Parent.Case_Support_level__c FROM CaseFeed WHERE Type = 'TrackedChange' AND Parent.Case_Support_level__c != 'Signature Success' AND CreatedDate >= TODAY ORDER BY CreatedDate DESC LIMIT 200`;
-			console.log('Main function - Executing Premier mode CaseFeed query (all users):', caseFeedQuery);
-		}
-
-		console.log('Main function - Executing CaseFeed query:', caseFeedQuery);
-
-		let caseFeedResult = await conn.query(caseFeedQuery);
-		console.log('Main function - CaseFeed query result:', caseFeedResult);
-		console.log('Main function - caseFeedResult type:', typeof caseFeedResult);
-
-		// Parse the result if it's a string
-		if (typeof caseFeedResult === 'string') {
-			try {
-				caseFeedResult = JSON.parse(caseFeedResult);
-				console.log('Main function - Parsed caseFeedResult type:', typeof caseFeedResult);
-				console.log('Main function - Parsed caseFeedResult keys:', Object.keys(caseFeedResult));
-			} catch (parseError) {
-				console.log('Main function - Error parsing caseFeedResult:', parseError);
-				return;
-			}
-		}
-
-		console.log('Main function - Final caseFeedResult.records:', caseFeedResult.records);
-		console.log('Main function - Final caseFeedResult.records type:', typeof caseFeedResult.records);
-		console.log('Main function - Final caseFeedResult.records length:', caseFeedResult.records ? caseFeedResult.records.length : 'undefined');
-
-		console.log('Main function - Condition check: !caseFeedResult.records =', !caseFeedResult.records);
-		console.log('Main function - Condition check: caseFeedResult.records.length === 0 =', caseFeedResult.records ? caseFeedResult.records.length === 0 : 'N/A');
-
-		if (!caseFeedResult.records || caseFeedResult.records.length === 0) {
-			console.log('Main function - No TrackedChange records found');
-			return; // No TrackedChange records found
-		}
-
-		console.log('Main function - Processing TrackedChange records, count:', caseFeedResult.records.length);
-
-		// Extract ParentIds from CaseFeed results and add to CaseIds list
-		const parentIds = [...new Set(caseFeedResult.records.map(r => r.ParentId))];
-		const caseIds = parentIds; // ParentIds = CaseIds for processing
-		console.log('Main function - Extracted ParentIds:', parentIds);
-		console.log('Main function - caseIds for processing:', caseIds);
-
-		// Initialize processing queue for cases with TrackedChange records
-		const processingQueue = new NewCaseProcessingQueue(conn, currentMode, currentUserId, currentUserName);
-
-		// Load cases that have TrackedChange records but aren't in persistentCases
-		console.log('Main function - persistentCases size:', persistentCases.size);
-		console.log('Main function - Total cases available:', cases.length);
-		console.log('Main function - Sample case data:', cases.length > 0 ? cases[0] : 'No cases');
-
-		// Find cases that have TrackedChange records but aren't in persistentCases
-		const missingCaseIds = caseIds.filter(id => !persistentCases.has(id));
-		console.log('Main function - Missing case IDs (not in persistentCases):', missingCaseIds);
-
-		// Check if we've already processed these cases today
-		const todayDate = new Date().toISOString().split('T')[0];
-		const alreadyProcessedToday = caseIds.filter(id => {
-			const existing = persistentCases.get(id);
-			return existing && existing.processed && existing.processedDate === todayDate;
-		});
-
-		if (alreadyProcessedToday.length > 0) {
-			console.log('Main function - Cases already processed today:', alreadyProcessedToday.length);
-			console.log('Main function - Skipping processing to avoid duplicates');
-			return; // Exit to prevent duplicate processing
-		}
-
-		// Load missing cases from Salesforce
-		if (missingCaseIds.length > 0) {
-			try {
-				console.log('Main function - Loading missing cases from Salesforce...');
-				const missingCasesQuery = `SELECT Id, CaseNumber, Severity_Level__c, CaseRoutingTaxonomy__r.Name, Owner.Name, CreatedDate, Subject FROM Case WHERE Id IN ('${missingCaseIds.join("','")}')`;
-				let missingCasesResult = await conn.query(missingCasesQuery);
-
-				if (typeof missingCasesResult === 'string') {
-					missingCasesResult = JSON.parse(missingCasesResult);
-				}
-
-				if (missingCasesResult.records && missingCasesResult.records.length > 0) {
-					console.log('Main function - Loaded missing cases:', missingCasesResult.records.length);
-
-					// Add missing cases to persistentCases
-					for (const caseRecord of missingCasesResult.records) {
-						const cloud = caseRecord.CaseRoutingTaxonomy__r && caseRecord.CaseRoutingTaxonomy__r.Name ?
-							caseRecord.CaseRoutingTaxonomy__r.Name.split('-')[0] : '';
-
-						persistentCases.set(caseRecord.Id, {
-							Id: caseRecord.Id,
-							CaseNumber: caseRecord.CaseNumber,
-							Severity_Level__c: caseRecord.Severity_Level__c,
-							cloud: cloud,
-							mode: currentMode,
-							processed: false,
-							loadedFromTrackedChange: true,
-							loadedAt: Date.now(),
-							processedDate: null
-						});
-					}
-
-					console.log('Main function - Updated persistentCases size:', persistentCases.size);
-				}
-			} catch (loadError) {
-				console.error('Main function - Error loading missing cases:', loadError);
-			}
-		}
-
-		// Now get the updated cases list
-		const updatedCases = Array.from(persistentCases.values());
-		console.log('Main function - Updated total cases available:', updatedCases.length);
-
-		// Filter cases to only those with TrackedChange records
-		const casesWithTrackedChange = updatedCases.filter(c => caseIds.includes(c.Id));
-		console.log('Main function - Cases with TrackedChange records:', casesWithTrackedChange.length);
-
-		// Add filtered cases to the queue
-		await processingQueue.addCases(casesWithTrackedChange);
-
-		// Mark cases as processed for today to prevent duplicate processing
-		const processedDate = new Date().toISOString().split('T')[0];
-		for (const caseId of caseIds) {
-			const existing = persistentCases.get(caseId);
-			if (existing) {
-				persistentCases.set(caseId, {
-					...existing,
-					processed: true,
-					processedDate: processedDate,
-					lastProcessed: Date.now()
-				});
-			}
-		}
-		console.log('Main function - Marked cases as processed for today:', caseIds.length);
-
-		// Start processing with progress tracking
-		await processingQueue.processAll();
-
-	} catch (error) {
-		// Handle error silently
-	}
+	// Disabled: background case processing has been turned off
+	console.log('Background case processing is disabled');
+	return;
 }
 
 // New Queue-based case processing system for TrackedChange approach - FIRST CLASS
@@ -1629,24 +1534,7 @@ class CaseProcessingQueue {
 	}
 }
 
-// Helper to upsert a case record in the persistent map with bookkeeping
-function upsertPersistentCase(caseObj, meta) {
-	const existing = persistentCases.get(caseObj.Id) || {};
-	const now = Date.now();
-	const updated = {
-		...existing,
-		...caseObj,
-		mode: meta.currentMode || existing.mode,
-		userId: meta.currentUserId || existing.userId,
-		userName: meta.currentUserName || existing.userName,
-		addedAt: existing.addedAt || now,
-		lastSeenMs: now,
-		missingCount: 0,
-		processed: existing.processed || false,
-		processedReason: existing.processedReason || null,
-	};
-	persistentCases.set(caseObj.Id, updated);
-}
+// Removed: upsertPersistentCase (persistent storage disabled)
 
 // Function to close all existing extension tabs (except active ones)
 async function closeExistingExtensionTabs() {
@@ -1776,18 +1664,7 @@ chrome.runtime.onMessage.addListener(
 			if (request.action === 'addCasesToPersistentSet') {
 				try {
 					if (request.cases && Array.isArray(request.cases)) {
-						request.cases.forEach(caseObj => {
-							upsertPersistentCase(caseObj, {
-								currentMode: request.currentMode,
-								currentUserId: request.currentUserId,
-								currentUserName: request.currentUserName
-							});
-						});
-						sendResponse({
-							success: true,
-							message: `Added ${request.cases.length} cases to persistent set`,
-							count: persistentCases.size
-						});
+						sendResponse({ success: true, message: 'Persistent storage disabled' });
 					} else {
 						sendResponse({ success: false, message: 'Invalid cases data' });
 					}
@@ -1801,54 +1678,11 @@ chrome.runtime.onMessage.addListener(
 			if (request.action === 'syncPersistentCases') {
 				try {
 					const mode = request.mode;
-					const ids = Array.isArray(request.caseIds) ? new Set(request.caseIds) : new Set();
-
 					if (!mode) {
 						sendResponse({ success: false, message: 'Mode is required' });
 						return true;
 					}
-					const now = Date.now();
-					const MAX_MISSING_DURATION_MS = 10 * 60 * 60 * 1000; // fallback cleanup after 10h
-					const missingCases = [];
-					const removedCases = [];
-					let removed = 0;
-
-					// First, update lastSeen for all ids in current result
-					for (const id of ids) {
-						const data = persistentCases.get(id);
-						if (data && data.mode === mode) {
-							data.lastSeenMs = now;
-							data.missingCount = 0;
-							persistentCases.set(id, data);
-						}
-					}
-
-					// Mark missing cases, only remove if explicitly processed or very stale
-					for (const [caseId, data] of persistentCases.entries()) {
-						if (data.mode !== mode) continue;
-						if (!ids.has(caseId)) {
-							const updated = { ...data };
-							updated.missingCount = (updated.missingCount || 0) + 1;
-							updated.lastMissingAt = now;
-							persistentCases.set(caseId, updated);
-							// If already processed, we can safely remove
-							if (updated.processed === true) {
-								persistentCases.delete(caseId);
-								removed++;
-								removedCases.push({ id: caseId, data: updated, reason: 'processed' });
-							} else if ((updated.lastSeenMs && (now - updated.lastSeenMs) > MAX_MISSING_DURATION_MS)) {
-								// Fallback cleanup for very old entries
-								persistentCases.delete(caseId);
-								removed++;
-								removedCases.push({ id: caseId, data: updated, reason: 'stale-timeout' });
-							} else {
-								missingCases.push({ id: caseId, data: updated });
-							}
-						}
-					}
-
-					sendResponse({ success: true, removed, count: persistentCases.size, removedCases, missingCases });
-
+					sendResponse({ success: true, removed: 0, count: 0, removedCases: [], missingCases: [] });
 				} catch (error) {
 					sendResponse({ success: false, message: error.message });
 				}
@@ -1858,18 +1692,7 @@ chrome.runtime.onMessage.addListener(
 			if (request.action === 'removeCaseFromPersistentSet') {
 				try {
 					if (request.caseId) {
-						// Mark as processed before removal for bookkeeping
-						const existing = persistentCases.get(request.caseId);
-						if (existing) {
-							persistentCases.set(request.caseId, { ...existing, processed: true, processedReason: request.reason || 'explicit-remove' });
-						}
-						const wasRemoved = persistentCases.delete(request.caseId);
-						sendResponse({
-							success: true,
-							removed: wasRemoved,
-							message: wasRemoved ? 'Case removed from persistent set' : 'Case not found in persistent set',
-							count: persistentCases.size
-						});
+						sendResponse({ success: true, removed: false, message: 'Persistent storage disabled', count: 0 });
 					} else {
 						sendResponse({ success: false, message: 'No case ID provided' });
 					}
@@ -1881,17 +1704,7 @@ chrome.runtime.onMessage.addListener(
 
 			if (request.action === 'getPersistentCaseCount') {
 				try {
-					let count;
-					if (request.mode) {
-						count = Array.from(persistentCases.values()).filter(v => v.mode === request.mode).length;
-					} else {
-						count = persistentCases.size;
-					}
-					sendResponse({
-						success: true,
-						count,
-						cases: Array.from(persistentCases.values())
-					});
+					sendResponse({ success: true, count: 0, cases: [] });
 				} catch (error) {
 					sendResponse({ success: false, message: error.message, count: 0 });
 				}
@@ -1900,12 +1713,7 @@ chrome.runtime.onMessage.addListener(
 
 			if (request.action === 'getPersistentCaseDetails') {
 				try {
-					const cases = Array.from(persistentCases.values());
-					sendResponse({
-						success: true,
-						cases: cases,
-						count: cases.length
-					});
+					sendResponse({ success: true, cases: [], count: 0 });
 				} catch (error) {
 					sendResponse({ success: false, message: error.message, cases: [] });
 				}
@@ -1914,63 +1722,19 @@ chrome.runtime.onMessage.addListener(
 
 			// Handle background case processing for assignment detection
 			if (request.action === 'processCasesInBackground') {
-				try {
-					if (request.cases && Array.isArray(request.cases) && request.connectionInfo) {
-						// Process cases in background to detect assignments
-						processCasesInBackground(request.cases, request.connectionInfo, request.currentMode, request.currentUserId, request.currentUserName);
-						sendResponse({
-							success: true,
-							message: `Processing ${request.cases.length} cases in background for assignment detection`
-						});
-					} else {
-						sendResponse({ success: false, message: 'Invalid request data for background processing' });
-					}
-				} catch (error) {
-					sendResponse({ success: false, message: error.message });
-				}
+				sendResponse({ success: false, message: 'Background case processing is disabled' });
 				return true;
 			}
 
 			// Handle new background case processing using TrackedChange approach
 			if (request.action === 'processCasesInBackgroundNew') {
-				try {
-					if (request.cases && Array.isArray(request.cases) && request.connectionInfo) {
-						// Process cases in background using new TrackedChange approach
-						processCasesInBackground(request.cases, request.connectionInfo, request.currentMode, request.currentUserId, request.currentUserName);
-						sendResponse({
-							success: true,
-							message: `Processing ${request.cases.length} cases in background using new TrackedChange approach`
-						});
-					} else {
-						sendResponse({ success: false, message: 'Invalid request data for new background processing' });
-					}
-				} catch (error) {
-					sendResponse({ success: false, message: error.message });
-				}
+				sendResponse({ success: false, message: 'Background case processing is disabled' });
 				return true;
 			}
 
 			// Handle continuous CaseFeed processing
 			if (request.action === 'startContinuousCaseFeedProcessing') {
-				try {
-					if (request.connectionInfo && request.currentMode && request.currentUserId && request.currentUserName) {
-						// Start continuous processing in the background
-						continuousCaseFeedProcessing(request.connectionInfo, request.currentMode, request.currentUserId, request.currentUserName).then(() => {
-							console.log('Continuous CaseFeed processing completed');
-						}).catch(error => {
-							console.error('Continuous CaseFeed processing failed:', error);
-						});
-
-						sendResponse({
-							success: true,
-							message: 'Started continuous CaseFeed processing in background'
-						});
-					} else {
-						sendResponse({ success: false, message: 'Invalid request data for continuous processing' });
-					}
-				} catch (error) {
-					sendResponse({ success: false, message: error.message });
-				}
+				sendResponse({ success: false, message: 'Background case processing is disabled' });
 				return true;
 			}
 
@@ -2077,1125 +1841,6 @@ async function performPeriodicCleanup() {
 
 // Run cleanup every 2 minutes
 setInterval(performPeriodicCleanup, 2 * 60 * 1000);
-
-// Start monitoring CaseFeed every 2 minutes for continuous processing
-setInterval(monitorCaseFeedForTrackedChanges, 2 * 60 * 1000);
-
-// Periodic check for unprocessed cases and trigger continuous processing if needed
-setInterval(async () => {
-	try {
-		// Check if there are any unprocessed cases in persistent storage
-		if (persistentCases.size > 0) {
-			const unprocessedCases = Array.from(persistentCases.values())
-				.filter(c => !c.processed)
-				.slice(0, 100); // Check up to 100 cases
-
-			if (unprocessedCases.length > 0) {
-				console.log(`Found ${unprocessedCases.length} unprocessed cases, triggering background processing`);
-
-				// Try to trigger background processing if we have connection info
-				// This will be handled by the popup when it has an active session
-				// The popup will need to send a message to start the processing
-			}
-		}
-	} catch (error) {
-		// Handle error silently
-	}
-}, 5 * 60 * 1000); // Check every 5 minutes
-
-// Function to continuously monitor CaseFeed for TrackedChange records
-async function monitorCaseFeedForTrackedChanges() {
-	try {
-		// This function will be called periodically to ensure continuous processing
-		// The actual processing happens when the popup triggers background processing
-		// We'll rely on the popup to maintain the connection and trigger processing
-
-		// Check if there are any persistent cases that need processing
-		if (persistentCases.size > 0) {
-			// Find cases that haven't been processed yet
-			const unprocessedCases = Array.from(persistentCases.values())
-				.filter(c => !c.processed)
-				.slice(0, 50); // Process in batches of 50
-
-			if (unprocessedCases.length > 0) {
-				// Trigger background processing for unprocessed cases
-				// This will be handled by the popup when it has an active session
-				console.log(`Found ${unprocessedCases.length} unprocessed cases for background processing`);
-			}
-		}
-	} catch (error) {
-		// Handle error silently
-	}
-}
-
-
-
-// Enhanced function to continuously process CaseFeed records
-async function continuousCaseFeedProcessing(connectionInfo, currentMode, currentUserId, currentUserName) {
-	try {
-		// Log the current unified business day window for reference
-		// This creates a 24-hour cycle from 5:30 AM to 5:30 AM next day
-		// covering both AMER and Non-AMER time zones effectively
-		const now = new Date();
-		const istTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-		const businessDayStart = new Date(istTime);
-		businessDayStart.setHours(5, 30, 0, 0); // 5:30 AM
-		const businessDayEnd = new Date(istTime);
-		businessDayEnd.setDate(businessDayEnd.getDate() + 1); // Next day
-		businessDayEnd.setHours(5, 30, 0, 0); // 5:30 AM
-
-		console.log('Starting continuous CaseFeed processing...', {
-			currentMode,
-			currentUserId,
-			currentUserName,
-			unifiedBusinessDayWindow: `${businessDayStart.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })} to ${businessDayEnd.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })}`,
-			timeZoneCoverage: 'AMER (8:30 PM to 5:30 AM next day) + Non-AMER (5:30 AM to 8:30 PM same day)',
-			windowType: '24-hour unified cycle'
-		});
-		console.log(`Mode: ${currentMode} - Cases will be sent to '${currentMode === 'premier' ? 'premier' : 'signature'}' sheet`);
-
-		// Use the existing connection that's already working
-		// Instead of creating a new one, we'll use the same approach as the main function
-		// by creating a connection with the same parameters
-		const conn = new jsforce.Connection({
-			serverUrl: connectionInfo.serverUrl,
-			sessionId: connectionInfo.sessionId,
-			version: '64.0',
-		});
-
-		// Skip connection verification for now to avoid the URL normalization error
-		// The connection will be tested when we make the first query
-
-		let processedCount = 0;
-		let totalProcessed = 0;
-		const maxIterations = 10; // Prevent infinite loops
-		let iteration = 0;
-
-		while (iteration < maxIterations) {
-			iteration++;
-
-			// Query CaseFeed for TrackedChange records for the current user based on mode
-			// Get the current mode from chrome.storage.local to ensure we have the latest value
-			const currentMode = await getCurrentMode();
-
-			// Using SOQL TODAY function for date filtering - simpler and more reliable
-			console.log('Continuous processing - Using SOQL TODAY function for CaseFeed date filtering');
-
-			let caseFeedQuery;
-
-			if (currentMode === 'signature') {
-				// Signature mode: Only process cases with 'Signature Success' support level
-				// Filter by case assignment date, not CaseFeed creation date
-				caseFeedQuery = `SELECT CreatedById, CreatedDate, Id, InsertedById, IsDeleted, LastModifiedDate, ParentId, SystemModstamp, Type, Visibility, Parent.Case_Support_level__c FROM CaseFeed WHERE CreatedById = '${currentUserId}' AND Type = 'TrackedChange' AND Parent.Case_Support_level__c = 'Signature Success' AND CreatedDate >= TODAY ORDER BY CreatedDate DESC LIMIT 200`;
-				console.log('Executing Signature mode CaseFeed query:', caseFeedQuery);
-			} else if (currentMode === 'premier') {
-				// Premier mode: Process all cases without support level restriction
-				// Filter by case assignment date, not CaseFeed creation date
-				caseFeedQuery = `SELECT CreatedById, CreatedDate, Id, InsertedById, IsDeleted, LastModifiedDate, ParentId, SystemModstamp, Type, Visibility, Parent.Case_Support_level__c FROM CaseFeed WHERE CreatedById = '${currentUserId}' AND Type = 'TrackedChange' AND Parent.Case_Support_level__c != 'Signature Success' AND CreatedDate >= TODAY ORDER BY CreatedDate DESC LIMIT 200`;
-				console.log('Executing Premier mode CaseFeed query:', caseFeedQuery);
-			}
-
-			console.log('Executing CaseFeed query:', caseFeedQuery);
-
-			let caseFeedResult;
-			try {
-				caseFeedResult = await conn.query(caseFeedQuery);
-				console.log('CaseFeed query result:', caseFeedResult);
-
-				// Handle case where result is returned as a string instead of object
-				if (typeof caseFeedResult === 'string') {
-					console.log('Query result is a string, parsing JSON...');
-					caseFeedResult = JSON.parse(caseFeedResult);
-					console.log('Parsed result:', caseFeedResult);
-				}
-
-				console.log('caseFeedResult.records:', caseFeedResult.records);
-				console.log('caseFeedResult.records.length:', caseFeedResult.records ? caseFeedResult.records.length : 'undefined');
-			} catch (queryError) {
-				console.error('CaseFeed query failed:', queryError);
-				throw new Error(`CaseFeed query failed: ${queryError.message}`);
-			}
-
-			if (!caseFeedResult.records || caseFeedResult.records.length === 0) {
-				console.log('No TrackedChange records found, breaking loop');
-				break; // No more TrackedChange records to process
-			}
-
-			console.log(`Found ${caseFeedResult.records.length} TrackedChange records`);
-
-			// Extract ParentIds from CaseFeed results
-			const parentIds = [...new Set(caseFeedResult.records.map(r => r.ParentId))];
-			console.log('parentIds found in Feed', parentIds);
-			console.log(`Extracted ${parentIds.length} unique ParentIds from ${caseFeedResult.records.length} records`);
-
-			// Filter out already processed cases using chrome.storage.local
-			// localStorage check will happen during actual case processing
-			const unprocessedParentIds = [];
-			let trackedCount = 0;
-			for (const id of parentIds) {
-				// Check if case was already processed in this session
-				const isTracked = await checkIfTracked(`tracked_${id}`);
-
-				if (!isTracked) {
-					unprocessedParentIds.push(id);
-				} else {
-					trackedCount++;
-					console.log(`Case ${id} already tracked in this session`);
-				}
-			}
-
-			console.log(`Filtered results: ${unprocessedParentIds.length} unprocessed, ${trackedCount} already tracked`);
-
-			if (unprocessedParentIds.length === 0) {
-				break; // All cases in this batch have been processed
-			}
-
-			// Process unprocessed cases
-			console.log('Creating processing queue for', unprocessedParentIds.length, 'cases...');
-			console.log(`Processing queue mode: ${currentMode} - Cases will be sent to '${currentMode === 'premier' ? 'premier' : 'signature'}' sheet`);
-
-			// Mark these cases as tracked to prevent reprocessing
-			for (const id of unprocessedParentIds) {
-				await markAsTracked(`tracked_${id}`);
-				console.log(`Marked case ${id} as tracked to prevent reprocessing`);
-			}
-
-			const processingQueue = new NewCaseProcessingQueue(conn, currentMode, currentUserId, currentUserName);
-
-			// Create case objects for processing (we only need the ID for this approach)
-			const casesToProcess = unprocessedParentIds.map(id => ({ Id: id, CreatedDate: new Date().toISOString() }));
-			console.log('Cases to process:', casesToProcess.length);
-
-			console.log('Adding cases to queue...');
-			await processingQueue.addCases(casesToProcess);
-
-			console.log('Starting case processing...');
-			const stats = await processingQueue.processAll();
-
-			console.log('Processing completed. Stats:', stats);
-
-			// Ensure stats object exists and has required properties
-			if (stats && typeof stats === 'object') {
-				console.log(`Summary: ${stats.processed || 0} cases processed, ${stats.assignmentsDetected || 0} assignments detected, ${stats.successful || 0} successful, ${stats.failed || 0} failed, ${stats.timeFiltered || 0} time filtered`);
-
-				processedCount = stats.processed || 0;
-				totalProcessed += processedCount;
-			} else {
-				console.warn('Stats object is invalid or undefined, using fallback values');
-				processedCount = 0;
-				totalProcessed += 0;
-			}
-
-			// If we processed fewer cases than the limit, we've caught up
-			if (processedCount < 200) {
-				break;
-			}
-
-			// Small delay before next iteration to prevent overwhelming the API
-			await new Promise(resolve => setTimeout(resolve, 1000));
-		}
-
-		console.log(`Continuous processing completed: ${totalProcessed} total cases processed in ${iteration} iterations`);
-
-	} catch (error) {
-		console.error('Continuous processing error:', error);
-	}
-}
-
-// Function to perform daily case cleanup
-async function performDailyCaseCleanup() {
-	try {
-		const beforeCount = persistentCases.size;
-
-		// Clear all persistent cases
-		persistentCases.clear();
-
-		// Send notification to any open popup tabs
-		try {
-			const extensionUrl = chrome.runtime.getURL('popup/popup.html');
-			const tabs = await chrome.tabs.query({ url: extensionUrl });
-			for (const tab of tabs) {
-				chrome.tabs.sendMessage(tab.id, {
-					action: 'dailyCleanupCompleted',
-					message: `Daily cleanup completed: ${beforeCount} cases removed from tracking`
-				}).catch(() => {
-					// Ignore errors if tab doesn't have message listener
-				});
-			}
-		} catch (error) {
-			// Handle error silently
-		}
-
-	} catch (error) {
-		// Handle error silently
-	}
-}
-
-// Add message listener for popup communication
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-	try {
-		if (request.action === 'getPendingTrackingData') {
-			const pendingData = getPendingTrackingData();
-			sendResponse({ success: true, data: pendingData });
-			return true;
-		} else if (request.action === 'clearPendingTrackingData') {
-			clearPendingTrackingData();
-			sendResponse({ success: true });
-			return true;
-		} else if (request.action === 'processPendingTrackingData') {
-			// Check if popup is available before processing pending data
-			const extensionUrl = chrome.runtime.getURL('popup/popup.html');
-			chrome.tabs.query({ url: extensionUrl }, (tabs) => {
-				if (tabs.length === 0) {
-					// Popup not available, process pending data
-					processPendingTrackingData();
-					sendResponse({ success: true, message: 'Processing pending data from background (popup not available)' });
-				} else {
-					// Popup is available, let it handle the processing
-					sendResponse({ success: false, message: 'Popup is available, pending data should be processed by popup' });
-				}
-			});
-			return true;
-		} else if (request.action === 'getPendingTrackingDataCount') {
-			// Get count of pending tracking data
-			const pendingData = getPendingTrackingData();
-			sendResponse({ success: true, count: pendingData.length });
-			return true;
-		} else if (request.action === 'getStats') {
-			// Get current processing stats
-			sendResponse({
-				success: true,
-				stats: {
-					pendingTrackingData: getPendingTrackingData().length,
-					// Add any other stats you want to expose
-				}
-			});
-			return true;
-		} else if (request.action === 'clearTrackingIds') {
-			// Clear all tracking IDs to reset duplicate prevention
-			try {
-				localStorage.removeItem('sentToSheets');
-				sendResponse({ success: true, message: 'All tracking IDs cleared successfully' });
-			} catch (error) {
-				sendResponse({ success: false, error: error.message });
-			}
-			return true;
-		} else if (request.action === 'trackingCompleted') {
-			// Handle acknowledgment from popup that tracking was completed successfully
-			if (request.success && request.trackingId) {
-				console.log(`Received tracking completion acknowledgment for tracking ID: ${request.trackingId}, case: ${request.caseNumber}`);
-				// The popup has already marked this as sent, so we don't need to do anything here
-				// This is just for logging and confirmation
-			}
-			sendResponse({ success: true });
-			return true;
-		} else if (request.action === 'getTrackingIdsCount') {
-			// Get count of tracking IDs
-			try {
-				const sentEntries = JSON.parse(localStorage.getItem('sentToSheets') || '[]');
-				sendResponse({ success: true, count: sentEntries.length });
-			} catch (error) {
-				sendResponse({ success: false, error: error.message });
-			}
-			return true;
-		}
-	} catch (error) {
-		console.error('Error handling message in background script:', error);
-		sendResponse({ success: false, error: error.message });
-	}
-	return false;
-});
-
-// Service Worker error handling for Case_Routing_Logs__c errors
-self.addEventListener('error', (event) => {
-	if (event.error && event.error.message && event.error.message.includes('Case_Routing_Logs__c')) {
-		console.warn('Caught Case_Routing_Logs__c error, this should not happen after the fix. Please reload the extension.');
-	}
-});
-
-// Also catch unhandled promise rejections in Service Worker context
-self.addEventListener('unhandledrejection', (event) => {
-	if (event.reason && event.reason.message && event.reason.message.includes('Case_Routing_Logs__c')) {
-		console.warn('Caught unhandled Case_Routing_Logs__c promise rejection, this should not happen after the fix. Please reload the extension.');
-	}
-});
-
-// Process pending tracking data directly from background script
-// This should only be called when popup is not available
-async function processPendingTrackingData() {
-	try {
-		const pendingData = getPendingTrackingData();
-		if (pendingData.length === 0) {
-			console.log('No pending tracking data to process');
-			return;
-		}
-
-		console.log(`Processing ${pendingData.length} pending tracking data items from background script...`);
-
-		// Import the trackAction function directly
-		const { trackAction } = await import('./utils/api.js');
-
-		for (const item of pendingData) {
-			try {
-				console.log(`Processing pending case ${item.caseNumber} with mode: ${item.mode} - Will be sent to '${item.mode === 'premier' ? 'premier' : 'signature'}' sheet`);
-
-				// Call trackAction directly with success callback to increment actionedCases
-				await trackAction(
-					item.createdDate,
-					item.caseNumber,
-					item.severity,
-					item.actionType,
-					item.cloud,
-					item.mode,
-					item.userName,
-					item.newValue,
-					() => {
-						// Increment actionedCases when Google Sheets is successfully updated
-						// Note: This should only happen when popup is not available
-						incrementActionedCases(item.userName);
-					}
-				);
-				console.log(`Successfully processed pending tracking for case: ${item.caseNumber}`);
-			} catch (error) {
-				console.error(`Error processing pending tracking for case ${item.caseNumber}:`, error);
-			}
-		}
-
-		// Clear the processed data
-		clearPendingTrackingData();
-		console.log('All pending tracking data processed and cleared from background script');
-
-	} catch (error) {
-		console.error('Error processing pending tracking data:', error);
-	}
-}
-
-// Standalone functions for pending tracking data management
-function getPendingTrackingData() {
-	try {
-		const data = localStorage.getItem('pendingTrackingData');
-		if (!data) {
-			return [];
-		}
-
-		// Check if the data contains a Promise object (which would cause JSON parse errors)
-		if (data.includes('[object Promise]') || data.includes('[object Object]')) {
-			console.warn('Detected corrupted pending tracking data, clearing localStorage');
-			localStorage.removeItem('pendingTrackingData');
-			return [];
-		}
-
-		return JSON.parse(data);
-	} catch (error) {
-		console.error('Error getting pending tracking data:', error);
-		// If parsing fails, clear the corrupted data
-		try {
-			localStorage.removeItem('pendingTrackingData');
-		} catch (clearError) {
-			console.error('Error clearing corrupted pending tracking data:', clearError);
-		}
-		return [];
-	}
-}
-
-function clearPendingTrackingData() {
-	try {
-		localStorage.removeItem('pendingTrackingData');
-		console.log('Successfully cleared pending tracking data');
-	} catch (error) {
-		console.error('Error clearing pending tracking data:', error);
-	}
-}
-
-// Function to manually clear corrupted pending tracking data
-function clearCorruptedPendingTrackingData() {
-	try {
-		const data = localStorage.getItem('pendingTrackingData');
-		if (data) {
-			console.log('Current pending tracking data:', data);
-			if (data.includes('[object Promise]') || data.includes('[object Object]')) {
-				console.warn('Detected corrupted data, clearing localStorage');
-				localStorage.removeItem('pendingTrackingData');
-				console.log('Corrupted data cleared successfully');
-			}
-		}
-	} catch (error) {
-		console.error('Error checking for corrupted data:', error);
-	}
-}
-
-
-// Global functions for case tracking using chrome.storage.local
-async function checkIfTracked(trackingId) {
-	try {
-		if (chrome && chrome.storage && chrome.storage.local) {
-			const result = await chrome.storage.local.get([trackingId]);
-			return result[trackingId] === 'true';
-		}
-		return false;
-	} catch (error) {
-		console.error('Error checking if tracked:', error);
-		return false;
-	}
-}
-
-async function markAsTracked(trackingId) {
-	try {
-		if (chrome && chrome.storage && chrome.storage.local) {
-			await chrome.storage.local.set({ [trackingId]: 'true' });
-			console.log(`Marked ${trackingId} as tracked in storage`);
-		}
-	} catch (error) {
-		console.error('Error marking as tracked:', error);
-	}
-}
-
-async function clearSessionTracking() {
-	try {
-		if (chrome && chrome.storage && chrome.storage.local) {
-			// Clear only tracking keys (keys that start with 'tracked_')
-			const result = await chrome.storage.local.get(null);
-			const trackingKeys = {};
-			for (const key in result) {
-				if (key.startsWith('tracked_')) {
-					trackingKeys[key] = null; // Set to null to remove
-				}
-			}
-			if (Object.keys(trackingKeys).length > 0) {
-				await chrome.storage.local.remove(Object.keys(trackingKeys));
-				console.log(`Cleared ${Object.keys(trackingKeys).length} tracking keys from storage`);
-			} else {
-				console.log('No tracking keys found to clear');
-			}
-		}
-	} catch (error) {
-		console.error('Error clearing session tracking:', error);
-	}
-}
-
-// (showCurrentTrackingState removed for production)
-async function showCurrentTrackingState() { }
-
-// (clearAllTrackingData removed for production)
-async function clearAllTrackingData() { }
-
-// (clearTrackingKeys removed for production)
-async function clearTrackingKeys() { }
-
-// Global function to show current business day window
-/* function showCurrentBusinessDayWindow() {
-	try {
-		const now = new Date();
-		const istTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-
-		// Calculate start of current business day (5:30 AM of previous day to 5:30 AM of current day)
-		// If current time is before 5:30 AM, we're still in yesterday's business day
-		// If current time is after 5:30 AM, we're in today's business day
-		const businessDayStart = new Date(istTime);
-		businessDayStart.setHours(5, 30, 0, 0); // 5:30 AM of current day
-
-		// If it's before 5:30 AM today, use yesterday's 5:30 AM as business day start
-		if (istTime < businessDayStart) {
-			businessDayStart.setDate(businessDayStart.getDate() - 1);
-		}
-
-		const businessDayEnd = new Date(businessDayStart);
-		businessDayEnd.setDate(businessDayEnd.getDate() + 1);
-		businessDayEnd.setHours(5, 30, 0, 0); // 5:30 AM next day
-
-		console.log('=== Current Date Filtering Status ===');
-		console.log(`Current IST Time: ${istTime.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })}`);
-		console.log(`Business Day Start (IST): ${businessDayStart.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })}`);
-		console.log(`Business Day End (IST): ${businessDayEnd.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })}`);
-		console.log(`Within Business Window: ${istTime >= businessDayStart && istTime <= businessDayEnd}`);
-		console.log(`Date Filtering: Only cases within business day window (${businessDayStart.toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" })} 5:30 AM to ${businessDayEnd.toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" })} 5:30 AM) will be processed`);
-		console.log(`============================================`);
-	} catch (error) {
-		console.error('Error showing business day window:', error);
-	}
-} */
-
-// Helper function to get current mode from chrome.storage.local
-async function getCurrentMode() {
-	try {
-		// Try chrome.storage.local first
-		if (chrome && chrome.storage && chrome.storage.local) {
-			const result = await chrome.storage.local.get(['caseTriageMode']);
-			if (result.caseTriageMode) {
-				return result.caseTriageMode;
-			}
-		}
-
-		// Try to get mode from popup's localStorage if available
-		try {
-			const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('popup/popup.html') });
-			if (tabs.length > 0) {
-				const response = await chrome.tabs.sendMessage(tabs[0].id, { action: 'getMode' });
-				if (response && response.mode) {
-					console.log(`Retrieved mode from popup: ${response.mode}`);
-					return response.mode;
-				}
-			}
-		} catch (popupError) {
-			console.log('Could not get mode from popup (popup may not be open):', popupError.message);
-		}
-
-		// Fallback to localStorage if available (for non-service worker contexts)
-		if (typeof localStorage !== 'undefined') {
-			return localStorage.getItem('caseTriageMode') || 'signature';
-		}
-
-		// Final fallback
-		console.warn('No storage mechanism available, using default mode: signature');
-		return 'signature';
-	} catch (error) {
-		console.error('Error getting current mode:', error);
-		return 'signature'; // Default fallback
-	}
-}
-
-// Global function to show current mode and CaseFeed query configuration
-async function showCurrentModeConfig() {
-	try {
-		const currentMode = await getCurrentMode();
-		console.log('=== Current Mode Configuration ===');
-		console.log(`Current Mode: ${currentMode}`);
-		console.log(`Mode Source: ${currentMode === 'signature' ? 'default' : 'chrome.storage.local'}`);
-
-		// Show what the CaseFeed query would look like
-		if (currentMode === 'signature') {
-			console.log('Signature Mode Query: Will filter for Parent.Case_Support_level__c = "Signature Success"');
-		} else if (currentMode === 'premier') {
-			console.log('Premier Mode Query: Will filter for Parent.Case_Support_level__c != "Signature Success"');
-		} else {
-			console.log('Default Mode Query: Will use premier logic');
-		}
-		console.log('================================');
-	} catch (error) {
-		console.error('Error showing mode configuration:', error);
-	}
-}
-
-// Global function to test date filtering with specific dates
-/* function testDateFiltering(testDate) {
-	try {
-		console.log(`=== Testing Date Filtering for: ${testDate} ===`);
-
-		// Create a mock case processing queue to test the method
-		const mockQueue = {
-			isWithinBusinessDayWindow: function (actionDate) {
-				try {
-					const date = actionDate instanceof Date ? actionDate : new Date(actionDate);
-					const now = new Date();
-					const istTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-					const actionDateIst = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-
-					// Calculate business day window (5:30 AM of previous day to 5:30 AM of current day)
-					// If current time is before 5:30 AM, we're still in yesterday's business day
-					// If current time is after 5:30 AM, we're in today's business day
-					const businessDayStart = new Date(istTime);
-					businessDayStart.setHours(5, 30, 0, 0); // 5:30 AM of current day
-
-					// If it's before 5:30 AM today, use yesterday's 5:30 AM as business day start
-					if (istTime < businessDayStart) {
-						businessDayStart.setDate(businessDayStart.getDate() - 1);
-					}
-
-					const businessDayEnd = new Date(businessDayStart);
-					businessDayEnd.setDate(businessDayEnd.getDate() + 1);
-					businessDayEnd.setHours(5, 30, 0, 0); // 5:30 AM next day
-
-					// Check if case is within the current business day window
-					// The business day starts at 5:30 AM and runs until 5:30 AM the next day
-					// So if it's before 5:30 AM today, we're still in yesterday's business day
-					const isWithinWindow = actionDateIst >= businessDayStart && actionDateIst <= businessDayEnd;
-
-					// Log detailed information about the date filtering
-					console.log(`Action Date (IST): ${actionDateIst.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })}`);
-					console.log(`Business Day Start (IST): ${businessDayStart.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })}`);
-					console.log(`Business Day End (IST): ${businessDayEnd.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })}`);
-					console.log(`Is Within Business Window: ${isWithinWindow}`);
-					console.log(`Final Result: ${isWithinWindow ? 'PROCESS' : 'SKIP'}`);
-					console.log(`================================`);
-
-					// Only process if case is within business hours (5:30 AM to 5:30 AM next day)
-					// This automatically handles the case where we're before 5:30 AM and still in yesterday's business day
-					return isWithinWindow;
-				} catch (error) {
-					console.error('Error checking business day window:', error);
-					return false;
-				}
-			}
-		};
-
-		const result = mockQueue.isWithinBusinessDayWindow(testDate);
-		console.log(`Test Result: ${result ? 'PROCESS' : 'SKIP'}`);
-		return result;
-	} catch (error) {
-		console.error('Error testing date filtering:', error);
-		return false;
-	}
-} */
-
-// Global function to check available storage mechanisms
-/* function checkStorageAvailability() {
-	console.log('=== Storage Availability Check ===');
-	console.log(`chrome.storage.local available: ${!!(chrome && chrome.storage && chrome.storage.local)}`);
-	console.log(`localStorage available: ${typeof localStorage !== 'undefined'}`);
-	console.log(`sessionStorage available: ${typeof sessionStorage !== 'undefined'}`);
-	console.log(`globalThis.localStorage available: ${typeof globalThis.localStorage !== 'undefined'}`);
-	console.log('================================');
-} */
-
-/* // Global function to show current business day window and date filtering (removed for production)
-function showCurrentBusinessDayWindow() {}
-*/
-
-// Global function to manually set mode for testing
-/* async function setModeForTesting(mode) {
-	try {
-		if (mode === 'signature' || mode === 'premier') {
-			// Try chrome.storage.local first
-			if (chrome && chrome.storage && chrome.storage.local) {
-				await chrome.storage.local.set({ caseTriageMode: mode });
-				console.log(`Mode set to: ${mode} in chrome.storage.local`);
-			} else if (typeof localStorage !== 'undefined') {
-				localStorage.setItem('caseTriageMode', mode);
-				console.log(`Mode set to: ${mode} in localStorage`);
-			} else {
-				console.error('No storage mechanism available');
-				return;
-			}
-
-			// Also try to set it in the popup's localStorage if available
-			try {
-				await chrome.tabs.query({ url: chrome.runtime.getURL('popup/popup.html') }, async (tabs) => {
-					if (tabs.length > 0) {
-						await chrome.tabs.sendMessage(tabs[0].id, {
-							action: 'setMode',
-							mode: mode
-						});
-						console.log(`Mode also set in popup localStorage: ${mode}`);
-					}
-				});
-			} catch (popupError) {
-				console.log('Could not set mode in popup (popup may not be open):', popupError.message);
-			}
-
-			console.log(`Mode set to: ${mode}`);
-			console.log('You can now call showCurrentModeConfig() to verify the change');
-		} else {
-			console.log('Invalid mode. Use "signature" or "premier"');
-		}
-	} catch (error) {
-		console.error('Error setting mode:', error);
-	}
-} */
-
-// Function to store pending tracking data for later processing
-function storePendingTrackingData(trackingData) {
-	try {
-		const existingData = getPendingTrackingData();
-		existingData.push(trackingData);
-
-		// Keep only last 100 items to prevent localStorage from growing too large
-		if (existingData.length > 100) {
-			existingData.splice(0, existingData.length - 100);
-		}
-
-		localStorage.setItem('pendingTrackingData', JSON.stringify(existingData));
-		console.log(`Stored pending tracking data for case ${trackingData.caseNumber}, total pending: ${existingData.length}`);
-	} catch (error) {
-		console.error('Error storing pending tracking data:', error);
-	}
-}
-
-// Function to increment actionedCases counter for a user
-function incrementActionedCases(userName) {
-	try {
-		if (!userName) return;
-
-		// Get current date in IST business day format
-		const now = new Date();
-		const istTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-		const dayKey = istTime.toISOString().split('T')[0];
-
-		// Get or create usage bucket for this user and day
-		const usageKey = `usage_${dayKey}_${userName}`;
-		let usageData = null;
-		try {
-			usageData = JSON.parse(localStorage.getItem(usageKey) || '{}');
-		} catch (error) {
-			usageData = {};
-		}
-
-		// Check if this user already has a popup usage bucket and sync with it
-		const popupUsageKey = `usage_${dayKey}_${userName}`;
-		let popupUsageData = null;
-		try {
-			popupUsageData = JSON.parse(localStorage.getItem(popupUsageKey) || '{}');
-		} catch (error) {
-			popupUsageData = {};
-		}
-
-		// Use the higher value to avoid double-counting
-		const currentPopupCount = popupUsageData.actionedCases || 0;
-		const currentBackgroundCount = usageData.actionedCases || 0;
-		const newCount = Math.max(currentPopupCount, currentBackgroundCount) + 1;
-
-		console.log(`Background: Syncing actionedCases for ${userName}. Popup: ${currentPopupCount}, Background: ${currentBackgroundCount}, New: ${newCount}`);
-
-		// Update both buckets to keep them in sync
-		usageData.actionedCases = newCount;
-		usageData.lastActiveISO = new Date().toISOString();
-		popupUsageData.actionedCases = newCount;
-		popupUsageData.lastActiveISO = new Date().toISOString();
-
-		// Save both back to localStorage
-		localStorage.setItem(usageKey, JSON.stringify(usageData));
-		localStorage.setItem(popupUsageKey, JSON.stringify(popupUsageData));
-		console.log(`Background: SUCCESS: Synced and incremented actionedCases for ${userName} to ${newCount}`);
-
-		// Additional debugging: log the call stack to see where this increment came from
-		console.log('Call stack for background actionedCases increment:', new Error().stack);
-
-	} catch (error) {
-		console.error('Error incrementing actionedCases in background:', error);
-	}
-}
-
-// ================================================
-// LocalStorage Cleanup Functions
-// ================================================
-
-// Clean localStorage data older than 3 days
-function cleanupLocalStorageOlderThan3Days() {
-	try {
-		const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
-		let cleanedCount = 0;
-		const keysToRemove = [];
-
-		// Iterate through all localStorage keys
-		for (let i = 0; i < localStorage.length; i++) {
-			const key = localStorage.key(i);
-			if (!key) continue;
-
-			try {
-				const value = localStorage.getItem(key);
-				if (!value) continue;
-
-				// Check if the value contains timestamp information
-				let shouldRemove = false;
-				let dataAge = 0;
-
-				// Check for various timestamp patterns in the data
-				if (typeof value === 'string') {
-					// Check for JSON objects with timestamp fields
-					try {
-						const parsed = JSON.parse(value);
-						if (parsed && typeof parsed === 'object') {
-							// Check for common timestamp fields
-							if (parsed.timestamp && typeof parsed.timestamp === 'number') {
-								dataAge = Date.now() - parsed.timestamp;
-								shouldRemove = dataAge > threeDaysAgo;
-							} else if (parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
-								dataAge = Date.now() - parsed.fetchedAt;
-								shouldRemove = dataAge > threeDaysAgo;
-							} else if (parsed.createdAt && typeof parsed.createdAt === 'number') {
-								dataAge = Date.now() - parsed.createdAt;
-								shouldRemove = dataAge > threeDaysAgo;
-							} else if (parsed.date && typeof parsed.date === 'string') {
-								// Handle date strings like "2024-01-15"
-								const dateMatch = parsed.date.match(/^\d{4}-\d{2}-\d{2}$/);
-								if (dateMatch) {
-									const entryDate = new Date(dateMatch[0]);
-									dataAge = Date.now() - entryDate.getTime();
-									shouldRemove = dataAge > threeDaysAgo;
-								}
-							}
-						}
-					} catch (parseError) {
-						// Not JSON, check for other patterns
-						// Check for date patterns in the key name
-						const dateMatch = key.match(/\d{4}-\d{2}-\d{2}/);
-						if (dateMatch) {
-							const entryDate = new Date(dateMatch[0]);
-							dataAge = Date.now() - entryDate.getTime();
-							shouldRemove = dataAge > threeDaysAgo;
-						}
-					}
-				}
-
-				if (shouldRemove) {
-					keysToRemove.push(key);
-					console.log(`Marked for removal: ${key} (age: ${Math.floor(dataAge / (24 * 60 * 60 * 1000))} days)`);
-				}
-			} catch (error) {
-				console.warn(`Error processing localStorage key ${key}:`, error);
-			}
-		}
-
-		// Remove the marked keys
-		keysToRemove.forEach(key => {
-			try {
-				localStorage.removeItem(key);
-				cleanedCount++;
-				console.log(`Removed: ${key}`);
-			} catch (error) {
-				console.error(`Failed to remove localStorage key ${key}:`, error);
-			}
-		});
-
-		if (cleanedCount > 0) {
-			console.log(`LocalStorage cleanup completed: ${cleanedCount} items removed (older than 3 days)`);
-		} else {
-			console.log('LocalStorage cleanup: No items older than 3 days found');
-		}
-
-		return { success: true, cleanedCount, totalKeys: localStorage.length };
-	} catch (error) {
-		console.error('Error during localStorage cleanup:', error);
-		return { success: false, error: error.message };
-	}
-}
-
-// Enhanced cleanup function that also handles specific known keys
-function comprehensiveLocalStorageCleanup() {
-	try {
-		const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
-		let cleanedCount = 0;
-		const results = {};
-
-		// Clean up specific known cache keys
-		const cacheKeys = [
-			'gho_cache_data',
-			'gho_usermap_cache',
-			'user_email_cache',
-			'gho_transfer_mappings_v1',
-			'weekend_roster_cache_',
-			'usage_logged_',
-			'sentToSheets'
-		];
-
-		cacheKeys.forEach(cacheKey => {
-			try {
-				if (cacheKey === 'weekend_roster_cache_' || cacheKey === 'usage_logged_') {
-					// Handle prefixed keys
-					const keysToRemove = [];
-					for (let i = 0; i < localStorage.length; i++) {
-						const key = localStorage.key(i);
-						if (key && key.startsWith(cacheKey)) {
-							try {
-								const value = localStorage.getItem(key);
-								if (value) {
-									const parsed = JSON.parse(value);
-									if (parsed && parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
-										const age = Date.now() - parsed.fetchedAt;
-										if (age > threeDaysAgo) {
-											keysToRemove.push(key);
-										}
-									}
-								}
-							} catch (parseError) {
-								// If parsing fails, check if it's a date-based key
-								const dateMatch = key.match(/\d{4}-\d{2}-\d{2}/);
-								if (dateMatch) {
-									const entryDate = new Date(dateMatch[0]);
-									const age = Date.now() - entryDate.getTime();
-									if (age > threeDaysAgo) {
-										keysToRemove.push(key);
-									}
-								}
-							}
-						}
-					}
-
-					keysToRemove.forEach(key => {
-						localStorage.removeItem(key);
-						cleanedCount++;
-					});
-
-					results[cacheKey] = keysToRemove.length;
-				} else {
-					// Handle single keys
-					const value = localStorage.getItem(cacheKey);
-					if (value) {
-						try {
-							const parsed = JSON.parse(value);
-							if (parsed && parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
-								const age = Date.now() - parsed.fetchedAt;
-								if (age > threeDaysAgo) {
-									localStorage.removeItem(cacheKey);
-									cleanedCount++;
-									results[cacheKey] = 1;
-								}
-							}
-						} catch (parseError) {
-							// If parsing fails, remove the key as it might be corrupted
-							localStorage.removeItem(cacheKey);
-							cleanedCount++;
-							results[cacheKey] = 1;
-						}
-					}
-				}
-			} catch (error) {
-				console.warn(`Error cleaning up cache key ${cacheKey}:`, error);
-			}
-		});
-
-		// Also run the general cleanup
-		const generalCleanup = cleanupLocalStorageOlderThan3Days();
-		cleanedCount += generalCleanup.cleanedCount || 0;
-
-		console.log(`Comprehensive localStorage cleanup completed: ${cleanedCount} total items removed`);
-		console.log('Cleanup results:', results);
-
-		return { success: true, totalCleaned: cleanedCount, results, generalCleanup };
-	} catch (error) {
-		console.error('Error during comprehensive localStorage cleanup:', error);
-		return { success: false, error: error.message };
-	}
-}
-
-// Get localStorage statistics and age information
-function getLocalStorageStats() {
-	try {
-		const stats = {
-			totalKeys: localStorage.length,
-			totalSize: 0,
-			keysByAge: {
-				'0-1 days': 0,
-				'1-3 days': 0,
-				'3-7 days': 0,
-				'7+ days': 0
-			},
-			keysByType: {},
-			oldKeys: [],
-			cacheKeys: {}
-		};
-
-		const now = Date.now();
-		const oneDay = 24 * 60 * 60 * 1000;
-		const threeDays = 3 * oneDay;
-		const sevenDays = 7 * oneDay;
-
-		for (let i = 0; i < localStorage.length; i++) {
-			const key = localStorage.key(i);
-			if (!key) continue;
-
-			try {
-				const value = localStorage.getItem(key);
-				if (!value) continue;
-
-				// Calculate size
-				stats.totalSize += key.length + value.length;
-
-				// Determine age category
-				let age = 0;
-				let ageCategory = 'unknown';
-
-				try {
-					const parsed = JSON.parse(value);
-					if (parsed && typeof parsed === 'object') {
-						if (parsed.timestamp && typeof parsed.timestamp === 'number') {
-							age = now - parsed.timestamp;
-						} else if (parsed.fetchedAt && typeof parsed.fetchedAt === 'number') {
-							age = now - parsed.fetchedAt;
-						} else if (parsed.createdAt && typeof parsed.createdAt === 'number') {
-							age = now - parsed.createdAt;
-						} else if (parsed.date && typeof parsed.date === 'string') {
-							const dateMatch = parsed.date.match(/^\d{4}-\d{2}-\d{2}$/);
-							if (dateMatch) {
-								const entryDate = new Date(dateMatch[0]);
-								age = now - entryDate.getTime();
-							}
-						}
-					}
-				} catch (parseError) {
-					// Check for date patterns in the key name
-					const dateMatch = key.match(/\d{4}-\d{2}-\d{2}/);
-					if (dateMatch) {
-						const entryDate = new Date(dateMatch[0]);
-						age = now - entryDate.getTime();
-					}
-				}
-
-				if (age > 0) {
-					if (age <= oneDay) {
-						ageCategory = '0-1 days';
-						stats.keysByAge['0-1 days']++;
-					} else if (age <= threeDays) {
-						ageCategory = '1-3 days';
-						stats.keysByAge['1-3 days']++;
-					} else if (age <= sevenDays) {
-						ageCategory = '3-7 days';
-						stats.keysByAge['3-7 days']++;
-					} else {
-						ageCategory = '7+ days';
-						stats.keysByAge['7+ days']++;
-					}
-
-					if (age > threeDays) {
-						stats.oldKeys.push({
-							key,
-							age: Math.floor(age / oneDay),
-							ageCategory,
-							size: key.length + value.length
-						});
-					}
-				}
-
-				// Categorize by key type
-				if (key.includes('cache') || key.includes('Cache')) {
-					stats.keysByType.cache = (stats.keysByType.cache || 0) + 1;
-				} else if (key.includes('usage') || key.includes('Usage')) {
-					stats.keysByType.usage = (stats.keysByType.usage || 0) + 1;
-				} else if (key.includes('gho') || key.includes('GHO')) {
-					stats.keysByType.gho = (stats.keysByType.gho || 0) + 1;
-				} else if (key.includes('sheet') || key.includes('Sheet')) {
-					stats.keysByType.sheets = (stats.keysByType.sheets || 0) + 1;
-				} else {
-					stats.keysByType.other = (stats.keysByType.other || 0) + 1;
-				}
-
-				// Track specific cache keys
-				if (key.startsWith('gho_') || key.startsWith('weekend_roster_cache_') || key.startsWith('usage_logged_')) {
-					const prefix = key.split('_')[0] + '_';
-					stats.cacheKeys[prefix] = (stats.cacheKeys[prefix] || 0) + 1;
-				}
-
-			} catch (error) {
-				console.warn(`Error processing localStorage key ${key}:`, error);
-				stats.keysByType.error = (stats.keysByType.error || 0) + 1;
-			}
-		}
-
-		// Sort old keys by age (oldest first)
-		stats.oldKeys.sort((a, b) => b.age - a.age);
-
-		// Format sizes
-		stats.totalSizeKB = Math.round(stats.totalSize / 1024);
-		stats.totalSizeMB = Math.round(stats.totalSize / (1024 * 1024) * 100) / 100;
-
-		return stats;
-	} catch (error) {
-		console.error('Error getting localStorage stats:', error);
-		return { error: error.message };
-	}
-}
-
-// ================================================
-// Scheduled LocalStorage Cleanup Tasks
-// ================================================
-
-// Run localStorage cleanup every 12 hours to keep storage clean
-setInterval(cleanupLocalStorageOlderThan3Days, 12 * 60 * 60 * 1000);
-
-// Run initial cleanup when the background script starts
-setTimeout(() => {
-	console.log('Running initial localStorage cleanup in background...');
-	cleanupLocalStorageOlderThan3Days();
-}, 10000); // Wait 10 seconds after background script starts
 
 // ================================================
 // Message Handlers for LocalStorage Cleanup
