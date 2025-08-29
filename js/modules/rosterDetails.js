@@ -11,7 +11,9 @@ export const COLUMN_MAP = {
     CIC: { APAC: 'B', EMEA: 'J', AMER: 'S' },
     TE: { APAC: 'F', EMEA: 'O', AMER: 'W' },
     SWARM_LEAD_SERVICE: { APAC: 'G', EMEA: 'P', AMER: 'X' },
-    SWARM_LEAD_SALES: { APAC: 'G', EMEA: 'P', AMER: 'X' }
+    SWARM_LEAD_SALES: { APAC: 'G', EMEA: 'P', AMER: 'X' },
+    SERVICE_SUBSCALE: { EMEA: 'L' },
+    SERVICE_SPECIALITY: { APAC: 'H', EMEA: 'Q', AMER: 'Y' },
 };
 
 export function getCICColumnForShift(shift) {
@@ -28,6 +30,14 @@ export function getSwarmLeadServiceColumnForShift(shift) {
 
 export function getSwarmLeadSalesColumnForShift(shift) {
     return COLUMN_MAP.SWARM_LEAD_SALES[shift] || COLUMN_MAP.SWARM_LEAD_SALES.AMER;
+}
+
+export function getServiceSubscaleColumnForShift(shift) {
+    return COLUMN_MAP.SERVICE_SUBSCALE[shift] || null;
+}
+
+export function getServiceSpecialityColumnForShift(shift) {
+    return COLUMN_MAP.SERVICE_SPECIALITY[shift] || COLUMN_MAP.SERVICE_SPECIALITY.AMER;
 }
 
 // Premier-specific mappings

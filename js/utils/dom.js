@@ -16,7 +16,8 @@ export function applyFilterAndSearch(filterValue, searchValue) {
     allCases.forEach(function (caseDiv) {
         let shouldShow = true;
 
-        // Apply filter criteria
+        // Apply filter criteria (action checkbox functionality disabled)
+        /*
         let checkbox = caseDiv.querySelector(".action-checkbox");
         if (checkbox && filterValue !== "all") {
             let isActionTaken = checkbox.checked;
@@ -26,6 +27,7 @@ export function applyFilterAndSearch(filterValue, searchValue) {
                 shouldShow = false;
             }
         }
+        */
 
         // Apply search criteria
         if (shouldShow && searchValue && searchValue.trim() !== "") {

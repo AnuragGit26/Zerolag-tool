@@ -24,7 +24,7 @@ import { timeElapsed, addMinutes, isCurrentlyWeekend } from './utils/datetime.js
 import { applyFilter, applySearch, updateWeekendModeIndicator } from './utils/dom.js';
 import { trackAction, logUsageDaily } from './utils/api.js';
 import { formatDateWithDayOfWeek, getShiftForDate, isToday, getCurrentShift, getPreferredShiftValues, buildPreferredShiftCondition, getWeekendSignatureTemplate, getGHOTemplate } from './modules/shift.js';
-import { SHEET_SERVICE_CLOUD, SHEET_SALES_CLOUD, SHEET_INDUSTRY_CLOUD, SHEET_DATA_CLOUD_AF, getCICColumnForShift, getTEColumnForShift, getSwarmLeadServiceColumnForShift, getSwarmLeadSalesColumnForShift, getPremierSalesDevTEColumn, getPremierSalesNonDevTEColumn, getPremierSalesSwarmLeadColumn, getPremierIndustryTEColumn, getPremierIndustrySwarmLeadColumn, getPremierDataCloudColumn, getPremierAgentforceColumn } from './modules/rosterDetails.js';
+import { SHEET_SERVICE_CLOUD, SHEET_SALES_CLOUD, SHEET_INDUSTRY_CLOUD, SHEET_DATA_CLOUD_AF, getCICColumnForShift, getTEColumnForShift, getSwarmLeadServiceColumnForShift, getSwarmLeadSalesColumnForShift, getServiceSubscaleColumnForShift, getServiceSpecialityColumnForShift, getPremierSalesDevTEColumn, getPremierSalesNonDevTEColumn, getPremierSalesSwarmLeadColumn, getPremierIndustryTEColumn, getPremierIndustrySwarmLeadColumn, getPremierDataCloudColumn, getPremierAgentforceColumn } from './modules/rosterDetails.js';
 import { initPremierCounters, resetPremierCountersAll, parseRosterNames, renderPremierCounters, setPremierOverride } from './modules/premierCounters.js';
 import { showToast } from './modules/toast.js';
 import { buildPendingCardsHtml, getPendingSectionHtml } from './modules/pending.js';
@@ -2380,6 +2380,10 @@ function getCaseDetails() {
                               <span class="checkmark">✓</span>
                               <span>${caseRecord.Severity_Level__c}</span>
                             </div>
+                            <div class="case-info-item">
+                              <span class="checkmark">✓</span>
+                              <span class="status-warning">${caseRecord.SE_Initial_Response_Status__c}</span>
+                            </div>
                             ${routingLogHtml}
                           </div>
                           
@@ -2400,7 +2404,8 @@ function getCaseDetails() {
                                      data-case-number="${caseData.number}" 
                                      data-severity="${caseData.severity}" 
                                      data-cloud="${caseData.cloud}"
-                                     data-is-mvp="true">
+                                     data-is-mvp="true"
+                                     disabled>
                               <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
                             </div>
                             
@@ -2567,7 +2572,7 @@ function getCaseDetails() {
                             </div>
                             <div class="case-info-item">
                               <span class="checkmark">✓</span>
-                              <span>${filteredRecords[x].SE_Initial_Response_Status__c}</span>
+                              <span class="${filteredRecords[x].SE_Initial_Response_Status__c === 'In Warning' || filteredRecords[x].SE_Initial_Response_Status__c === 'Warning' ? 'status-warning' : filteredRecords[x].SE_Initial_Response_Status__c === 'Met' ? 'status-met' : 'status-default'}">${filteredRecords[x].SE_Initial_Response_Status__c}</span>
                             </div>
                             ${routingLogHtml}
                           </div>
@@ -2591,7 +2596,8 @@ function getCaseDetails() {
                                      data-severity="${caseData.severity}" 
                                      data-cloud="${caseData.cloud}"
                                      data-is-mvp="${caseData.isMVP}"
-                                     data-is-slam="${caseData.isSLAM}">
+                                     data-is-slam="${caseData.isSLAM}"
+                                     disabled>
                               <span class="action-taken-text" style="display: ${isActionTaken ? 'inline' : 'none'};">Action taken</span>
                             </div>
                             
@@ -4272,6 +4278,8 @@ document.getElementById("clear-snoozed-button").addEventListener("click", functi
 // Manual track by Case Number: removed inline UI + shortcut; moved to 3-dots modal
 
 document.getElementById("parentSigSev2").addEventListener("click", function (e) {
+  // Action checkbox functionality disabled
+  /*
   if (e.target && e.target.classList.contains("action-checkbox")) {
     const checkbox = e.target;
     const caseId = checkbox.dataset.caseId;
@@ -4283,6 +4291,7 @@ document.getElementById("parentSigSev2").addEventListener("click", function (e) 
       localStorage.setItem(ACTION_TAKEN_CASES_KEY, JSON.stringify(existing));
     }
   }
+  */
 
   if (e.target && e.target.classList.contains("preview-record-btn")) {
     const button = e.target;
@@ -4615,6 +4624,7 @@ function showCICManagers() {
                 <div class="sig-section-header" style="font-weight:700; color:#0f172a; margin-bottom:8px;">Data</div>
                 <div class="sig-section-content" id="sig-data-section-content" style="display:flex; flex-direction:column; gap:12px;"></div>
               </div>
+
             `);
           }
         } catch { }
@@ -4872,7 +4882,6 @@ function showCICManagers() {
             console.error('Failed loading Data Cloud and AF sheet:', err);
           });
         }
-
       }
 
       // In Signature mode, also show Sales/Service/Industry Cloud TEs sections
@@ -5221,8 +5230,21 @@ function showCICManagers() {
                 { title: `${shift} Dev TEs`, col: getPremierSalesDevTEColumn(shift), id: 'premier-service-dev-tes' },
                 { title: `${shift} Non-Dev TEs`, col: getPremierSalesNonDevTEColumn(shift), id: 'premier-service-nondev-tes' },
                 { title: `${shift} Swarm Lead`, col: getPremierSalesSwarmLeadColumn(shift), id: 'premier-service-swarm' },
+                { title: `${shift} Service Subscale`, col: getServiceSubscaleColumnForShift(shift), id: 'premier-service-subscale' },
+                { title: `${shift} Service Speciality`, col: getServiceSpecialityColumnForShift(shift), id: 'premier-service-speciality' },
               ];
               blocks.forEach(async ({ title, col, id }) => {
+                if (!col) {
+                  // Column not available for this shift (e.g., Service Subscale only for EMEA)
+                  const html = `
+                    <div style="border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,0.04); padding:16px; animation: fadeUp 260ms ease;">
+                      <div style="font-weight:700; color:#0f766e; margin-bottom:4px;">${title}</div>
+                      <div style="font-size:14px; color:#64748b;">Not available for ${shift} shift</div>
+                    </div>`;
+                  container.insertAdjacentHTML('beforeend', html);
+                  return;
+                }
+
                 let val = getCell(col).trim();
                 try { val = (await getCellValueWithoutStrikethrough(SHEET_SERVICE_CLOUD, rowIdx, col)) || val; } catch { }
                 const html = val

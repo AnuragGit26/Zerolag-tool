@@ -2553,6 +2553,31 @@
 			width: 16px;
 			height: 16px;
 		}
+
+		/* Status color styling */
+		.status-warning {
+			color: #dc3545 !important;
+			/* Red for 'In Warning' status */
+		}
+
+		.status-met {
+			color: #28a745 !important;
+			/* Green for 'Met' status */
+		}
+
+		.status-default {
+			color: #6c757d !important;
+			/* Grey for other statuses */
+		}
+
+		.action-checkbox:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+		}
+
+		.action-checkbox:disabled+.action-taken-text {
+			opacity: 1;
+		}
 	</style>
 
 </head>
