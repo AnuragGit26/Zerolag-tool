@@ -2554,20 +2554,16 @@
 			height: 16px;
 		}
 
-		/* Status color styling */
 		.status-warning {
 			color: #dc3545 !important;
-			/* Red for 'In Warning' status */
 		}
 
 		.status-met {
 			color: #28a745 !important;
-			/* Green for 'Met' status */
 		}
 
 		.status-default {
 			color: #6c757d !important;
-			/* Grey for other statuses */
 		}
 
 		.action-checkbox:disabled {
@@ -2577,6 +2573,48 @@
 
 		.action-checkbox:disabled+.action-taken-text {
 			opacity: 1;
+		}
+
+		/* Custom blue tick mark for disabled checkboxes */
+		.action-checkbox:disabled:checked {
+			accent-color: #0ea5e9 !important;
+			background-color: #0ea5e9 !important;
+			border-color: #0ea5e9 !important;
+			-webkit-appearance: none;
+			appearance: none;
+		}
+
+		/* Custom checkbox styling for disabled state */
+		.action-checkbox:disabled {
+			opacity: 0.9;
+			cursor: not-allowed;
+			-webkit-appearance: none;
+			appearance: none;
+			width: 16px;
+			height: 16px;
+			border: 2px solid #d1d5db;
+			border-radius: 3px;
+			background-color: #f9fafb;
+			position: relative;
+		}
+
+		/* Blue background and white checkmark for disabled checked state */
+		.action-checkbox:disabled:checked {
+			background-color: #0ea5e9 !important;
+			border-color: #0ea5e9 !important;
+		}
+
+		/* White checkmark for disabled checked state */
+		.action-checkbox:disabled:checked::after {
+			content: "";
+			position: absolute;
+			left: 4px;
+			top: 1px;
+			width: 4px;
+			height: 8px;
+			border: solid white;
+			border-width: 0 2px 2px 0;
+			transform: rotate(45deg);
 		}
 	</style>
 
